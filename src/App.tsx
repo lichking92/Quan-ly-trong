@@ -21,7 +21,8 @@ import {
   LogOut,
   Menu,
   Home,
-  CheckCircle
+  CheckCircle,
+  Palette
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 
@@ -63,6 +64,7 @@ import TransactionForm from './components/TransactionForm';
 import InventoryAudit from './components/InventoryAudit';
 import TransactionHistory from './components/TransactionHistory';
 import CategoryManagement from './components/CategoryManagement';
+import ThemeSettings from './components/ThemeSettings';
 
 
 /**
@@ -304,6 +306,53 @@ export default function App() {
   const [mobileMenuOpen, setMobileMenuOpen] = useState<boolean>(false);
   const [successToast, setSuccessToast] = useState<{ message: string } | null>(null);
 
+  // --- THIẾT LẬP GIAO DIỆN LIGHT/DARK & ACCENT COLOR THEO TỪNG USER ---
+  const [themeMode, setThemeMode] = useState<'light' | 'dark'>('light');
+  const [accentColor, setAccentColor] = useState<'blue' | 'green' | 'orange' | 'red' | 'purple'>('red');
+
+  useEffect(() => {
+    if (currentUser) {
+      const savedTheme = localStorage.getItem(`theme_pref_${currentUser.username}`);
+      const savedAccent = localStorage.getItem(`accent_pref_${currentUser.username}`);
+      setThemeMode((savedTheme as 'light' | 'dark') || 'light');
+      setAccentColor((savedAccent as 'blue' | 'green' | 'orange' | 'red' | 'purple') || 'red');
+    } else {
+      setThemeMode('light');
+      setAccentColor('red');
+    }
+  }, [currentUser]);
+
+  const handleUpdateTheme = (theme: 'light' | 'dark', accent: 'blue' | 'green' | 'orange' | 'red' | 'purple') => {
+    setThemeMode(theme);
+    setAccentColor(accent);
+    if (currentUser) {
+      localStorage.setItem(`theme_pref_${currentUser.username}`, theme);
+      localStorage.setItem(`accent_pref_${currentUser.username}`, accent);
+    }
+  };
+
+  const accentHex = useMemo(() => {
+    switch (accentColor) {
+      case 'blue': return '#2563eb';
+      case 'green': return '#10b981';
+      case 'orange': return '#f97316';
+      case 'red': return '#dc2626';
+      case 'purple': return '#8b5cf6';
+      default: return '#dc2626';
+    }
+  }, [accentColor]);
+
+  const activeButtonClass = useMemo(() => {
+    switch (accentColor) {
+      case 'blue': return 'bg-blue-600 text-white shadow-md shadow-blue-500/15';
+      case 'green': return 'bg-emerald-600 text-white shadow-md shadow-emerald-500/15';
+      case 'orange': return 'bg-orange-600 text-white shadow-md shadow-orange-500/15';
+      case 'red': return 'bg-red-600 text-white shadow-md shadow-red-500/15';
+      case 'purple': return 'bg-violet-600 text-white shadow-md shadow-violet-500/15';
+      default: return 'bg-red-600 text-white shadow-md shadow-red-500/15';
+    }
+  }, [accentColor]);
+
   // Tự động tắt Toast thành công sau 3 giây
   useEffect(() => {
     if (successToast) {
@@ -514,6 +563,7 @@ export default function App() {
   /**
    * Nghiệp vụ Kiểm kho định kỳ
    * Tự động sinh Số phiếu PKKxxxxxx và bù trừ chênh lệch trực tiếp vào tồn kho sản phẩm (Rule 8)
+   * Đồng thời tự động tạo giao dịch điều chỉnh liên kết (PNKxxxxxx hoặc PXKxxxxxx)
    */
   const handleSaveAudit = async (newAudit: KiemKho) => {
     let maxNum = 0;
@@ -564,29 +614,95 @@ export default function App() {
       return next;
     });
 
+    // Tự động sinh giao dịch điều chỉnh kho liên kết nếu có chênh lệch
+    let finalizedHeader: NhapXuat | null = null;
+    let finalizedDetails: NhapXuatCT[] = [];
+
+    if (finalizedAudit.LECH !== 0) {
+      const isPositive = finalizedAudit.LECH > 0;
+      const prefix = isPositive ? 'PNK' : 'PXK';
+      
+      let maxAdjNum = 0;
+      nhapXuats.forEach(h => {
+        if (h.HOA_DON.startsWith(prefix)) {
+          const numPart = parseInt(h.HOA_DON.substring(3), 10);
+          if (!isNaN(numPart) && numPart > maxAdjNum) {
+            maxAdjNum = numPart;
+          }
+        }
+      });
+
+      const newAdjInvoiceId = `${prefix}${String(maxAdjNum + 1).padStart(6, '0')}`;
+      const matchedP = sanPhams.find(p => p.SKU === finalizedAudit.SKU);
+
+      if (matchedP) {
+        finalizedHeader = {
+          HOA_DON: newAdjInvoiceId,
+          CHI_NHANH: finalizedAudit.KHO || currentUser?.branch || 'Kho Trung Tâm',
+          NGAY: finalizedAudit.THOI_DIEM.split(' ')[0], // YYYY-MM-DD
+          LOAI: isPositive ? 'NHẬP' : 'XUẤT',
+          TONG_SL: Math.abs(finalizedAudit.LECH),
+          NGUOI_TAO: currentUser?.username || 'admin',
+          TEN_NGUOI_TAO: currentUser?.fullName || 'Người dùng',
+          TG_TAO: finalizedAudit.THOI_DIEM,
+          GHI_CHU: `Phiếu điều chỉnh kiểm kê liên kết ${newAuditId}. SKU: ${finalizedAudit.SKU}, Tồn HT: ${finalizedAudit.TON_HE_THONG}, Tồn TT: ${finalizedAudit.TON_THUC_TE}, Lệch: ${finalizedAudit.LECH > 0 ? '+' : ''}${finalizedAudit.LECH}`
+        };
+
+        const finalizedDetail: NhapXuatCT = {
+          ID: `CT_ADJ_${Date.now()}`,
+          HOA_DON: newAdjInvoiceId,
+          SKU: finalizedAudit.SKU,
+          TEN_SP: matchedP.TEN_SAN_PHAM,
+          THUONG_HIEU: matchedP.THUONG_HIEU,
+          CHIET_XUAT: matchedP.CHIET_XUAT,
+          TINH_NANG: matchedP.TINH_NANG,
+          SPH: matchedP.CAN,
+          CYL: matchedP.LOAN,
+          SO_LUONG: Math.abs(finalizedAudit.LECH),
+          DVT: matchedP.DVT,
+          GHI_CHU: `Điều chỉnh kiểm kê liên kết ${newAuditId}`,
+          LOAI: isPositive ? 'NHẬP' : 'XUẤT',
+          NGAY: finalizedAudit.THOI_DIEM.split(' ')[0]
+        };
+
+        finalizedDetails = [finalizedDetail];
+
+        // Thêm vào state
+        setNhapXuats(prev => [...prev, finalizedHeader!]);
+        setNhapXuatCTs(prev => [...prev, finalizedDetail]);
+      }
+    }
+
     // Đồng bộ Supabase
     if (currentUser && currentUser.username.includes('@')) {
       try {
         const uId = await getUserId();
         if (uId) {
-          const [res1, res2] = await Promise.all([
+          const promises: Promise<any>[] = [
             syncKiemKho(finalizedAudit, uId),
             syncSanPhams(updatedProducts.filter(p => p.SKU === finalizedAudit.SKU), uId)
-          ]);
-          const error = res1.error || res2.error;
+          ];
+
+          if (finalizedHeader && finalizedDetails.length > 0) {
+            promises.push(syncNhapXuat(finalizedHeader, uId));
+            promises.push(syncNhapXuatCTs(finalizedDetails, uId));
+          }
+
+          const results = await Promise.all(promises);
+          const error = results.find(r => r && r.error)?.error;
           if (error) {
             setSyncError({
-              table: 'b_kiemkho / b_sanpham',
-              action: 'Lưu phiếu kiểm kho',
+              table: 'b_kiemkho / b_sanpham / b_nhapxuat / b_nhapxuatct',
+              action: 'Lưu phiếu kiểm và điều chỉnh',
               message: error.message || JSON.stringify(error)
             });
           }
         }
       } catch (err: any) {
-        console.error('Lỗi sync kiểm kho:', err);
+        console.error('Lỗi sync kiểm kho và điều chỉnh:', err);
         setSyncError({
-          table: 'b_kiemkho / b_sanpham',
-          action: 'Lưu phiếu kiểm kho',
+          table: 'b_kiemkho / b_sanpham / b_nhapxuat / b_nhapxuatct',
+          action: 'Lưu phiếu kiểm và điều chỉnh',
           message: err.message || JSON.stringify(err)
         });
       }
@@ -1078,7 +1194,13 @@ export default function App() {
   }
 
   return (
-    <div className="min-h-screen bg-[#f8fafc] text-slate-900 antialiased flex flex-col md:flex-row relative overflow-x-hidden">
+    <div 
+      className={`min-h-screen text-slate-900 antialiased flex flex-col md:flex-row relative overflow-x-hidden main-content-bg ${themeMode === 'dark' ? 'dark-theme' : ''}`}
+      style={{ 
+        '--accent-color': accentHex,
+        backgroundColor: 'var(--bg-main)'
+      } as React.CSSProperties}
+    >
       
       {/* MOBILE HEADER BAR - Chỉ hiển thị trên mobile (ví dụ iPhone 14) */}
       <div className="md:hidden bg-[#0f172a] text-white h-14 px-4 flex items-center justify-between border-b border-slate-800 shrink-0 sticky top-0 z-30">
@@ -1158,7 +1280,7 @@ export default function App() {
           <button
             onClick={() => selectTabOnMobile('TRANSACTION_XUAT')}
             className={`w-full py-2.5 px-3.5 text-xs font-bold rounded-xl transition-all flex items-center gap-2.5 cursor-pointer ${
-              activeTab === 'TRANSACTION_XUAT' ? 'bg-red-600 text-white shadow-md shadow-red-600/15' : 'text-slate-400 hover:text-white hover:bg-slate-800/40'
+              activeTab === 'TRANSACTION_XUAT' ? activeButtonClass : 'text-slate-400 hover:text-white hover:bg-slate-800/40'
             }`}
           >
             <TrendingDown className="w-4 h-4 shrink-0 text-rose-500" /> 
@@ -1169,7 +1291,7 @@ export default function App() {
           <button
             onClick={() => selectTabOnMobile('TRANSACTION_NHAP')}
             className={`w-full py-2.5 px-3.5 text-xs font-bold rounded-xl transition-all flex items-center gap-2.5 cursor-pointer ${
-              activeTab === 'TRANSACTION_NHAP' ? 'bg-red-600 text-white shadow-md shadow-red-600/15' : 'text-slate-400 hover:text-white hover:bg-slate-800/40'
+              activeTab === 'TRANSACTION_NHAP' ? activeButtonClass : 'text-slate-400 hover:text-white hover:bg-slate-800/40'
             }`}
           >
             <TrendingUp className="w-4 h-4 shrink-0 text-emerald-500" /> 
@@ -1181,7 +1303,7 @@ export default function App() {
             <button
               onClick={() => selectTabOnMobile('DASHBOARD')}
               className={`w-full py-2.5 px-3.5 text-xs font-bold rounded-xl transition-all flex items-center gap-2.5 cursor-pointer ${
-                activeTab === 'DASHBOARD' ? 'bg-red-600 text-white shadow-md shadow-red-600/15' : 'text-slate-400 hover:text-white hover:bg-slate-800/40'
+                activeTab === 'DASHBOARD' ? activeButtonClass : 'text-slate-400 hover:text-white hover:bg-slate-800/40'
               }`}
             >
               <TrendingUp className="w-4 h-4 shrink-0 text-blue-500" /> 
@@ -1193,7 +1315,7 @@ export default function App() {
           <button
             onClick={() => selectTabOnMobile('PRODUCT')}
             className={`w-full py-2.5 px-3.5 text-xs font-bold rounded-xl transition-all flex items-center gap-2.5 cursor-pointer ${
-              activeTab === 'PRODUCT' ? 'bg-red-600 text-white shadow-md shadow-red-600/15' : 'text-slate-400 hover:text-white hover:bg-slate-800/40'
+              activeTab === 'PRODUCT' ? activeButtonClass : 'text-slate-400 hover:text-white hover:bg-slate-800/40'
             }`}
           >
             <Boxes className="w-4 h-4 shrink-0 text-amber-500" /> 
@@ -1205,7 +1327,7 @@ export default function App() {
             <button
               onClick={() => selectTabOnMobile('AUDIT')}
               className={`w-full py-2.5 px-3.5 text-xs font-bold rounded-xl transition-all flex items-center gap-2.5 cursor-pointer ${
-                activeTab === 'AUDIT' ? 'bg-red-600 text-white shadow-md shadow-red-600/15' : 'text-slate-400 hover:text-white hover:bg-slate-800/40'
+                activeTab === 'AUDIT' ? activeButtonClass : 'text-slate-400 hover:text-white hover:bg-slate-800/40'
               }`}
             >
               <ClipboardCheck className="w-4 h-4 shrink-0 text-violet-500" /> 
@@ -1217,7 +1339,7 @@ export default function App() {
           <button
             onClick={() => selectTabOnMobile('HISTORY')}
             className={`w-full py-2.5 px-3.5 text-xs font-bold rounded-xl transition-all flex items-center gap-2.5 cursor-pointer ${
-              activeTab === 'HISTORY' ? 'bg-red-600 text-white shadow-md shadow-red-600/15' : 'text-slate-400 hover:text-white hover:bg-slate-800/40'
+              activeTab === 'HISTORY' ? activeButtonClass : 'text-slate-400 hover:text-white hover:bg-slate-800/40'
             }`}
           >
             <History className="w-4 h-4 shrink-0 text-indigo-500" /> 
@@ -1229,58 +1351,71 @@ export default function App() {
             <button
               onClick={() => selectTabOnMobile('CATEGORY')}
               className={`w-full py-2.5 px-3.5 text-xs font-bold rounded-xl transition-all flex items-center gap-2.5 cursor-pointer ${
-                activeTab === 'CATEGORY' ? 'bg-red-600 text-white shadow-md shadow-red-600/15' : 'text-slate-400 hover:text-white hover:bg-slate-800/40'
+                activeTab === 'CATEGORY' ? activeButtonClass : 'text-slate-400 hover:text-white hover:bg-slate-800/40'
               }`}
             >
               <FolderTree className="w-4 h-4 shrink-0 text-teal-500" /> 
               <span>Cài Đặt Danh Mục</span>
             </button>
           )}
+
+          {/* TAB 8: CÀI ĐẶT GIAO DIỆN */}
+          <button
+            onClick={() => selectTabOnMobile('SETTINGS')}
+            className={`w-full py-2.5 px-3.5 text-xs font-bold rounded-xl transition-all flex items-center gap-2.5 cursor-pointer ${
+              activeTab === 'SETTINGS' ? activeButtonClass : 'text-slate-400 hover:text-white hover:bg-slate-800/40'
+            }`}
+          >
+            <Palette className="w-4 h-4 shrink-0 text-fuchsia-400" /> 
+            <span>Cài Đặt Giao Diện</span>
+          </button>
         </nav>
 
-        {/* PHÂN VÙNG ĐỔI VAI NHANH - DI CHUYỂN XUỐNG DƯỚI THEO YÊU CẦU */}
-        <div className="p-4 mx-3 my-2 bg-slate-900/40 rounded-xl border border-slate-800/60 shrink-0 space-y-3.5">
-          <div>
-            <div className="text-[9px] font-bold uppercase tracking-wider text-slate-500 mb-1.5">Mô phỏng đổi vai nhanh:</div>
-            <select
-              value={currentUser.username}
-              onChange={(e) => handleSwitchUser(e.target.value)}
-              className="w-full text-[10px] font-bold bg-slate-950 border border-slate-800 text-slate-300 rounded-lg px-2 py-1.5 focus:outline-hidden cursor-pointer"
-            >
-              {nhanViens.map(n => (
-                <option key={n.EMAIL} value={n.EMAIL}>{n.HO_TEN} ({n.ROLE === 'ADMIN' ? 'Admin' : n.ROLE === 'KHO' ? 'Thủ kho' : 'Bán hàng'})</option>
-              ))}
-            </select>
-          </div>
-
-          <div className="h-[1px] bg-slate-800/80" />
-
-          {/* QUYỀN HẠN INDICATOR */}
-          <div className="flex items-center justify-between text-[10px]">
-            <span className="text-slate-400 font-semibold">Quyền ghi dữ liệu:</span>
-            <span className={`font-bold py-0.5 px-2 rounded-full font-mono text-[9px] ${currentUser.writeAccess !== false ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' : 'bg-amber-500/10 text-amber-400 border border-amber-500/20'}`}>
-              {currentUser.writeAccess !== false ? 'FULL ACCESS' : 'READ ONLY'}
-            </span>
-          </div>
-
-          {/* SUPABASE STATUS INDICATOR */}
-          {currentUser.username.includes('@') && (
-            <div className="flex items-center justify-between text-[10px] pt-1.5 border-t border-slate-800/80">
-              <span className="text-slate-400 font-semibold">Supabase Cloud:</span>
-              {loadingDb ? (
-                <span className="text-blue-400 animate-pulse font-bold text-[9px] flex items-center gap-1 font-mono">
-                  <span className="h-1.5 w-1.5 bg-blue-400 rounded-full animate-ping" />
-                  SYNCING...
-                </span>
-              ) : (
-                <span className="text-emerald-400 font-bold text-[9px] flex items-center gap-1 font-mono">
-                  <span className="h-1.5 w-1.5 bg-emerald-400 rounded-full" />
-                  CONNECTED
-                </span>
-              )}
+        {/* PHÂN VÙNG ĐỔI VAI NHANH - CHỈ HIỂN THỊ CHO TÀI KHOẢN ADMIN */}
+        {currentUser.role === 'ADMIN' && (
+          <div className="p-4 mx-3 my-2 bg-slate-900/40 rounded-xl border border-slate-800/60 shrink-0 space-y-3.5">
+            <div>
+              <div className="text-[9px] font-bold uppercase tracking-wider text-slate-500 mb-1.5">Mô phỏng đổi vai nhanh:</div>
+              <select
+                value={currentUser.username}
+                onChange={(e) => handleSwitchUser(e.target.value)}
+                className="w-full text-[10px] font-bold bg-slate-950 border border-slate-800 text-slate-300 rounded-lg px-2 py-1.5 focus:outline-hidden cursor-pointer"
+              >
+                {nhanViens.map(n => (
+                  <option key={n.EMAIL} value={n.EMAIL}>{n.HO_TEN} ({n.ROLE === 'ADMIN' ? 'Admin' : n.ROLE === 'KHO' ? 'Thủ kho' : 'Bán hàng'})</option>
+                ))}
+              </select>
             </div>
-          )}
-        </div>
+
+            <div className="h-[1px] bg-slate-800/80" />
+
+            {/* QUYỀN HẠN INDICATOR */}
+            <div className="flex items-center justify-between text-[10px]">
+              <span className="text-slate-400 font-semibold">Quyền ghi dữ liệu:</span>
+              <span className={`font-bold py-0.5 px-2 rounded-full font-mono text-[9px] ${currentUser.writeAccess !== false ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' : 'bg-amber-500/10 text-amber-400 border border-amber-500/20'}`}>
+                {currentUser.writeAccess !== false ? 'FULL ACCESS' : 'READ ONLY'}
+              </span>
+            </div>
+
+            {/* SUPABASE STATUS INDICATOR */}
+            {currentUser.username.includes('@') && (
+              <div className="flex items-center justify-between text-[10px] pt-1.5 border-t border-slate-800/80">
+                <span className="text-slate-400 font-semibold">Supabase Cloud:</span>
+                {loadingDb ? (
+                  <span className="text-blue-400 animate-pulse font-bold text-[9px] flex items-center gap-1 font-mono">
+                    <span className="h-1.5 w-1.5 bg-blue-400 rounded-full animate-ping" />
+                    SYNCING...
+                  </span>
+                ) : (
+                  <span className="text-emerald-400 font-bold text-[9px] flex items-center gap-1 font-mono">
+                    <span className="h-1.5 w-1.5 bg-emerald-400 rounded-full" />
+                    CONNECTED
+                  </span>
+                )}
+              </div>
+            )}
+          </div>
+        )}
 
         {/* NÚT ĐĂNG XUẤT Ở CUỐI SIDEBAR */}
         <div className="p-4 border-t border-slate-800 shrink-0">
@@ -1424,6 +1559,8 @@ export default function App() {
                   sanPhams={sanPhams}
                   kiemKhos={kiemKhos}
                   onSaveAudit={handleSaveAudit}
+                  thuongHieus={listBrandNames}
+                  chiNhanhs={listBranchNames}
                 />
               )}
 
@@ -1460,16 +1597,25 @@ export default function App() {
                   onDeleteNhanVien={handleDeleteNhanVien}
                 />
               )}
+
+              {activeTab === 'SETTINGS' && (
+                <ThemeSettings 
+                  currentUser={currentUser}
+                  themeMode={themeMode}
+                  accentColor={accentColor}
+                  onUpdateTheme={handleUpdateTheme}
+                />
+              )}
             </motion.div>
           </AnimatePresence>
         </main>
 
         {/* FOOTER CHUYÊN NGHIỆP */}
-        <footer className="bg-white border-t border-[#e2e8f0] py-3 text-center text-[10px] text-[#64748b] shrink-0 font-medium shadow-[0_-1px_3px_rgba(0,0,0,0.02)]">
-          <p className="flex items-center justify-center gap-1.5">
+        <footer className="footer-theme border-t py-3 text-center text-[10px] shrink-0 font-medium shadow-[0_-1px_3px_rgba(0,0,0,0.02)]">
+          <p className="flex items-center justify-center gap-1.5 text-desc-color">
             <span>© 2026 Glass Stock Pro. Thiết kế & vận hành bởi Nguyễn Kiến Đức.</span>
             <span className="text-slate-300">|</span>
-            <span className="font-mono text-blue-500">Cập nhật thời gian thực bằng Google Apps Script & Sheets</span>
+            <span className="font-mono text-blue-500" style={{ color: 'var(--accent-color)' }}>Cập nhật thời gian thực bằng Google Apps Script & Sheets</span>
           </p>
         </footer>
 

@@ -1,1 +1,79 @@
 @import "tailwindcss";
+
+/* Thiết lập font chữ hiển thị và biến CSS nâng cao */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap');
+
+@theme {
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+}
+
+/* Khởi tạo biến Light Mode */
+:root {
+  --bg-main: #f8fafc;
+  --bg-card: #ffffff;
+  --border-color: #f1f5f9;
+  --text-main: #0f172a;
+  --text-muted: #64748b;
+  --bg-input: #f8fafc;
+  --border-input: #e2e8f0;
+  --text-input: #334155;
+  --bg-hover: #f1f5f9;
+  --accent-color: #dc2626; /* Đỏ mặc định */
+}
+
+/* Khởi tạo biến Dark Mode */
+.dark-theme {
+  --bg-main: #090d16;
+  --bg-card: #131b2e;
+  --border-color: #1e293b;
+  --text-main: #f8fafc;
+  --text-muted: #94a3b8;
+  --bg-input: #0f172a;
+  --border-input: #1e293b;
+  --text-input: #f1f5f9;
+  --bg-hover: #1e293b;
+}
+
+/* Ghi đè bento-card & các phần tử dùng chung để đồng bộ động */
+.bento-card {
+  background-color: var(--bg-card) !important;
+  border-color: var(--border-color) !important;
+  color: var(--text-main) !important;
+}
+
+.main-content-bg {
+  background-color: var(--bg-main) !important;
+}
+
+.text-title-color {
+  color: var(--text-main) !important;
+}
+
+.text-desc-color {
+  color: var(--text-muted) !important;
+}
+
+.border-theme {
+  border-color: var(--border-color) !important;
+}
+
+.input-theme {
+  background-color: var(--bg-input) !important;
+  border-color: var(--border-input) !important;
+  color: var(--text-input) !important;
+}
+
+.input-theme:focus {
+  border-color: var(--accent-color) !important;
+}
+
+.hover-theme:hover {
+  background-color: var(--bg-hover) !important;
+}
+
+.footer-theme {
+  background-color: var(--bg-card) !important;
+  border-top-color: var(--border-color) !important;
+  color: var(--text-muted) !important;
+}

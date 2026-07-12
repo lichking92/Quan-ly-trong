@@ -86,6 +86,7 @@ export interface KiemKho {
   LOAI_BU: 'NHẬP BÙ' | 'XUẤT BÙ' | 'KHÔNG LỆCH'; // Loại bù trừ tự động dựa vào Lệch
   NGUOI_KIEM: string;      // Tên hoặc username người thực hiện kiểm kho
   THOI_DIEM: string;       // Thời gian thực hiện kiểm kho (YYYY-MM-DD HH:mm:ss)
+  KHO?: string;            // Tên chi nhánh / kho thực hiện kiểm kê
 }
 
 // B_THUONGHIEU: Danh mục thương hiệu tròng kính được quản lý trong hệ thống

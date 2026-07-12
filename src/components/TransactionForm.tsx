@@ -84,6 +84,7 @@ export default function TransactionForm({
   const [isMobile, setIsMobile] = useState<boolean>(false);
   const [currentStep, setCurrentStep] = useState<number>(1);
   const [toastPending, setToastPending] = useState<{ message: string } | null>(null);
+  const [isAdded, setIsAdded] = useState<boolean>(false);
 
   useEffect(() => {
     const checkMobile = () => {
@@ -274,16 +275,11 @@ export default function TransactionForm({
     setSelectGhiChuDong('');
     setBarcodeInput('');
     
-    const msg = `Đã thêm thành công dòng SKU ${calculatedSKU} vào danh sách chờ.`;
-    setToastPending({ message: msg });
-    
-    if (onTriggerToast) {
-      onTriggerToast(msg);
-    }
-    
+    // Bỏ toast overlay, chuyển sang trạng thái ✓ Đã thêm nhỏ ngay cạnh nút
+    setIsAdded(true);
     setTimeout(() => {
-      setToastPending(null);
-    }, 2500);
+      setIsAdded(false);
+    }, 1500);
   };
 
   // Xóa một dòng sản phẩm khỏi giỏ hàng chờ (Bảng 3)
@@ -757,15 +753,42 @@ export default function TransactionForm({
 
                 {/* NÚT THÊM VÀO GIỎ */}
                 {currentUser.writeAccess !== false && (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      handleAddToBasket();
-                    }}
-                    className="w-full flex items-center justify-center gap-1.5 bg-red-600 hover:bg-red-700 text-white font-bold py-3.5 px-4 rounded-xl cursor-pointer transition-all shadow-xs"
-                  >
-                    <Plus className="w-5 h-5" /> Thêm Vào Phiếu Chờ
-                  </button>
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between gap-2">
+                      <AnimatePresence>
+                        {isAdded && (
+                          <motion.span
+                            initial={{ opacity: 0, scale: 0.9 }}
+                            animate={{ opacity: 1, scale: 1 }}
+                            exit={{ opacity: 0, scale: 0.9 }}
+                            className="text-emerald-600 text-xs font-bold flex items-center gap-1"
+                          >
+                            <CheckCircle className="w-4 h-4 text-emerald-500" /> ✓ Đã thêm vào phiếu chờ
+                          </motion.span>
+                        )}
+                      </AnimatePresence>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        handleAddToBasket();
+                      }}
+                      disabled={isAdded}
+                      className={`w-full flex items-center justify-center gap-1.5 text-white font-bold py-3.5 px-4 rounded-xl cursor-pointer transition-all shadow-xs ${
+                        isAdded ? 'bg-emerald-600' : 'bg-red-600 hover:bg-red-700'
+                      }`}
+                    >
+                      {isAdded ? (
+                        <>
+                          <CheckCircle className="w-5 h-5" /> Đã Thêm!
+                        </>
+                      ) : (
+                        <>
+                          <Plus className="w-5 h-5" /> Thêm Vào Phiếu Chờ
+                        </>
+                      )}
+                    </button>
+                  </div>
                 )}
               </div>
             )}
@@ -984,72 +1007,76 @@ export default function TransactionForm({
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         
         {/* BẢNG 1: THÔNG TIN CHỨNG TỪ (1/3 Cột) */}
-        <div className="bento-card !p-3 sm:!p-5 space-y-2.5 sm:space-y-4">
-          <div className="flex items-center gap-2 border-b border-slate-50 pb-1.5 sm:pb-2">
-            <FileText className="w-4 h-4 text-slate-400" />
-            <span className="text-xs font-bold text-slate-700 uppercase">Thông Tin Chứng Từ</span>
+        <div className="bg-white rounded-2xl p-5 space-y-4 shadow-md shadow-slate-200/60 border border-slate-100">
+          <div className="flex items-center gap-2 border-b border-slate-100 pb-2.5">
+            <FileText className="w-4 h-4 text-blue-600" />
+            <span className="text-xs font-bold text-slate-700 uppercase tracking-wider">Thông Tin Chứng Từ</span>
           </div>
 
-          {/* Chi nhánh thực hiện */}
-          <div className="flex flex-col sm:space-y-1 sm:block grid grid-cols-3 items-center gap-2 py-0.5 sm:py-0">
-            <label className="col-span-1 text-[10px] uppercase font-bold text-slate-400 flex items-center gap-1">
-              <MapPin className="w-3 h-3" /> Chi nhánh
-            </label>
-            <div className="col-span-2">
-              <select
-                value={selectedBranch}
-                onChange={(e) => setSelectedBranch(e.target.value)}
-                className="w-full text-base md:text-xs font-semibold text-slate-700 bg-slate-50 border border-slate-100 rounded-lg p-1.5 sm:p-2.5 focus:outline-hidden"
-              >
-                <option value="">-- Chọn chi nhánh --</option>
-                {chiNhanhs.map(branch => (
-                  <option key={branch} value={branch}>{branch}</option>
-                ))}
-              </select>
+          <div className="space-y-4">
+            {/* Nhóm 1: Địa điểm */}
+            <div className="space-y-2 p-3 bg-slate-50/50 rounded-xl border border-slate-100/70">
+              <span className="text-[9px] uppercase font-bold text-slate-400 tracking-wider">1. Địa điểm kho</span>
+              <div className="space-y-1">
+                <label className="text-[10px] uppercase font-bold text-slate-500 flex items-center gap-1">
+                  <MapPin className="w-3.5 h-3.5 text-slate-400" /> Chi nhánh áp dụng
+                </label>
+                <select
+                  value={selectedBranch}
+                  onChange={(e) => setSelectedBranch(e.target.value)}
+                  className="w-full text-xs font-semibold text-slate-700 bg-white border border-slate-200 rounded-lg p-2 focus:ring-2 focus:ring-blue-100 focus:outline-hidden"
+                >
+                  <option value="">-- Chọn chi nhánh --</option>
+                  {chiNhanhs.map(branch => (
+                    <option key={branch} value={branch}>{branch}</option>
+                  ))}
+                </select>
+              </div>
             </div>
-          </div>
 
-          {/* Ngày lập phiếu */}
-          <div className="flex flex-col sm:space-y-1 sm:block grid grid-cols-3 items-center gap-2 py-0.5 sm:py-0">
-            <label className="col-span-1 text-[10px] uppercase font-bold text-slate-400 flex items-center gap-1">
-              <Calendar className="w-3 h-3" /> Ngày lập
-            </label>
-            <div className="col-span-2">
-              <input
-                type="date"
-                value={ngayLap}
-                onChange={(e) => setNgayLap(e.target.value)}
-                className="w-full text-base md:text-xs font-semibold text-slate-700 bg-slate-50 border border-slate-100 rounded-lg p-1.5 sm:p-2 focus:outline-hidden"
-              />
+            {/* Nhóm 2: Thời gian & Nhân sự */}
+            <div className="space-y-2.5 p-3 bg-slate-50/50 rounded-xl border border-slate-100/70">
+              <span className="text-[9px] uppercase font-bold text-slate-400 tracking-wider">2. Thời gian & Nhân sự</span>
+              
+              <div className="space-y-1">
+                <label className="text-[10px] uppercase font-bold text-slate-500 flex items-center gap-1">
+                  <Calendar className="w-3.5 h-3.5 text-slate-400" /> Ngày lập phiếu
+                </label>
+                <input
+                  type="date"
+                  value={ngayLap}
+                  onChange={(e) => setNgayLap(e.target.value)}
+                  className="w-full text-xs font-semibold text-slate-700 bg-white border border-slate-200 rounded-lg p-2 focus:ring-2 focus:ring-blue-100 focus:outline-hidden"
+                />
+              </div>
+
+              <div className="space-y-1">
+                <label className="text-[10px] uppercase font-bold text-slate-500 flex items-center gap-1">
+                  <User className="w-3.5 h-3.5 text-slate-400" /> Người lập
+                </label>
+                <div className="text-xs font-bold text-slate-600 bg-slate-100 border border-slate-200 rounded-lg p-2 font-mono truncate">
+                  {currentUser.fullName}
+                </div>
+              </div>
             </div>
-          </div>
 
-          {/* Người lập (Tự lấy tài khoản đăng nhập) */}
-          <div className="flex flex-col sm:space-y-1 sm:block grid grid-cols-3 items-center gap-2 py-0.5 sm:py-0">
-            <label className="col-span-1 text-[10px] uppercase font-bold text-slate-400 flex items-center gap-1">
-              <User className="w-3 h-3" /> Người lập
-            </label>
-            <div className="col-span-2 text-base md:text-xs font-bold text-slate-500 bg-slate-100 border border-slate-100 rounded-lg p-1.5 sm:p-2.5 font-mono truncate">
-              {currentUser.fullName}
-            </div>
-          </div>
-
-          {/* Ghi chú chung của phiếu */}
-          <div className="flex flex-col sm:space-y-1 sm:block grid grid-cols-3 items-center gap-2 py-0.5 sm:py-0">
-            <label className="col-span-1 text-[10px] uppercase font-bold text-slate-400">Ghi chú</label>
-            <div className="col-span-2">
-              <textarea
-                rows={1}
-                placeholder="Nhập ghi chú chung..."
-                value={ghiChuPhieu}
-                onChange={(e) => setGhiChuPhieu(e.target.value)}
-                className="w-full text-base md:text-xs font-semibold text-slate-700 bg-slate-50 border border-slate-100 rounded-lg p-1.5 sm:p-2.5 focus:outline-hidden"
-              />
+            {/* Nhóm 3: Ghi chú */}
+            <div className="space-y-2 p-3 bg-slate-50/50 rounded-xl border border-slate-100/70">
+              <span className="text-[9px] uppercase font-bold text-slate-400 tracking-wider">3. Ghi chú chung</span>
+              <div className="space-y-1">
+                <textarea
+                  rows={2}
+                  placeholder="Nhập ghi chú chung..."
+                  value={ghiChuPhieu}
+                  onChange={(e) => setGhiChuPhieu(e.target.value)}
+                  className="w-full text-xs font-semibold text-slate-700 bg-white border border-slate-200 rounded-lg p-2 focus:ring-2 focus:ring-blue-100 focus:outline-hidden resize-none"
+                />
+              </div>
             </div>
           </div>
 
           {/* Thống kê giỏ hàng */}
-          <div className="bg-slate-50 p-3 sm:p-4 rounded-xl border border-slate-100 space-y-1.5 sm:space-y-2">
+          <div className="bg-slate-50 p-3.5 rounded-xl border border-slate-150 space-y-2">
             <div className="flex justify-between items-center text-xs">
               <span className="text-slate-400 font-medium">Số loại tròng kính:</span>
               <span className="font-bold text-slate-700">{cart.length} dòng SKU</span>
@@ -1066,7 +1093,7 @@ export default function TransactionForm({
               <button
                 type="button"
                 onClick={handleCompleteTransaction}
-                className="w-full flex items-center justify-center gap-1.5 bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 text-white font-extrabold text-xs py-2.5 px-4 rounded-xl cursor-pointer transition-all shadow-md"
+                className="w-full flex items-center justify-center gap-1.5 bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 text-white font-extrabold text-xs py-2.5 px-4 rounded-xl cursor-pointer transition-all shadow-md shadow-emerald-100"
               >
                 <Save className="w-4 h-4" /> Lưu Phiếu Giao Dịch
               </button>
@@ -1082,7 +1109,7 @@ export default function TransactionForm({
         </div>
 
         {/* BẢNG 2: CHỌN SẢN PHẨM & QUY TẮC SKU (2/3 Cột) */}
-        <div className="bento-card !p-5 space-y-4 lg:col-span-2">
+        <div className="bg-white rounded-2xl p-5 space-y-4 lg:col-span-2 shadow-md shadow-slate-200/60 border border-slate-100">
           
           <div className="flex items-center justify-between border-b border-slate-50 pb-2">
             <div className="flex items-center gap-2">
@@ -1319,13 +1346,36 @@ export default function TransactionForm({
 
           {/* NÚT THÊM VÀO GIỎ CHỜ XÁC NHẬN */}
           {currentUser.writeAccess !== false && (
-            <div className="flex justify-end pt-2">
+            <div className="flex items-center justify-end gap-3 pt-2">
+              <AnimatePresence>
+                {isAdded && (
+                  <motion.span
+                    initial={{ opacity: 0, x: 8 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    exit={{ opacity: 0, x: 8 }}
+                    className="text-emerald-600 text-xs font-bold flex items-center gap-1"
+                  >
+                    <CheckCircle className="w-4 h-4 text-emerald-500 animate-bounce" /> ✓ Đã thêm vào phiếu chờ
+                  </motion.span>
+                )}
+              </AnimatePresence>
               <button
                 type="button"
                 onClick={handleAddToBasket}
-                className="flex items-center gap-1.5 bg-red-600 hover:bg-red-700 text-white font-bold text-xs py-2.5 px-6 rounded-xl cursor-pointer transition-all shadow-xs"
+                disabled={isAdded}
+                className={`flex items-center gap-1.5 text-white font-bold text-xs py-2.5 px-6 rounded-xl cursor-pointer transition-all shadow-xs ${
+                  isAdded ? 'bg-emerald-600' : 'bg-red-600 hover:bg-red-700'
+                }`}
               >
-                <Plus className="w-4 h-4" /> Thêm Vào Phiếu Chờ
+                {isAdded ? (
+                  <>
+                    <CheckCircle className="w-4 h-4" /> Đã Thêm!
+                  </>
+                ) : (
+                  <>
+                    <Plus className="w-4 h-4" /> Thêm Vào Phiếu Chờ
+                  </>
+                )}
               </button>
             </div>
           )}
@@ -1424,28 +1474,6 @@ export default function TransactionForm({
   return (
     <div className="space-y-6">
       {isMobile ? renderMobileOnboarding() : renderDesktopLayout()}
-
-      {/* RENDER TOAST KHẨN CẤP / CHÍNH GIỮA MÀN HÌNH KHI THÊM PHIẾU CHỜ THÀNH CÔNG */}
-      <AnimatePresence>
-        {toastPending && (
-          <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-xs pointer-events-none">
-            <motion.div
-              initial={{ scale: 0.85, opacity: 0 }}
-              animate={{ scale: 1, opacity: 1 }}
-              exit={{ scale: 0.85, opacity: 0 }}
-              className="bg-[#0f172a] text-white p-6 rounded-2xl shadow-2xl flex flex-col items-center gap-3.5 max-w-sm pointer-events-auto border border-emerald-500/30 text-center"
-            >
-              <div className="w-12 h-12 rounded-full bg-emerald-500/10 text-emerald-400 flex items-center justify-center border border-emerald-500/20">
-                <CheckCircle className="w-7 h-7" />
-              </div>
-              <div>
-                <h4 className="font-bold text-sm text-slate-100">Thao tác thành công!</h4>
-                <p className="text-xs text-slate-400 mt-1 leading-relaxed font-medium">{toastPending.message}</p>
-              </div>
-            </motion.div>
-          </div>
-        )}
-      </AnimatePresence>
     </div>
   );
 }
