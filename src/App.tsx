@@ -22,7 +22,9 @@ import {
   Menu,
   Home,
   CheckCircle,
-  Palette
+  Palette,
+  ChevronLeft,
+  ChevronRight
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 
@@ -305,6 +307,25 @@ export default function App() {
   const [activeTab, setActiveTab] = useState<string>('DASHBOARD');
   const [mobileMenuOpen, setMobileMenuOpen] = useState<boolean>(false);
   const [successToast, setSuccessToast] = useState<{ message: string } | null>(null);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState<boolean>(false);
+  const [prefilledSku, setPrefilledSku] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (currentUser) {
+      const saved = localStorage.getItem(`sidebar_collapsed_pref_${currentUser.username}`);
+      setSidebarCollapsed(saved === 'true');
+    }
+  }, [currentUser]);
+
+  const toggleSidebar = () => {
+    setSidebarCollapsed(prev => {
+      const next = !prev;
+      if (currentUser) {
+        localStorage.setItem(`sidebar_collapsed_pref_${currentUser.username}`, String(next));
+      }
+      return next;
+    });
+  };
 
   // --- THIẾT LẬP GIAO DIỆN LIGHT/DARK & ACCENT COLOR THEO TỪNG USER ---
   const [themeMode, setThemeMode] = useState<'light' | 'dark'>('light');
@@ -352,6 +373,42 @@ export default function App() {
       default: return 'bg-red-600 text-white shadow-md shadow-red-500/15';
     }
   }, [accentColor]);
+
+  const sidebarStyle = useMemo(() => {
+    if (themeMode === 'light') {
+      return {
+        bg: 'bg-white border-slate-200 text-slate-800',
+        logoText: 'text-slate-900',
+        subText: 'text-slate-500',
+        userBox: 'bg-slate-50 border-slate-200',
+        userText: 'text-slate-900',
+        userSub: 'text-slate-500',
+        border: 'border-slate-200',
+        navDefault: 'text-slate-600 hover:text-slate-950 hover:bg-slate-50',
+        switchBox: 'bg-slate-50 border-slate-200/80',
+        switchText: 'text-slate-500',
+        switchSelect: 'bg-white border-slate-200 text-slate-700',
+        divider: 'bg-slate-200/80',
+        logoutBorder: 'border-slate-200'
+      };
+    } else {
+      return {
+        bg: 'bg-[#111827] border-slate-800 text-slate-100',
+        logoText: 'text-slate-100',
+        subText: 'text-slate-400',
+        userBox: 'bg-slate-800/40 border-slate-800',
+        userText: 'text-slate-100',
+        userSub: 'text-blue-400',
+        border: 'border-slate-800',
+        navDefault: 'text-slate-400 hover:text-white hover:bg-slate-800/40',
+        switchBox: 'bg-slate-900/40 border-slate-800/60',
+        switchText: 'text-slate-400',
+        switchSelect: 'bg-slate-950 border-slate-800 text-slate-300',
+        divider: 'bg-slate-800/80',
+        logoutBorder: 'border-slate-800'
+      };
+    }
+  }, [themeMode]);
 
   // Tự động tắt Toast thành công sau 3 giây
   useEffect(() => {
@@ -499,23 +556,15 @@ export default function App() {
 
     // Cập nhật số lượng nhập, xuất, và tồn cuối trực tiếp vào bảng sản phẩm ngay lập tức
     let updatedProducts: SanPham[] = [];
+    const allDetailsWithNew = [...nhapXuatCTs, ...finalizedDetails];
     setSanPhams(prevProducts => {
       const next = prevProducts.map(p => {
-        // Tìm xem sản phẩm này có phát sinh trong chi tiết phiếu vừa lưu hay không
-        const itemsInDetails = finalizedDetails.filter(d => d.SKU === p.SKU);
-        if (itemsInDetails.length > 0) {
-          const deltaQty = itemsInDetails.reduce((sum, d) => sum + d.SO_LUONG, 0);
-          
-          let newNhap = p.NHAP;
-          let newXuat = p.XUAT;
-
-          if (finalizedHeader.LOAI === 'NHẬP') {
-            newNhap += deltaQty;
-          } else {
-            newXuat += deltaQty;
-          }
-
-          const newTonCuoi = p.TON_DAU + newNhap - newXuat; // Rule 7
+        // Chỉ tính toán lại cho các SKU có trong phiếu vừa lưu để tối ưu hiệu năng
+        if (finalizedDetails.some(fd => fd.SKU === p.SKU)) {
+          const skuDetails = allDetailsWithNew.filter(d => d.SKU === p.SKU);
+          const newNhap = skuDetails.filter(d => d.LOAI === 'NHẬP').reduce((sum, d) => sum + d.SO_LUONG, 0);
+          const newXuat = skuDetails.filter(d => d.LOAI === 'XUẤT').reduce((sum, d) => sum + d.SO_LUONG, 0);
+          const newTonCuoi = p.TON_DAU + newNhap - newXuat;
 
           return {
             ...p,
@@ -584,36 +633,6 @@ export default function App() {
 
     setKiemKhos(prev => [...prev, finalizedAudit]);
 
-    // Đồng bộ lượng chênh lệch kiểm kê bù trừ trực tiếp vào sản phẩm tương ứng (B_SANPHAM)
-    let updatedProducts: SanPham[] = [];
-    setSanPhams(prevProducts => {
-      const next = prevProducts.map(p => {
-        if (p.SKU === finalizedAudit.SKU) {
-          let newNhap = p.NHAP;
-          let newXuat = p.XUAT;
-          const lech = finalizedAudit.LECH;
-
-          if (lech > 0) {
-            newNhap += lech; // Nhập bù
-          } else if (lech < 0) {
-            newXuat += Math.abs(lech); // Xuất bù
-          }
-
-          const newTonCuoi = p.TON_DAU + newNhap - newXuat;
-
-          return {
-            ...p,
-            NHAP: newNhap,
-            XUAT: newXuat,
-            TON_CUOI: newTonCuoi
-          };
-        }
-        return p;
-      });
-      updatedProducts = next;
-      return next;
-    });
-
     // Tự động sinh giao dịch điều chỉnh kho liên kết nếu có chênh lệch
     let finalizedHeader: NhapXuat | null = null;
     let finalizedDetails: NhapXuatCT[] = [];
@@ -672,6 +691,30 @@ export default function App() {
         setNhapXuatCTs(prev => [...prev, finalizedDetail]);
       }
     }
+
+    // Đồng bộ lượng chênh lệch kiểm kê bù trừ trực tiếp vào sản phẩm tương ứng (B_SANPHAM)
+    let updatedProducts: SanPham[] = [];
+    const allDetailsWithNew = [...nhapXuatCTs, ...finalizedDetails];
+    setSanPhams(prevProducts => {
+      const next = prevProducts.map(p => {
+        if (p.SKU === finalizedAudit.SKU) {
+          const skuDetails = allDetailsWithNew.filter(d => d.SKU === p.SKU);
+          const newNhap = skuDetails.filter(d => d.LOAI === 'NHẬP').reduce((sum, d) => sum + d.SO_LUONG, 0);
+          const newXuat = skuDetails.filter(d => d.LOAI === 'XUẤT').reduce((sum, d) => sum + d.SO_LUONG, 0);
+          const newTonCuoi = p.TON_DAU + newNhap - newXuat;
+
+          return {
+            ...p,
+            NHAP: newNhap,
+            XUAT: newXuat,
+            TON_CUOI: newTonCuoi
+          };
+        }
+        return p;
+      });
+      updatedProducts = next;
+      return next;
+    });
 
     // Đồng bộ Supabase
     if (currentUser && currentUser.username.includes('@')) {
@@ -962,12 +1005,13 @@ export default function App() {
     }
   };
 
-  const handleUpdateThuongHieu = async (oldName: string, brand: ThươngHieu) => {
-    setThuongHieus(prev => prev.map(t => t.THUONG_HIEU === oldName ? brand : t));
+  const handleUpdateThuongHieu = async (oldName: string, oldFeature: string, brand: ThươngHieu) => {
+    const brandFeature = brand.TINH_NANG || brand.TINH_NANG_MAC_DINH || '';
+    setThuongHieus(prev => prev.map(t => (t.THUONG_HIEU === oldName && (t.TINH_NANG || t.TINH_NANG_MAC_DINH || '') === oldFeature) ? brand : t));
     
-    // update sanPhams as well if brand name changes
-    if (oldName !== brand.THUONG_HIEU) {
-      setSanPhams(prev => prev.map(p => p.THUONG_HIEU === oldName ? { ...p, THUONG_HIEU: brand.THUONG_HIEU } : p));
+    // Cập nhật sản phẩm nếu thương hiệu hoặc tính năng thay đổi
+    if (oldName !== brand.THUONG_HIEU || oldFeature !== brandFeature) {
+      setSanPhams(prev => prev.map(p => (p.THUONG_HIEU === oldName && p.TINH_NANG === oldFeature) ? { ...p, THUONG_HIEU: brand.THUONG_HIEU, TINH_NANG: brandFeature } : p));
     }
 
     if (currentUser && currentUser.username.includes('@')) {
@@ -997,8 +1041,8 @@ export default function App() {
     }
   };
 
-  const handleDeleteThuongHieu = async (brandName: string) => {
-    setThuongHieus(prev => prev.filter(t => t.THUONG_HIEU !== brandName));
+  const handleDeleteThuongHieu = async (brandName: string, feature: string) => {
+    setThuongHieus(prev => prev.filter(t => !(t.THUONG_HIEU === brandName && (t.TINH_NANG || t.TINH_NANG_MAC_DINH || '') === feature)));
 
     if (currentUser && currentUser.username.includes('@')) {
       try {
@@ -1139,7 +1183,7 @@ export default function App() {
   };
 
   // Trích xuất mảng string đơn thuần cho dropdown
-  const listBrandNames = useMemo(() => thuongHieus.map(t => t.THUONG_HIEU), [thuongHieus]);
+  const listBrandNames = useMemo(() => Array.from(new Set(thuongHieus.map(t => t.THUONG_HIEU))), [thuongHieus]);
   const listBranchNames = useMemo(() => chiNhanhs.map(c => c.CHI_NHANH), [chiNhanhs]);
 
   // --- 7. ĐỒNG BỘ CHUYỂN ĐỔI NGƯỜI DÙNG ĐỂ KIỂM THỬ PHÂN QUYỀN TRỰC QUAN ---
@@ -1165,6 +1209,7 @@ export default function App() {
   if (!currentUser) {
     return (
       <Login 
+        nhanViens={nhanViens}
         onLoginSuccess={(user) => {
           // Khi đăng nhập, tìm kiếm NhanVien tương ứng để lấy writeAccess chính xác
           const email = user.username;
@@ -1203,20 +1248,30 @@ export default function App() {
     >
       
       {/* MOBILE HEADER BAR - Chỉ hiển thị trên mobile (ví dụ iPhone 14) */}
-      <div className="md:hidden bg-[#0f172a] text-white h-14 px-4 flex items-center justify-between border-b border-slate-800 shrink-0 sticky top-0 z-30">
+      <div className={`md:hidden h-14 px-4 flex items-center justify-between border-b shrink-0 sticky top-0 z-30 ${
+        themeMode === 'light' ? 'bg-white text-slate-800 border-slate-200' : 'bg-[#0f172a] text-white border-slate-800'
+      }`}>
         <div className="flex items-center gap-2.5">
           <button 
             onClick={() => setMobileMenuOpen(true)}
-            className="p-1.5 hover:bg-slate-800 rounded-lg text-slate-200 focus:outline-hidden"
+            className={`p-1.5 rounded-lg focus:outline-hidden transition-colors ${
+              themeMode === 'light' ? 'text-slate-700 hover:bg-slate-100' : 'text-slate-200 hover:bg-slate-800'
+            }`}
           >
             <Menu className="w-5 h-5" />
           </button>
-          <span className="font-sans font-bold text-xs uppercase tracking-wider text-slate-100">
+          <span className={`font-sans font-bold text-xs uppercase tracking-wider ${
+            themeMode === 'light' ? 'text-slate-900' : 'text-slate-100'
+          }`}>
             Glass Stock Pro
           </span>
         </div>
         <div className="flex items-center gap-2">
-          <span className="text-[10px] bg-blue-500/20 text-blue-300 font-mono py-1 px-2.5 rounded-full uppercase font-bold tracking-wider">
+          <span className="text-[10px] font-mono py-1 px-2.5 rounded-full uppercase font-bold tracking-wider" style={{
+            backgroundColor: `${accentHex}15`,
+            color: accentHex,
+            border: `1px solid ${accentHex}30`
+          }}>
             {activeTab === 'TRANSACTION_XUAT' ? 'Xuất Kho' : activeTab === 'TRANSACTION_NHAP' ? 'Nhập Kho' : activeTab === 'DASHBOARD' ? 'Báo Cáo' : activeTab === 'PRODUCT' ? 'Sản Phẩm' : activeTab === 'AUDIT' ? 'Kiểm Kho' : activeTab === 'HISTORY' ? 'Lịch Sử' : 'Danh Mục'}
           </span>
         </div>
@@ -1231,45 +1286,67 @@ export default function App() {
       )}
 
       {/* SIDEBAR DỌC BÊN TRÁI - Sliding Drawer cực mượt trên mobile & Tĩnh trên desktop */}
-      <aside className={`fixed inset-y-0 left-0 z-50 w-72 bg-[#0f172a] text-white shrink-0 flex flex-col border-r border-slate-800 transition-transform duration-300 ease-in-out md:translate-x-0 md:static md:flex ${
+      <aside className={`fixed inset-y-0 left-0 z-50 shrink-0 flex flex-col border-r transition-all duration-200 ease-in-out md:translate-x-0 md:static md:flex ${sidebarStyle.bg} ${
         mobileMenuOpen ? 'translate-x-0' : '-translate-x-full'
-      }`}>
+      } ${sidebarCollapsed ? 'md:w-20' : 'md:w-72'}`}>
         
         {/* LOGO & BRAND */}
-        <div className="p-5 border-b border-slate-800/80 flex items-center justify-between gap-3">
-          <div className="flex items-center gap-3">
-            <div className="p-2 bg-[#3b82f6] rounded-xl shadow-md text-white">
+        <div className={`p-4 border-b flex items-center justify-between gap-2 ${sidebarStyle.border} ${sidebarCollapsed ? 'justify-center' : ''}`}>
+          <div className={`items-center gap-3 ${sidebarCollapsed ? 'hidden' : 'flex'}`}>
+            <div className="p-2 rounded-xl shadow-md text-white" style={{ backgroundColor: accentHex }}>
               <Boxes className="w-5 h-5" />
             </div>
             <div>
-              <h1 className="font-sans font-bold text-sm uppercase tracking-wider text-slate-100 flex items-center gap-1.5">
+              <h1 className={`font-sans font-bold text-sm uppercase tracking-wider flex items-center gap-1.5 ${sidebarStyle.logoText}`}>
                 Glass Stock Pro
                 <span className="text-[8px] bg-blue-500/20 text-blue-300 font-mono py-0.5 px-1.5 rounded-full uppercase">v4.0</span>
               </h1>
-              <p className="text-[9px] text-slate-400 font-mono">Quản Lý Xuất Nhập Tồn Tròng Kính</p>
+              <p className={`text-[9px] font-mono ${sidebarStyle.subText}`}>Quản Lý Xuất Nhập Tồn Tròng Kính</p>
             </div>
           </div>
+
+          {/* Khi thu gọn, hiển thị Logo icon căn giữa */}
+          {sidebarCollapsed && (
+            <div className="p-2 rounded-xl shadow-md text-white" style={{ backgroundColor: accentHex }} title="Glass Stock Pro v4.0">
+              <Boxes className="w-5 h-5" />
+            </div>
+          )}
+
           {/* Close button chỉ hiện trên mobile */}
           <button 
             onClick={() => setMobileMenuOpen(false)}
-            className="md:hidden p-1.5 hover:bg-slate-800 rounded-lg text-slate-400 hover:text-white focus:outline-hidden"
+            className={`md:hidden p-1.5 rounded-lg focus:outline-hidden ${sidebarStyle.closeBtn}`}
           >
             <X className="w-5 h-5" />
+          </button>
+
+          {/* Nút Toggle Sidebar chỉ hiển thị trên desktop */}
+          <button
+            onClick={toggleSidebar}
+            className={`hidden md:flex p-1.5 rounded-lg focus:outline-hidden cursor-pointer transition-colors ${sidebarStyle.closeBtn}`}
+            title={sidebarCollapsed ? "Mở rộng thanh bên" : "Thu gọn thanh bên"}
+          >
+            {sidebarCollapsed ? <ChevronRight className="w-4 h-4" /> : <ChevronLeft className="w-4 h-4" />}
           </button>
         </div>
 
         {/* THÔNG TIN USER ĐANG ĐĂNG NHẬP */}
-        <div className="p-4 mx-3 my-4 bg-slate-800/40 rounded-2xl border border-slate-800 flex flex-col gap-3">
+        <div className={`p-3 mx-3 my-4 rounded-2xl border flex flex-col gap-3 ${sidebarStyle.userBox} ${sidebarCollapsed ? 'items-center px-1' : ''}`}>
           <div className="flex items-center gap-2.5">
-            <div className="h-8 w-8 rounded-xl bg-blue-600/10 text-blue-400 border border-blue-500/20 flex items-center justify-center font-bold text-xs uppercase shrink-0">
+            <div 
+              className="h-8 w-8 rounded-xl bg-blue-600/10 text-blue-400 border border-blue-500/20 flex items-center justify-center font-bold text-xs uppercase shrink-0"
+              title={`${currentUser.fullName} (${currentUser.role})`}
+            >
               {currentUser.fullName.charAt(0)}
             </div>
-            <div className="min-w-0">
-              <p className="text-xs font-bold text-slate-100 truncate">{currentUser.fullName}</p>
-              <p className="text-[9px] font-mono font-bold text-blue-400 uppercase tracking-wider truncate">
-                {currentUser.role === 'ADMIN' ? 'Chủ Cửa Hàng' : currentUser.role === 'KHO' ? 'Thủ Kho' : 'Nhân Viên'} | {currentUser.branch}
-              </p>
-            </div>
+            {!sidebarCollapsed && (
+              <div className="min-w-0">
+                <p className={`text-xs font-bold truncate ${sidebarStyle.userText}`}>{currentUser.fullName}</p>
+                <p className={`text-[9px] font-mono font-bold uppercase tracking-wider truncate ${sidebarStyle.userSub}`}>
+                  {currentUser.role === 'ADMIN' ? 'Chủ Cửa Hàng' : currentUser.role === 'KHO' ? 'Thủ Kho' : 'Nhân Viên'} | {currentUser.branch}
+                </p>
+              </div>
+            )}
           </div>
         </div>
 
@@ -1279,107 +1356,115 @@ export default function App() {
           {/* TAB 1: LẬP PHIẾU XUẤT */}
           <button
             onClick={() => selectTabOnMobile('TRANSACTION_XUAT')}
-            className={`w-full py-2.5 px-3.5 text-xs font-bold rounded-xl transition-all flex items-center gap-2.5 cursor-pointer ${
-              activeTab === 'TRANSACTION_XUAT' ? activeButtonClass : 'text-slate-400 hover:text-white hover:bg-slate-800/40'
+            className={`w-full py-2.5 px-3.5 text-xs font-bold rounded-xl transition-all flex items-center gap-2.5 cursor-pointer ${sidebarCollapsed ? 'justify-center px-0' : ''} ${
+              activeTab === 'TRANSACTION_XUAT' ? activeButtonClass : sidebarStyle.navDefault
             }`}
+            title={sidebarCollapsed ? "Lập Phiếu Xuất" : undefined}
           >
             <TrendingDown className="w-4 h-4 shrink-0 text-rose-500" /> 
-            <span>Lập Phiếu Xuất</span>
+            {!sidebarCollapsed && <span>Lập Phiếu Xuất</span>}
           </button>
 
           {/* TAB 2: LẬP PHIẾU NHẬP */}
           <button
             onClick={() => selectTabOnMobile('TRANSACTION_NHAP')}
-            className={`w-full py-2.5 px-3.5 text-xs font-bold rounded-xl transition-all flex items-center gap-2.5 cursor-pointer ${
-              activeTab === 'TRANSACTION_NHAP' ? activeButtonClass : 'text-slate-400 hover:text-white hover:bg-slate-800/40'
+            className={`w-full py-2.5 px-3.5 text-xs font-bold rounded-xl transition-all flex items-center gap-2.5 cursor-pointer ${sidebarCollapsed ? 'justify-center px-0' : ''} ${
+              activeTab === 'TRANSACTION_NHAP' ? activeButtonClass : sidebarStyle.navDefault
             }`}
+            title={sidebarCollapsed ? "Lập Phiếu Nhập" : undefined}
           >
             <TrendingUp className="w-4 h-4 shrink-0 text-emerald-500" /> 
-            <span>Lập Phiếu Nhập</span>
+            {!sidebarCollapsed && <span>Lập Phiếu Nhập</span>}
           </button>
 
-          {/* TAB 3: BÁO CÁO DOANH THU */}
-          {currentUser.role !== 'NHAN_VIEN' && (
+          {/* TAB 3: DASHBOARD */}
+          {currentUser.role === 'ADMIN' && (
             <button
               onClick={() => selectTabOnMobile('DASHBOARD')}
-              className={`w-full py-2.5 px-3.5 text-xs font-bold rounded-xl transition-all flex items-center gap-2.5 cursor-pointer ${
-                activeTab === 'DASHBOARD' ? activeButtonClass : 'text-slate-400 hover:text-white hover:bg-slate-800/40'
+              className={`w-full py-2.5 px-3.5 text-xs font-bold rounded-xl transition-all flex items-center gap-2.5 cursor-pointer ${sidebarCollapsed ? 'justify-center px-0' : ''} ${
+                activeTab === 'DASHBOARD' ? activeButtonClass : sidebarStyle.navDefault
               }`}
+              title={sidebarCollapsed ? "Dashboard" : undefined}
             >
               <TrendingUp className="w-4 h-4 shrink-0 text-blue-500" /> 
-              <span>Báo Cáo Doanh Thu</span>
+              {!sidebarCollapsed && <span>Dashboard</span>}
             </button>
           )}
 
           {/* TAB 4: QUẢN LÝ SẢN PHẨM */}
           <button
             onClick={() => selectTabOnMobile('PRODUCT')}
-            className={`w-full py-2.5 px-3.5 text-xs font-bold rounded-xl transition-all flex items-center gap-2.5 cursor-pointer ${
-              activeTab === 'PRODUCT' ? activeButtonClass : 'text-slate-400 hover:text-white hover:bg-slate-800/40'
+            className={`w-full py-2.5 px-3.5 text-xs font-bold rounded-xl transition-all flex items-center gap-2.5 cursor-pointer ${sidebarCollapsed ? 'justify-center px-0' : ''} ${
+              activeTab === 'PRODUCT' ? activeButtonClass : sidebarStyle.navDefault
             }`}
+            title={sidebarCollapsed ? "Sản phẩm" : undefined}
           >
             <Boxes className="w-4 h-4 shrink-0 text-amber-500" /> 
-            <span>Sản phẩm</span>
+            {!sidebarCollapsed && <span>Sản phẩm</span>}
           </button>
 
           {/* TAB 5: KIỂM KHO */}
           {currentUser.role !== 'NHAN_VIEN' && (
             <button
               onClick={() => selectTabOnMobile('AUDIT')}
-              className={`w-full py-2.5 px-3.5 text-xs font-bold rounded-xl transition-all flex items-center gap-2.5 cursor-pointer ${
-                activeTab === 'AUDIT' ? activeButtonClass : 'text-slate-400 hover:text-white hover:bg-slate-800/40'
+              className={`w-full py-2.5 px-3.5 text-xs font-bold rounded-xl transition-all flex items-center gap-2.5 cursor-pointer ${sidebarCollapsed ? 'justify-center px-0' : ''} ${
+                activeTab === 'AUDIT' ? activeButtonClass : sidebarStyle.navDefault
               }`}
+              title={sidebarCollapsed ? "Kiểm Kê Kho" : undefined}
             >
               <ClipboardCheck className="w-4 h-4 shrink-0 text-violet-500" /> 
-              <span>Kiểm Kê Kho</span>
+              {!sidebarCollapsed && <span>Kiểm Kê Kho</span>}
             </button>
           )}
 
           {/* TAB 6: LỊCH SỬ XUẤT NHẬP */}
           <button
             onClick={() => selectTabOnMobile('HISTORY')}
-            className={`w-full py-2.5 px-3.5 text-xs font-bold rounded-xl transition-all flex items-center gap-2.5 cursor-pointer ${
-              activeTab === 'HISTORY' ? activeButtonClass : 'text-slate-400 hover:text-white hover:bg-slate-800/40'
+            className={`w-full py-2.5 px-3.5 text-xs font-bold rounded-xl transition-all flex items-center gap-2.5 cursor-pointer ${sidebarCollapsed ? 'justify-center px-0' : ''} ${
+              activeTab === 'HISTORY' ? activeButtonClass : sidebarStyle.navDefault
             }`}
+            title={sidebarCollapsed ? "Lịch sử xuất nhập" : undefined}
           >
             <History className="w-4 h-4 shrink-0 text-indigo-500" /> 
-            <span>Lịch sử xuất nhập</span>
+            {!sidebarCollapsed && <span>Lịch sử xuất nhập</span>}
           </button>
 
           {/* TAB 7: CÀI ĐẶT DANH MỤC */}
           {currentUser.role === 'ADMIN' && (
             <button
               onClick={() => selectTabOnMobile('CATEGORY')}
-              className={`w-full py-2.5 px-3.5 text-xs font-bold rounded-xl transition-all flex items-center gap-2.5 cursor-pointer ${
-                activeTab === 'CATEGORY' ? activeButtonClass : 'text-slate-400 hover:text-white hover:bg-slate-800/40'
+              className={`w-full py-2.5 px-3.5 text-xs font-bold rounded-xl transition-all flex items-center gap-2.5 cursor-pointer ${sidebarCollapsed ? 'justify-center px-0' : ''} ${
+                activeTab === 'CATEGORY' ? activeButtonClass : sidebarStyle.navDefault
               }`}
+              title={sidebarCollapsed ? "Cài Đặt Danh Mục" : undefined}
             >
               <FolderTree className="w-4 h-4 shrink-0 text-teal-500" /> 
-              <span>Cài Đặt Danh Mục</span>
+              {!sidebarCollapsed && <span>Cài Đặt Danh Mục</span>}
             </button>
           )}
 
           {/* TAB 8: CÀI ĐẶT GIAO DIỆN */}
           <button
             onClick={() => selectTabOnMobile('SETTINGS')}
-            className={`w-full py-2.5 px-3.5 text-xs font-bold rounded-xl transition-all flex items-center gap-2.5 cursor-pointer ${
-              activeTab === 'SETTINGS' ? activeButtonClass : 'text-slate-400 hover:text-white hover:bg-slate-800/40'
+            className={`w-full py-2.5 px-3.5 text-xs font-bold rounded-xl transition-all flex items-center gap-2.5 cursor-pointer ${sidebarCollapsed ? 'justify-center px-0' : ''} ${
+              activeTab === 'SETTINGS' ? activeButtonClass : sidebarStyle.navDefault
             }`}
+            title={sidebarCollapsed ? "Cài Đặt Giao Diện" : undefined}
           >
             <Palette className="w-4 h-4 shrink-0 text-fuchsia-400" /> 
-            <span>Cài Đặt Giao Diện</span>
+            {!sidebarCollapsed && <span>Cài Đặt Giao Diện</span>}
           </button>
         </nav>
 
-        {/* PHÂN VÙNG ĐỔI VAI NHANH - CHỈ HIỂN THỊ CHO TÀI KHOẢN ADMIN */}
-        {currentUser.role === 'ADMIN' && (
-          <div className="p-4 mx-3 my-2 bg-slate-900/40 rounded-xl border border-slate-800/60 shrink-0 space-y-3.5">
+        {/* PHÂN VÙNG ĐỔI VAI NHANH - CHỈ HIỂN THỊ CHO TÀI KHOẢN ADMIN KHI CHƯA COLLAPSED */}
+        {currentUser.role === 'ADMIN' && !sidebarCollapsed && (
+          <div className={`p-4 mx-3 my-2 rounded-xl border shrink-0 space-y-3.5 ${sidebarStyle.switchBox}`}>
             <div>
-              <div className="text-[9px] font-bold uppercase tracking-wider text-slate-500 mb-1.5">Mô phỏng đổi vai nhanh:</div>
+              <div className={`text-[9px] font-bold uppercase tracking-wider mb-1.5 ${sidebarStyle.switchText}`}>Mô phỏng đổi vai nhanh:</div>
               <select
                 value={currentUser.username}
                 onChange={(e) => handleSwitchUser(e.target.value)}
-                className="w-full text-[10px] font-bold bg-slate-950 border border-slate-800 text-slate-300 rounded-lg px-2 py-1.5 focus:outline-hidden cursor-pointer"
+                className={`w-full text-[10px] font-bold rounded-lg px-2 py-1.5 focus:outline-hidden cursor-pointer ${sidebarStyle.switchSelect}`}
               >
                 {nhanViens.map(n => (
                   <option key={n.EMAIL} value={n.EMAIL}>{n.HO_TEN} ({n.ROLE === 'ADMIN' ? 'Admin' : n.ROLE === 'KHO' ? 'Thủ kho' : 'Bán hàng'})</option>
@@ -1387,11 +1472,11 @@ export default function App() {
               </select>
             </div>
 
-            <div className="h-[1px] bg-slate-800/80" />
+            <div className={`h-[1px] ${sidebarStyle.divider}`} />
 
             {/* QUYỀN HẠN INDICATOR */}
             <div className="flex items-center justify-between text-[10px]">
-              <span className="text-slate-400 font-semibold">Quyền ghi dữ liệu:</span>
+              <span className={`font-semibold ${sidebarStyle.switchText}`}>Quyền ghi dữ liệu:</span>
               <span className={`font-bold py-0.5 px-2 rounded-full font-mono text-[9px] ${currentUser.writeAccess !== false ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' : 'bg-amber-500/10 text-amber-400 border border-amber-500/20'}`}>
                 {currentUser.writeAccess !== false ? 'FULL ACCESS' : 'READ ONLY'}
               </span>
@@ -1399,8 +1484,8 @@ export default function App() {
 
             {/* SUPABASE STATUS INDICATOR */}
             {currentUser.username.includes('@') && (
-              <div className="flex items-center justify-between text-[10px] pt-1.5 border-t border-slate-800/80">
-                <span className="text-slate-400 font-semibold">Supabase Cloud:</span>
+              <div className={`flex items-center justify-between text-[10px] pt-1.5 border-t ${sidebarStyle.divider}`}>
+                <span className={`font-semibold ${sidebarStyle.switchText}`}>Supabase Cloud:</span>
                 {loadingDb ? (
                   <span className="text-blue-400 animate-pulse font-bold text-[9px] flex items-center gap-1 font-mono">
                     <span className="h-1.5 w-1.5 bg-blue-400 rounded-full animate-ping" />
@@ -1418,13 +1503,14 @@ export default function App() {
         )}
 
         {/* NÚT ĐĂNG XUẤT Ở CUỐI SIDEBAR */}
-        <div className="p-4 border-t border-slate-800 shrink-0">
+        <div className={`p-4 border-t shrink-0 ${sidebarStyle.logoutBorder}`}>
           <button
             onClick={handleLogout}
-            className="w-full py-2.5 px-3.5 bg-red-600/10 hover:bg-red-650 border border-red-500/20 hover:border-red-600 text-red-400 hover:text-white text-xs font-bold rounded-xl cursor-pointer transition-all flex items-center justify-center gap-2"
+            className={`w-full py-2.5 px-3.5 bg-red-600/10 hover:bg-red-650 border border-red-500/20 hover:border-red-600 text-red-400 hover:text-white text-xs font-bold rounded-xl cursor-pointer transition-all flex items-center justify-center gap-2 ${sidebarCollapsed ? 'px-0 justify-center' : ''}`}
+            title={sidebarCollapsed ? "Đăng xuất hệ thống" : undefined}
           >
             <LogOut className="w-4 h-4 shrink-0" />
-            <span>Đăng xuất hệ thống</span>
+            {!sidebarCollapsed && <span>Đăng xuất hệ thống</span>}
           </button>
         </div>
 
@@ -1511,12 +1597,16 @@ export default function App() {
               transition={{ duration: 0.15 }}
               className="h-full"
             >
-              {activeTab === 'DASHBOARD' && currentUser.role !== 'NHAN_VIEN' && (
+              {activeTab === 'DASHBOARD' && currentUser.role === 'ADMIN' && (
                 <Dashboard 
                   sanPhams={sanPhams}
                   nhapXuats={nhapXuats}
                   nhapXuatCTs={nhapXuatCTs}
                   chiNhanhs={listBranchNames}
+                  onQuickRestock={(sku) => {
+                    setPrefilledSku(sku);
+                    setActiveTab('TRANSACTION_NHAP'); // Lập phiếu nhập kho trực tiếp
+                  }}
                 />
               )}
 
@@ -1535,7 +1625,10 @@ export default function App() {
                   sanPhams={sanPhams}
                   chiNhanhs={listBranchNames}
                   thuongHieus={listBrandNames}
+                  brandList={thuongHieus}
                   loaiPhieuMacDinh="XUẤT"
+                  prefilledSku={prefilledSku || undefined}
+                  onClearPrefilledSku={() => setPrefilledSku(null)}
                   onSaveTransaction={handleSaveTransaction}
                   onNavigateToHistory={() => setActiveTab('HISTORY')}
                 />
@@ -1547,7 +1640,10 @@ export default function App() {
                   sanPhams={sanPhams}
                   chiNhanhs={listBranchNames}
                   thuongHieus={listBrandNames}
+                  brandList={thuongHieus}
                   loaiPhieuMacDinh="NHẬP"
+                  prefilledSku={prefilledSku || undefined}
+                  onClearPrefilledSku={() => setPrefilledSku(null)}
                   onSaveTransaction={handleSaveTransaction}
                   onNavigateToHistory={() => setActiveTab('HISTORY')}
                 />
@@ -1560,6 +1656,7 @@ export default function App() {
                   kiemKhos={kiemKhos}
                   onSaveAudit={handleSaveAudit}
                   thuongHieus={listBrandNames}
+                  brandList={thuongHieus}
                   chiNhanhs={listBranchNames}
                 />
               )}

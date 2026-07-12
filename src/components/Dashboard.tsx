@@ -18,7 +18,8 @@ import {
   RefreshCw,
   Clock,
   PieChart as PieIcon,
-  Tag
+  Tag,
+  ListPlus
 } from 'lucide-react';
 import { motion } from 'motion/react';
 import { 
@@ -50,48 +51,66 @@ interface DashboardProps {
   nhapXuats: NhapXuat[];
   nhapXuatCTs: NhapXuatCT[];
   chiNhanhs: string[];
+  onQuickRestock?: (sku: string) => void;
 }
 
-export default function Dashboard({ sanPhams, nhapXuats, nhapXuatCTs, chiNhanhs }: DashboardProps) {
+export default function Dashboard({ sanPhams, nhapXuats, nhapXuatCTs, chiNhanhs, onQuickRestock }: DashboardProps) {
   // --- 1. QUẢN LÝ TRẠNG THÁI BỘ LỌC ---
   const [selectedBranch, setSelectedBranch] = useState<string>('Tất cả');
+  const [selectedBrandFilter, setSelectedBrandFilter] = useState<string>('Tất cả');
+  const [selectedFeatureFilter, setSelectedFeatureFilter] = useState<string>('Tất cả');
+  const [selectedSkuFilter, setSelectedSkuFilter] = useState<string>('Tất cả');
+  const [chartType, setChartType] = useState<'line' | 'stacked'>('line');
   
   // Dữ liệu mẫu năm 2026, nên mặc định đặt khoảng thời gian từ 2026-07-01 đến 2026-07-31
   const [startDate, setStartDate] = useState<string>('2026-07-01');
   const [endDate, setEndDate] = useState<string>('2026-07-31');
-  const [activeQuickFilter, setActiveQuickFilter] = useState<string>('Tháng này');
+  const [activeQuickFilter, setActiveQuickFilter] = useState<string>('30d');
   const [isExporting, setIsExporting] = useState<boolean>(false);
 
   // Bảng màu sắc cao cấp, độ tương phản cao, hiện đại cho Biểu đồ Pie/Bar
   const COLORS = ['#2563eb', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899', '#14b8a6', '#f43f5e'];
 
+  // Xác định ngày cuối cùng trong bộ dữ liệu để làm mốc thời gian động (tránh trắng bảng)
+  const maxDataDateStr = useMemo(() => {
+    if (nhapXuats.length === 0) return '2026-07-12';
+    const dates = nhapXuats.map(h => h.NGAY).filter(Boolean);
+    if (dates.length === 0) return '2026-07-12';
+    dates.sort();
+    return dates[dates.length - 1];
+  }, [nhapXuats]);
+
+  const formatDate = (date: Date): string => {
+    const y = date.getFullYear();
+    const m = String(date.getMonth() + 1).padStart(2, '0');
+    const d = String(date.getDate()).padStart(2, '0');
+    return `${y}-${m}-${d}`;
+  };
+
   // --- 2. BỘ LỌC NHANH THỜI GIAN (QUICK FILTERS) ---
-  const handleQuickFilter = (type: string) => {
+  const handleQuickFilter = (type: '7d' | '30d' | '90d' | '6m' | '1y') => {
     setActiveQuickFilter(type);
-    const today = new Date();
-    // Giả lập năm 2026 dựa theo dữ liệu thực tế mẫu của applet
-    const year = 2026;
-    const month = 7; // Tháng 7
+    const refDate = new Date(maxDataDateStr);
+    setEndDate(formatDate(refDate));
     
-    if (type === 'Hôm nay') {
-      // Vì dữ liệu mẫu tập trung vào ngày 12/07/2026 nên giả lập ngày "Hôm nay" là 2026-07-12
-      setStartDate('2026-07-12');
-      setEndDate('2026-07-12');
-    } else if (type === '7 ngày qua') {
-      setStartDate('2026-07-06');
-      setEndDate('2026-07-12');
-    } else if (type === '30 ngày qua') {
-      setStartDate('2026-07-01');
-      setEndDate('2026-07-30');
-    } else if (type === 'Tháng này') {
-      setStartDate('2026-07-01');
-      setEndDate('2026-07-31');
+    const startDateObj = new Date(refDate);
+    if (type === '7d') {
+      startDateObj.setDate(startDateObj.getDate() - 7);
+    } else if (type === '30d') {
+      startDateObj.setDate(startDateObj.getDate() - 30);
+    } else if (type === '90d') {
+      startDateObj.setDate(startDateObj.getDate() - 90);
+    } else if (type === '6m') {
+      startDateObj.setMonth(startDateObj.getMonth() - 6);
+    } else if (type === '1y') {
+      startDateObj.setFullYear(startDateObj.getFullYear() - 1);
     }
+    setStartDate(formatDate(startDateObj));
   };
 
   // --- 3. LỌC DỮ LIỆU THEO ĐIỀU KIỆN ---
   // Lọc phiếu theo Chi nhánh và Khoảng thời gian
-  const filteredHeaders = useMemo(() => {
+  const filteredHeadersBase = useMemo(() => {
     return nhapXuats.filter(h => {
       const matchBranch = selectedBranch === 'Tất cả' || h.CHI_NHANH === selectedBranch;
       const matchDate = h.NGAY >= startDate && h.NGAY <= endDate;
@@ -99,19 +118,52 @@ export default function Dashboard({ sanPhams, nhapXuats, nhapXuatCTs, chiNhanhs 
     });
   }, [nhapXuats, selectedBranch, startDate, endDate]);
 
-  // Lấy danh sách ID hóa đơn đã lọc
-  const filteredInvoiceIds = useMemo(() => {
-    return new Set(filteredHeaders.map(h => h.HOA_DON));
-  }, [filteredHeaders]);
-
-  // Lọc chi tiết phiếu dựa vào danh sách ID hóa đơn đã được lọc từ Header
+  // Lọc chi tiết phiếu khớp với Header cơ sở VÀ khớp bộ lọc Brand, Tính năng, SKU
   const filteredDetails = useMemo(() => {
-    return nhapXuatCTs.filter(d => filteredInvoiceIds.has(d.HOA_DON));
-  }, [nhapXuatCTs, filteredInvoiceIds]);
+    const headerIds = new Set(filteredHeadersBase.map(h => h.HOA_DON));
+    return nhapXuatCTs.filter(d => {
+      if (!headerIds.has(d.HOA_DON)) return false;
+      
+      const matchBrand = selectedBrandFilter === 'Tất cả' || d.THUONG_HIEU === selectedBrandFilter;
+      const matchFeature = selectedFeatureFilter === 'Tất cả' || d.TINH_NANG === selectedFeatureFilter;
+      const matchSku = selectedSkuFilter === 'Tất cả' || d.SKU === selectedSkuFilter;
+      
+      return matchBrand && matchFeature && matchSku;
+    });
+  }, [nhapXuatCTs, filteredHeadersBase, selectedBrandFilter, selectedFeatureFilter, selectedSkuFilter]);
+
+  // Lọc lại Headers tương ứng với các dòng chi tiết thực tế
+  const filteredHeaders = useMemo(() => {
+    const activeHeaderIds = new Set(filteredDetails.map(d => d.HOA_DON));
+    return filteredHeadersBase.filter(h => activeHeaderIds.has(h.HOA_DON));
+  }, [filteredHeadersBase, filteredDetails]);
+
+  // --- 4. TẤT CẢ DANH SÁCH DROPDOWN CHO BỘ LỌC ĐA CHIỀU ---
+  const brandOptions = useMemo(() => {
+    const set = new Set(sanPhams.map(p => p.THUONG_HIEU));
+    return Array.from(set).sort();
+  }, [sanPhams]);
+
+  const skuOptions = useMemo(() => {
+    const filtered = sanPhams.filter(p => {
+      const matchBrand = selectedBrandFilter === 'Tất cả' || p.THUONG_HIEU === selectedBrandFilter;
+      const matchFeature = selectedFeatureFilter === 'Tất cả' || p.TINH_NANG === selectedFeatureFilter;
+      return matchBrand && matchFeature;
+    });
+    return filtered.map(p => p.SKU).sort();
+  }, [sanPhams, selectedBrandFilter, selectedFeatureFilter]);
 
   // --- 4. TÍNH TOÁN CÁC KPI CHỦ CHỐT (TẬP TRUNG HIỆU NĂNG) ---
   const kpis = useMemo(() => {
     const totalProducts = sanPhams.length;
+
+    let numPhieuNhap = 0;
+    let numPhieuXuat = 0;
+
+    filteredHeaders.forEach(h => {
+      if (h.LOAI === 'NHẬP') numPhieuNhap++;
+      if (h.LOAI === 'XUẤT') numPhieuXuat++;
+    });
 
     let totalNhap = 0;
     let totalXuat = 0;
@@ -125,11 +177,13 @@ export default function Dashboard({ sanPhams, nhapXuats, nhapXuatCTs, chiNhanhs 
 
     return {
       totalProducts,
+      numPhieuNhap,
+      numPhieuXuat,
       totalNhap,
       totalXuat,
       lowStockCount
     };
-  }, [sanPhams, filteredDetails]);
+  }, [sanPhams, filteredHeaders, filteredDetails]);
 
   // --- 5. BIỂU ĐỒ 1: TOP 5 SKU XUẤT NHIỀU NHẤT ---
   const topXuatData = useMemo(() => {
@@ -257,127 +311,203 @@ export default function Dashboard({ sanPhams, nhapXuats, nhapXuatCTs, chiNhanhs 
   return (
     <div className="space-y-6">
       
-      {/* 1. THANH BỘ LỌC ĐA NHIỆM (BỔ SUNG NÚT BẤM CHỌN NHANH THỜI GIAN) */}
-      <div id="dashboard-filter-section" className="bento-card !p-5">
-        <div className="flex flex-col xl:flex-row xl:items-center justify-between gap-4">
+      {/* 1. THANH BỘ LỌC ĐA NHIỆM CHUYÊN NGHIỆP */}
+      <div id="dashboard-filter-section" className="bento-card !p-5 bg-white border border-slate-100 rounded-2xl shadow-xs">
+        <div className="flex flex-col xl:flex-row xl:items-center justify-between gap-4 border-b border-slate-100 pb-4 mb-4">
           <div className="flex items-center gap-2.5">
             <div className="p-2 bg-blue-50 text-blue-600 rounded-lg">
               <Filter className="w-5 h-5" />
             </div>
             <div>
-              <h2 className="font-sans font-semibold text-slate-800 text-base">Báo Cáo Phân Tích Kho</h2>
-              <p className="text-xs text-slate-400 font-mono">Dữ liệu phân tích đa chiều cập nhật thời gian thực</p>
+              <h2 className="font-sans font-semibold text-slate-800 text-base">Dashboard Phân Tích Kho</h2>
+              <p className="text-xs text-slate-400 font-mono">Hệ thống phân tích đa chiều tự động cập nhật mượt mà</p>
             </div>
           </div>
 
-          <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-4 w-full xl:w-auto">
-            {/* Bộ lọc nhanh thời gian */}
-            <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-xl self-start sm:self-auto">
-              {['Hôm nay', '7 ngày qua', '30 ngày qua', 'Tháng này'].map(f => (
+          <div className="flex items-center gap-2">
+            <span className="text-[10px] uppercase font-bold text-slate-400">Đồ thị:</span>
+            <div className="flex bg-slate-100 p-1 rounded-lg">
+              <button
+                onClick={() => setChartType('line')}
+                className={`text-[10px] font-bold px-2.5 py-1 rounded-md transition-all cursor-pointer ${
+                  chartType === 'line' ? 'bg-blue-650 text-white shadow-xs' : 'text-slate-500 hover:text-slate-800'
+                }`}
+              >
+                Đường xu hướng
+              </button>
+              <button
+                onClick={() => setChartType('stacked')}
+                className={`text-[10px] font-bold px-2.5 py-1 rounded-md transition-all cursor-pointer ${
+                  chartType === 'stacked' ? 'bg-blue-650 text-white shadow-xs' : 'text-slate-500 hover:text-slate-800'
+                }`}
+              >
+                Cột chồng
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-6 gap-4">
+          {/* Bộ lọc nhanh thời gian (Date Range presets) */}
+          <div className="space-y-1 md:col-span-2">
+            <label className="text-[9px] uppercase tracking-wider font-extrabold text-slate-400 flex items-center gap-1">
+              <Clock className="w-3 h-3" /> Lọc nhanh khoảng thời gian
+            </label>
+            <div className="flex items-center gap-1 bg-slate-100/80 p-1 rounded-lg h-[34px]">
+              {([
+                { key: '7d', label: '7D' },
+                { key: '30d', label: '30D' },
+                { key: '90d', label: '90D' },
+                { key: '6m', label: '6M' },
+                { key: '1y', label: '1Y' }
+              ] as const).map(f => (
                 <button
-                  key={f}
-                  onClick={() => handleQuickFilter(f)}
-                  className={`text-[10px] font-bold px-2.5 py-1.5 rounded-lg transition-all cursor-pointer ${
-                    activeQuickFilter === f ? 'bg-red-600 text-white shadow-xs' : 'text-slate-500 hover:text-slate-800'
+                  key={f.key}
+                  onClick={() => handleQuickFilter(f.key)}
+                  className={`flex-1 text-[10px] font-extrabold py-1 rounded-md transition-all cursor-pointer ${
+                    activeQuickFilter === f.key ? 'bg-red-600 text-white shadow-2xs' : 'text-slate-500 hover:text-slate-800'
                   }`}
                 >
-                  {f}
+                  {f.label}
                 </button>
               ))}
             </div>
+          </div>
 
-            {/* Bộ lọc gốc */}
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 flex-1 sm:flex-initial">
-              {/* Chi nhánh */}
-              <div className="space-y-1">
-                <label className="text-[9px] uppercase tracking-wider font-bold text-slate-400 flex items-center gap-1">
-                  <MapPin className="w-3 h-3" /> Chi nhánh
-                </label>
-                <select 
-                  value={selectedBranch}
-                  onChange={(e) => { setSelectedBranch(e.target.value); setActiveQuickFilter(''); }}
-                  className="w-full text-xs font-semibold text-slate-700 bg-slate-50 border border-slate-100 rounded-lg py-1.5 px-2 focus:outline-hidden"
-                >
-                  <option value="Tất cả">Tất cả chi nhánh</option>
-                  {chiNhanhs.map(branch => (
-                    <option key={branch} value={branch}>{branch}</option>
-                  ))}
-                </select>
-              </div>
+          {/* Chi nhánh */}
+          <div className="space-y-1">
+            <label className="text-[9px] uppercase tracking-wider font-extrabold text-slate-400 flex items-center gap-1">
+              <MapPin className="w-3 h-3" /> Chi nhánh
+            </label>
+            <select 
+              value={selectedBranch}
+              onChange={(e) => { setSelectedBranch(e.target.value); setActiveQuickFilter(''); }}
+              className="w-full text-xs font-semibold text-slate-700 bg-slate-50 border border-slate-150 rounded-lg py-1.5 px-2 focus:outline-hidden"
+            >
+              <option value="Tất cả">Tất cả chi nhánh</option>
+              {chiNhanhs.map(branch => (
+                <option key={branch} value={branch}>{branch}</option>
+              ))}
+            </select>
+          </div>
 
-              {/* Từ ngày */}
-              <div className="space-y-1">
-                <label className="text-[9px] uppercase tracking-wider font-bold text-slate-400 flex items-center gap-1">
-                  <Calendar className="w-3 h-3" /> Từ ngày
-                </label>
-                <input 
-                  type="date"
-                  value={startDate}
-                  onChange={(e) => { setStartDate(e.target.value); setActiveQuickFilter(''); }}
-                  className="w-full text-xs font-semibold text-slate-700 bg-slate-50 border border-slate-100 rounded-lg py-1 px-2 focus:outline-hidden"
-                />
-              </div>
+          {/* Thương hiệu */}
+          <div className="space-y-1">
+            <label className="text-[9px] uppercase tracking-wider font-extrabold text-slate-400 flex items-center gap-1">
+              <Tag className="w-3 h-3" /> Thương hiệu
+            </label>
+            <select 
+              value={selectedBrandFilter}
+              onChange={(e) => { setSelectedBrandFilter(e.target.value); setSelectedSkuFilter('Tất cả'); }}
+              className="w-full text-xs font-semibold text-slate-700 bg-slate-50 border border-slate-150 rounded-lg py-1.5 px-2 focus:outline-hidden"
+            >
+              <option value="Tất cả">Tất cả thương hiệu</option>
+              {brandOptions.map(b => (
+                <option key={b} value={b}>{b}</option>
+              ))}
+            </select>
+          </div>
 
-              {/* Đến ngày */}
-              <div className="space-y-1">
-                <label className="text-[9px] uppercase tracking-wider font-bold text-slate-400 flex items-center gap-1">
-                  <Calendar className="w-3 h-3" /> Đến ngày
-                </label>
-                <input 
-                  type="date"
-                  value={endDate}
-                  onChange={(e) => { setEndDate(e.target.value); setActiveQuickFilter(''); }}
-                  className="w-full text-xs font-semibold text-slate-700 bg-slate-50 border border-slate-100 rounded-lg py-1 px-2 focus:outline-hidden"
-                />
-              </div>
-            </div>
+          {/* Tính năng */}
+          <div className="space-y-1">
+            <label className="text-[9px] uppercase tracking-wider font-extrabold text-slate-400 flex items-center gap-1">
+              <Filter className="w-3 h-3" /> Tính năng
+            </label>
+            <select 
+              value={selectedFeatureFilter}
+              onChange={(e) => { setSelectedFeatureFilter(e.target.value); setSelectedSkuFilter('Tất cả'); }}
+              className="w-full text-xs font-semibold text-slate-700 bg-slate-50 border border-slate-150 rounded-lg py-1.5 px-2 focus:outline-hidden"
+            >
+              <option value="Tất cả">Tất cả tính năng</option>
+              <option value="ĐM">Đổi màu (ĐM)</option>
+              <option value="ASX">Chống ánh sáng xanh (ASX)</option>
+            </select>
+          </div>
+
+          {/* SKU cụ thể */}
+          <div className="space-y-1">
+            <label className="text-[9px] uppercase tracking-wider font-extrabold text-slate-400 flex items-center gap-1">
+              <Boxes className="w-3 h-3" /> Mã SKU tròng kính
+            </label>
+            <select 
+              value={selectedSkuFilter}
+              onChange={(e) => setSelectedSkuFilter(e.target.value)}
+              className="w-full text-xs font-semibold text-slate-700 bg-slate-50 border border-slate-150 rounded-lg py-1.5 px-2 focus:outline-hidden"
+            >
+              <option value="Tất cả">Tất cả SKU</option>
+              {skuOptions.map(sku => (
+                <option key={sku} value={sku}>{sku}</option>
+              ))}
+            </select>
+          </div>
+
+          {/* Ngày bắt đầu */}
+          <div className="space-y-1 lg:col-span-3">
+            <label className="text-[9px] uppercase tracking-wider font-extrabold text-slate-400 flex items-center gap-1">
+              <Calendar className="w-3 h-3" /> Ngày bắt đầu
+            </label>
+            <input 
+              type="date"
+              value={startDate}
+              onChange={(e) => { setStartDate(e.target.value); setActiveQuickFilter(''); }}
+              className="w-full text-xs font-bold text-slate-755 bg-slate-50 border border-slate-150 rounded-lg py-1.5 px-2 focus:outline-hidden font-mono"
+            />
+          </div>
+
+          {/* Ngày kết thúc */}
+          <div className="space-y-1 lg:col-span-3">
+            <label className="text-[9px] uppercase tracking-wider font-extrabold text-slate-400 flex items-center gap-1">
+              <Calendar className="w-3 h-3" /> Ngày kết thúc
+            </label>
+            <input 
+              type="date"
+              value={endDate}
+              onChange={(e) => { setEndDate(e.target.value); setActiveQuickFilter(''); }}
+              className="w-full text-xs font-bold text-slate-755 bg-slate-50 border border-slate-150 rounded-lg py-1.5 px-2 focus:outline-hidden font-mono"
+            />
           </div>
         </div>
       </div>
 
-      {/* 2. CHỈ SỐ KPI CHỦ CHỐT */}
+      {/* 2. CHỈ SỐ KPI CHỦ CHỐT - PHÙ HỢP HOÀN TOÀN VỚI YÊU CẦU NGHIỆP VỤ */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        <div className="bento-card !p-4 flex items-center gap-4">
-          <div className="p-3 bg-blue-50 text-blue-600 rounded-xl">
-            <Boxes className="w-6 h-6" />
+        <div className="bento-card !p-4 flex items-center gap-4 bg-white border border-slate-100 rounded-2xl shadow-xs">
+          <div className="p-3 bg-emerald-50 text-emerald-600 rounded-xl">
+            <FileSpreadsheet className="w-6 h-6" />
           </div>
           <div>
-            <p className="stat-label !mb-0">Tổng sản phẩm (SKU)</p>
-            <p className="stat-value text-slate-800 font-mono font-bold">{kpis.totalProducts}</p>
+            <p className="stat-label !mb-0 text-slate-400 font-bold text-[10px] uppercase">Tổng phiếu nhập</p>
+            <p className="stat-value text-slate-850 font-mono font-bold text-lg">{kpis.numPhieuNhap}</p>
           </div>
         </div>
 
-        <div className="bento-card !p-4 flex items-center gap-4">
-          <div className="p-3 bg-emerald-50 text-emerald-600 rounded-xl">
+        <div className="bento-card !p-4 flex items-center gap-4 bg-white border border-slate-100 rounded-2xl shadow-xs">
+          <div className="p-3 bg-rose-50 text-rose-600 rounded-xl">
+            <FileText className="w-6 h-6" />
+          </div>
+          <div>
+            <p className="stat-label !mb-0 text-slate-400 font-bold text-[10px] uppercase">Tổng phiếu xuất</p>
+            <p className="stat-value text-slate-850 font-mono font-bold text-lg">{kpis.numPhieuXuat}</p>
+          </div>
+        </div>
+
+        <div className="bento-card !p-4 flex items-center gap-4 bg-white border border-slate-100 rounded-2xl shadow-xs">
+          <div className="p-3 bg-teal-50 text-teal-600 rounded-xl">
             <TrendingUp className="w-6 h-6" />
           </div>
           <div>
-            <p className="stat-label !mb-0">Tổng số lượng nhập</p>
-            <p className="stat-value text-slate-800 font-mono font-bold">{kpis.totalNhap}</p>
+            <p className="stat-label !mb-0 text-slate-400 font-bold text-[10px] uppercase">Số lượng đã nhập</p>
+            <p className="stat-value text-slate-855 font-mono font-bold text-lg">{kpis.totalNhap} <span className="text-[10px] text-slate-400">miếng</span></p>
           </div>
         </div>
 
-        <div className="bento-card !p-4 flex items-center gap-4">
-          <div className="p-3 bg-purple-50 text-purple-600 rounded-xl">
+        <div className="bento-card !p-4 flex items-center gap-4 bg-white border border-slate-100 rounded-2xl shadow-xs">
+          <div className="p-3 bg-indigo-50 text-indigo-600 rounded-xl">
             <TrendingDown className="w-6 h-6" />
           </div>
           <div>
-            <p className="stat-label !mb-0">Tổng số lượng xuất</p>
-            <p className="stat-value text-slate-800 font-mono font-bold">{kpis.totalXuat}</p>
-          </div>
-        </div>
-
-        <div className={`bento-card !p-4 flex items-center gap-4 transition-all duration-300 ${
-          kpis.lowStockCount > 0 ? '!border-red-200 bg-red-50/20 shadow-2xs' : ''
-        }`}>
-          <div className={`p-3 rounded-xl ${kpis.lowStockCount > 0 ? 'bg-red-50 text-red-600 animate-pulse' : 'bg-slate-50 text-slate-400'}`}>
-            <AlertTriangle className="w-6 h-6" />
-          </div>
-          <div>
-            <p className="stat-label !mb-0">Sắp hết hàng (Ngưỡng đỏ)</p>
-            <p className={`stat-value font-mono font-bold ${kpis.lowStockCount > 0 ? '!text-red-600' : 'text-slate-800'}`}>
-              {kpis.lowStockCount}
-            </p>
+            <p className="stat-label !mb-0 text-slate-400 font-bold text-[10px] uppercase">Số lượng đã xuất</p>
+            <p className="stat-value text-slate-855 font-mono font-bold text-lg">{kpis.totalXuat} <span className="text-[10px] text-slate-400">miếng</span></p>
           </div>
         </div>
       </div>
@@ -385,22 +515,34 @@ export default function Dashboard({ sanPhams, nhapXuats, nhapXuatCTs, chiNhanhs 
       {/* 3. ĐỒ THỊ BIỂU DIỄN PHÂN TÍCH CHUYÊN SÂU */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         
-        {/* Biểu đồ 1: Biến Động Nhập Xuất Theo Ngày (Line Chart) */}
+        {/* Biểu đồ 1: Biến Động Nhập Xuất Theo Ngày (Line hoặc Stacked Bar) */}
         <div className="bento-card !p-5">
-          <h3 className="font-sans font-bold text-slate-800 text-xs uppercase border-b border-slate-50 pb-2 mb-4">
-            Biến Động Nhập Xuất Theo Ngày
+          <h3 className="font-sans font-bold text-slate-850 text-xs uppercase border-b border-slate-50 pb-2 mb-4 flex justify-between items-center">
+            <span>Biến Động Nhập Xuất Theo Ngày</span>
+            <span className="text-[10px] text-slate-400 normal-case font-mono">Dữ liệu theo kỳ lọc</span>
           </h3>
           <div className="h-64 w-full">
             {transactionByDateData.length > 0 ? (
               <ResponsiveContainer width="100%" height="100%">
-                <LineChart data={transactionByDateData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
-                  <XAxis dataKey="name" stroke="#94a3b8" fontSize={10} tickLine={false} />
-                  <YAxis stroke="#94a3b8" fontSize={11} tickLine={false} />
-                  <Tooltip contentStyle={{ borderRadius: 8, border: '1px solid #f1f5f9', fontSize: 11 }} />
-                  <Legend wrapperStyle={{ fontSize: 11 }} />
-                  <Line type="monotone" dataKey="Nhập" stroke="#10b981" strokeWidth={2.5} dot={{ r: 4 }} activeDot={{ r: 6 }} />
-                  <Line type="monotone" dataKey="Xuất" stroke="#8b5cf6" strokeWidth={2.5} dot={{ r: 4 }} activeDot={{ r: 6 }} />
-                </LineChart>
+                {chartType === 'line' ? (
+                  <LineChart data={transactionByDateData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
+                    <XAxis dataKey="name" stroke="#94a3b8" fontSize={10} tickLine={false} />
+                    <YAxis stroke="#94a3b8" fontSize={11} tickLine={false} />
+                    <Tooltip contentStyle={{ borderRadius: 8, border: '1px solid #f1f5f9', fontSize: 11 }} />
+                    <Legend wrapperStyle={{ fontSize: 11 }} />
+                    <Line type="monotone" dataKey="Nhập" stroke="#10b981" strokeWidth={2.5} dot={{ r: 4 }} activeDot={{ r: 6 }} />
+                    <Line type="monotone" dataKey="Xuất" stroke="#8b5cf6" strokeWidth={2.5} dot={{ r: 4 }} activeDot={{ r: 6 }} />
+                  </LineChart>
+                ) : (
+                  <BarChart data={transactionByDateData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
+                    <XAxis dataKey="name" stroke="#94a3b8" fontSize={10} tickLine={false} />
+                    <YAxis stroke="#94a3b8" fontSize={11} tickLine={false} />
+                    <Tooltip contentStyle={{ borderRadius: 8, border: '1px solid #f1f5f9', fontSize: 11 }} />
+                    <Legend wrapperStyle={{ fontSize: 11 }} />
+                    <Bar dataKey="Nhập" stackId="a" fill="#10b981" />
+                    <Bar dataKey="Xuất" stackId="a" fill="#8b5cf6" radius={[4, 4, 0, 0]} />
+                  </BarChart>
+                )}
               </ResponsiveContainer>
             ) : (
               <div className="h-full flex items-center justify-center text-xs text-slate-400 font-mono">
@@ -535,7 +677,7 @@ export default function Dashboard({ sanPhams, nhapXuats, nhapXuatCTs, chiNhanhs 
                 if (ratio > 0.5) barColor = 'bg-amber-500';
 
                 return (
-                  <div key={p.SKU} className="py-3 flex items-center justify-between gap-4">
+                  <div key={p.SKU} className="py-3 flex items-center justify-between gap-4 hover:bg-slate-50/40 px-2 rounded-xl transition-colors">
                     <div className="space-y-1 min-w-0 flex-1">
                       <p className="text-xs font-semibold text-slate-700 truncate">{p.SKU}</p>
                       <div className="w-full bg-slate-100 rounded-full h-1.5 mt-1.5">
@@ -545,9 +687,21 @@ export default function Dashboard({ sanPhams, nhapXuats, nhapXuatCTs, chiNhanhs 
                         />
                       </div>
                     </div>
-                    <div className="text-right shrink-0">
-                      <p className="text-xs font-bold text-red-600">{p.TON_CUOI} {p.DVT}</p>
-                      <p className="text-[10px] text-slate-400 font-mono">Tối thiểu: {p.TON_TOI_THIEU}</p>
+                    <div className="flex items-center gap-3 shrink-0">
+                      <div className="text-right">
+                        <p className="text-xs font-bold text-red-600">{p.TON_CUOI} {p.DVT}</p>
+                        <p className="text-[10px] text-slate-400 font-mono">Tối thiểu: {p.TON_TOI_THIEU}</p>
+                      </div>
+                      {onQuickRestock && (
+                        <button
+                          onClick={() => onQuickRestock(p.SKU)}
+                          className="p-1.5 bg-blue-50 text-blue-600 hover:bg-blue-100 rounded-lg transition-all text-[10px] font-bold flex items-center gap-1 cursor-pointer shadow-3xs"
+                          title="Lập phiếu nhập nhanh cho sản phẩm này"
+                        >
+                          <ListPlus className="w-3.5 h-3.5" />
+                          <span className="hidden sm:inline">Nhập</span>
+                        </button>
+                      )}
                     </div>
                   </div>
                 );

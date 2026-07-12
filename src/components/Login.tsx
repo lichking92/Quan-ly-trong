@@ -19,9 +19,10 @@ import { supabase } from '../supabaseClient';
 
 interface LoginProps {
   onLoginSuccess: (user: User) => void;
+  nhanViens?: NhanVien[];
 }
 
-export default function Login({ onLoginSuccess }: LoginProps) {
+export default function Login({ onLoginSuccess, nhanViens = [] }: LoginProps) {
   const [username, setUsername] = useState<string>('');
   const [password, setPassword] = useState<string>('');
   const [showPassword, setShowPassword] = useState<boolean>(false);
@@ -47,24 +48,45 @@ export default function Login({ onLoginSuccess }: LoginProps) {
 
     const lowerUser = inputUser.toLowerCase();
 
-    // 1. Kiểm tra tài khoản trong danh sách B_NHANVIEN được lưu ở localStorage / database trước
+    // 1. Kiểm tra tài khoản trong danh sách B_NHANVIEN (từ props & localStorage)
     try {
       const savedNhanViens = localStorage.getItem('B_NHANVIEN');
-      const listNhanVien: NhanVien[] = savedNhanViens ? JSON.parse(savedNhanViens) : [];
+      const localNhanVien: NhanVien[] = savedNhanViens ? JSON.parse(savedNhanViens) : [];
       
-      const staffMember = listNhanVien.find(n => 
-        (n.TEN_DANG_NHAP && n.TEN_DANG_NHAP.toLowerCase() === lowerUser)
-      );
+      // Hợp nhất dữ liệu để đảm bảo chính xác nhất
+      const allNhanViens = [...nhanViens];
+      localNhanVien.forEach(ln => {
+        if (!allNhanViens.some(n => n.MA_NV === ln.MA_NV)) {
+          allNhanViens.push(ln);
+        }
+      });
+
+      // Tìm kiếm nhân viên hợp lệ (so sánh không phân biệt chữ hoa/thường, hỗ trợ cả mã nhân viên, email, tên đăng nhập)
+      const staffMember = allNhanViens.find(n => {
+        const storedUser = (n.TEN_DANG_NHAP || '').trim().toLowerCase();
+        const storedEmail = (n.EMAIL || '').trim().toLowerCase();
+        const storedCode = (n.MA_NV || '').trim().toLowerCase();
+        return storedUser === lowerUser || storedEmail === lowerUser || storedCode === lowerUser;
+      });
 
       if (staffMember) {
-        // Kiểm tra mật khẩu (hỗ trợ cả cột MAT_KHAU mới và PASSWORD cũ để tương thích ngược)
-        const matchedPassword = staffMember.MAT_KHAU || staffMember.PASSWORD;
+        // KIỂM TRA TRẠNG THÁI HOẠT ĐỘNG (Lọc tài khoản hoạt động)
+        const rawStatus = (staffMember.TRANG_THAI || '').trim().toUpperCase();
+        // Nếu có trạng thái và không phải là hoạt động/active/kích hoạt
+        if (rawStatus && rawStatus !== 'HOẠT ĐỘNG' && rawStatus !== 'ACTIVE' && rawStatus !== 'KÍCH HOẠT' && rawStatus !== 'HOAT DONG') {
+          setErrorMsg('Tài khoản này đã bị khóa hoặc tạm ngừng hoạt động. Vui lòng liên hệ Quản lý.');
+          setLoading(false);
+          return;
+        }
+
+        // Kiểm tra mật khẩu (hỗ trợ cả MAT_KHAU và PASSWORD cũ, so sánh phân biệt chữ hoa/thường, loại bỏ khoảng trắng thừa)
+        const matchedPassword = (staffMember.MAT_KHAU || staffMember.PASSWORD || '').trim();
         if (matchedPassword === cleanPass) {
           setLoading(false);
           onLoginSuccess({
             username: staffMember.EMAIL || staffMember.TEN_DANG_NHAP || staffMember.HO_TEN,
             fullName: staffMember.HO_TEN,
-            role: staffMember.ROLE,
+            role: staffMember.VAI_TRO || staffMember.ROLE,
             branch: staffMember.CHI_NHANH,
             writeAccess: staffMember.WRITE_ACCESS !== false,
             WRITE_ACCESS: staffMember.WRITE_ACCESS !== false,

@@ -33,16 +33,62 @@ import { generateSKUString, formatDop } from '../data/mockData';
 interface ProductManagementProps {
   sanPhams: SanPham[];
   onAddProduct: (newProduct: SanPham) => void;
+  onUpdateProduct?: (sku: string, updatedFields: Partial<SanPham>) => void;
   thuongHieus: string[];
   currentUser: any;
 }
 
-export default function ProductManagement({ sanPhams = [], onAddProduct, thuongHieus = [], currentUser }: ProductManagementProps) {
+export default function ProductManagement({ sanPhams = [], onAddProduct, onUpdateProduct, thuongHieus = [], currentUser }: ProductManagementProps) {
   // --- 1. QUẢN LÝ TRẠNG THÁI HIỂN THỊ & TÌM KIẾM ---
   const [searchTerm, setSearchTerm] = useState<string>('');
   const [filterBrand, setFilterBrand] = useState<string>('Tất cả');
-  const [filterStockStatus, setFilterStockStatus] = useState<'Tất cả' | 'Sắp hết' | 'An toàn'>('Tất cả');
+  const [filterStockStatus, setFilterStockStatus] = useState<'Tất cả' | 'Hết hàng' | 'Nguy cấp' | 'Cần nhập thêm' | 'An toàn' | 'Dư thừa'>('Tất cả');
   const [showAddModal, setShowAddModal] = useState<boolean>(false);
+
+  // --- TRẠNG THÁI SẮP XẾP BẢNG SẢN PHẨM ---
+  const [sortColumn, setSortColumn] = useState<string>('');
+  const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('asc');
+
+  // --- TRẠNG THÁI KÍCH THƯỚC CỘT (RESIZABLE) ---
+  const [columnWidths, setColumnWidths] = useState<Record<string, number>>(() => {
+    const saved = localStorage.getItem('PRODUCT_TABLE_COLUMN_WIDTHS');
+    return saved ? JSON.parse(saved) : {
+      sku: 190,
+      name: 320,
+      sph: 110,
+      cyl: 110,
+      tonDau: 100,
+      nhapXuat: 130,
+      tonCuoi: 125,
+      tonToiThieu: 145,
+      status: 160
+    };
+  });
+
+  // Hàm xử lý kéo mép cột thay đổi kích thước
+  const handleMouseDown = (colKey: string, e: React.MouseEvent) => {
+    e.preventDefault();
+    const startX = e.pageX;
+    const startWidth = columnWidths[colKey] || 100;
+
+    const handleMouseMove = (moveEvent: MouseEvent) => {
+      const deltaX = moveEvent.pageX - startX;
+      const newWidth = Math.max(60, startWidth + deltaX); // Tối thiểu 60px
+      setColumnWidths(prev => {
+        const next = { ...prev, [colKey]: newWidth };
+        localStorage.setItem('PRODUCT_TABLE_COLUMN_WIDTHS', JSON.stringify(next));
+        return next;
+      });
+    };
+
+    const handleMouseUp = () => {
+      document.removeEventListener('mousemove', handleMouseMove);
+      document.removeEventListener('mouseup', handleMouseUp);
+    };
+
+    document.addEventListener('mousemove', handleMouseMove);
+    document.addEventListener('mouseup', handleMouseUp);
+  };
 
   // --- PHÂN TRANG CHO SẢN PHẨM (TỐI ƯU HÓA TRÁNH LAG) ---
   const [currentPage, setCurrentPage] = useState<number>(1);
@@ -138,27 +184,101 @@ export default function ProductManagement({ sanPhams = [], onAddProduct, thuongH
     return `Tròng kính ${labelTinhNang} ${formBrand} ${formChietXuat} ${labelDo}${labelCyl}`;
   }, [formBrand, formChietXuat, formTinhNang, formDoSph, formDoCyl, formDoSphType]);
 
-  // --- 5. LỌC DANH SÁCH SẢN PHẨM HIỂN THỊ ---
+  // --- 5. LỌC & SẮP XẾP DANH SÁCH SẢN PHẨM HIỂN THỊ ---
+  const getStockStatusCode = (tonCuoi: number, tonToiThieu: number = 0) => {
+    if (tonCuoi === 0) return 'Hết hàng';
+    const min = tonToiThieu || 0;
+    if (min === 0) return 'An toàn';
+    const ratio = tonCuoi / min;
+    if (ratio < 0.5) return 'Nguy cấp';
+    if (ratio < 1) return 'Thấp';
+    if (ratio < 2) return 'Đạt yêu cầu';
+    return 'An toàn';
+  };
+
   const filteredProducts = useMemo(() => {
     return sanPhams.filter(p => {
       const matchSearch = p.SKU.toLowerCase().includes(searchTerm.toLowerCase()) || 
                           p.TEN_SAN_PHAM.toLowerCase().includes(searchTerm.toLowerCase());
       const matchBrand = filterBrand === 'Tất cả' || p.THUONG_HIEU === filterBrand;
-      const matchStock = filterStockStatus === 'Tất cả' || 
-                         (filterStockStatus === 'Sắp hết' && p.TON_CUOI <= p.TON_TOI_THIEU) ||
-                         (filterStockStatus === 'An toàn' && p.TON_CUOI > p.TON_TOI_THIEU);
+      
+      const status = getStockStatusCode(p.TON_CUOI, p.TON_TOI_THIEU);
+      const matchStock = filterStockStatus === 'Tất cả' || status === filterStockStatus;
+      
       return matchSearch && matchBrand && matchStock;
     });
   }, [sanPhams, searchTerm, filterBrand, filterStockStatus]);
 
+  const sortedProducts = useMemo(() => {
+    if (!sortColumn) return filteredProducts;
+
+    return [...filteredProducts].sort((a, b) => {
+      let valA: any;
+      let valB: any;
+
+      if (sortColumn === 'sku') {
+        valA = a.SKU;
+        valB = b.SKU;
+      } else if (sortColumn === 'brand') {
+        valA = a.THUONG_HIEU;
+        valB = b.THUONG_HIEU;
+      } else if (sortColumn === 'chietXuat') {
+        valA = parseFloat(a.CHIET_XUAT) || 0;
+        valB = parseFloat(b.CHIET_XUAT) || 0;
+      } else if (sortColumn === 'tonDau') {
+        valA = a.TON_DAU;
+        valB = b.TON_DAU;
+      } else if (sortColumn === 'nhap') {
+        valA = a.NHAP;
+        valB = b.NHAP;
+      } else if (sortColumn === 'xuat') {
+        valA = a.XUAT;
+        valB = b.XUAT;
+      } else if (sortColumn === 'tonCuoi') {
+        valA = a.TON_CUOI;
+        valB = b.TON_CUOI;
+      } else if (sortColumn === 'tonToiThieu') {
+        valA = a.TON_TOI_THIEU ?? 0;
+        valB = b.TON_TOI_THIEU ?? 0;
+      } else if (sortColumn === 'status') {
+        const getWeight = (p: SanPham) => {
+          const status = getStockStatusCode(p.TON_CUOI, p.TON_TOI_THIEU);
+          if (status === 'Hết hàng') return 1;
+          if (status === 'Nguy cấp') return 2;
+          if (status === 'Thấp') return 3;
+          if (status === 'Đạt yêu cầu') return 4;
+          return 5; // An toàn
+        };
+        valA = getWeight(a);
+        valB = getWeight(b);
+      } else {
+        valA = a[sortColumn as keyof SanPham];
+        valB = b[sortColumn as keyof SanPham];
+      }
+
+      if (valA === undefined || valA === null) valA = 0;
+      if (valB === undefined || valB === null) valB = 0;
+
+      if (typeof valA === 'string' && typeof valB === 'string') {
+        return sortDirection === 'asc' 
+          ? valA.localeCompare(valB) 
+          : valB.localeCompare(valA);
+      } else {
+        return sortDirection === 'asc' 
+          ? (valA as number) - (valB as number) 
+          : (valB as number) - (valA as number);
+      }
+    });
+  }, [filteredProducts, sortColumn, sortDirection]);
+
   const totalPages = useMemo(() => {
-    return Math.ceil(filteredProducts.length / itemsPerPage) || 1;
-  }, [filteredProducts, itemsPerPage]);
+    return Math.ceil(sortedProducts.length / itemsPerPage) || 1;
+  }, [sortedProducts, itemsPerPage]);
 
   const paginatedProducts = useMemo(() => {
     const startIndex = (currentPage - 1) * itemsPerPage;
-    return filteredProducts.slice(startIndex, startIndex + itemsPerPage);
-  }, [filteredProducts, currentPage, itemsPerPage]);
+    return sortedProducts.slice(startIndex, startIndex + itemsPerPage);
+  }, [sortedProducts, currentPage, itemsPerPage]);
 
   // --- 6. XỬ LÝ LƯU SẢN PHẨM MỚI (VALIDATION CHẶT CHẼ) ---
   const handleSaveProduct = (e: React.FormEvent) => {
@@ -201,6 +321,69 @@ export default function ProductManagement({ sanPhams = [], onAddProduct, thuongH
     setFormTonDau(10);
     setFormTonToiThieu(5);
     setFormError('');
+  };
+
+  // --- 5.1 HEADER SẮP XẾP ---
+  const renderSortHeader = (colKey: string, label: string) => {
+    const isSorted = sortColumn === colKey;
+    return (
+      <div 
+        onClick={() => {
+          if (sortColumn === colKey) {
+            setSortDirection(prev => prev === 'asc' ? 'desc' : 'asc');
+          } else {
+            setSortColumn(colKey);
+            setSortDirection('asc');
+          }
+        }}
+        className="flex items-center gap-1 cursor-pointer hover:text-slate-700 transition-colors select-none font-bold py-1"
+      >
+        <span>{label}</span>
+        <span className="flex flex-col text-[7px] leading-tight text-slate-300">
+          <span className={isSorted && sortDirection === 'asc' ? 'text-red-600 font-extrabold' : ''}>▲</span>
+          <span className={isSorted && sortDirection === 'desc' ? 'text-red-600 font-extrabold' : ''}>▼</span>
+        </span>
+      </div>
+    );
+  };
+
+  const getStockStatusDetails = (tonCuoi: number, tonToiThieu: number = 0) => {
+    if (tonCuoi === 0) {
+      return {
+        label: '🔴 Hết hàng',
+        className: 'text-red-800 bg-red-100 border border-red-200 dark:text-red-200 dark:bg-red-950/80 dark:border-red-900 font-extrabold shadow-2xs'
+      };
+    }
+    const min = tonToiThieu || 0;
+    if (min === 0) {
+      return {
+        label: '🔵 An toàn',
+        className: 'text-blue-800 bg-blue-100 border border-blue-200 dark:text-blue-200 dark:bg-blue-950/80 dark:border-blue-900 font-bold'
+      };
+    }
+    const ratio = tonCuoi / min;
+    if (ratio < 0.5) {
+      return {
+        label: '🔴 Nguy cấp',
+        className: 'text-rose-800 bg-rose-100 border border-rose-200 dark:text-rose-200 dark:bg-rose-950/80 dark:border-rose-900 font-extrabold animate-pulse'
+      };
+    }
+    if (ratio < 1) {
+      return {
+        label: '🟠 Thấp',
+        className: 'text-amber-800 bg-amber-100 border border-amber-200 dark:text-amber-200 dark:bg-amber-950/80 dark:border-amber-900 font-extrabold'
+      };
+    }
+    if (ratio < 2) {
+      return {
+        label: '🟢 Đạt yêu cầu',
+        className: 'text-emerald-800 bg-emerald-100 border border-emerald-200 dark:text-emerald-200 dark:bg-emerald-950/80 dark:border-emerald-900 font-bold'
+      };
+    }
+    return {
+      label: '🔵 An toàn',
+      className: 'text-blue-800 bg-blue-100 border border-blue-200 dark:text-blue-200 dark:bg-blue-950/80 dark:border-blue-900 font-bold'
+    };
   };
 
   return (
@@ -254,8 +437,11 @@ export default function ProductManagement({ sanPhams = [], onAddProduct, thuongH
             className="text-base md:text-xs bg-slate-50 border border-slate-100 text-slate-600 font-semibold py-2 px-3 rounded-xl focus:outline-hidden"
           >
             <option value="Tất cả">Mọi trạng thái kho</option>
-            <option value="Sắp hết">Sắp hết hàng ⚠️</option>
-            <option value="An toàn">An toàn tồn kho ✅</option>
+            <option value="Hết hàng">🔴 Hết hàng</option>
+            <option value="Nguy cấp">🔴 Nguy cấp</option>
+            <option value="Thấp">🟠 Thấp</option>
+            <option value="Đạt yêu cầu">🟢 Đạt yêu cầu</option>
+            <option value="An toàn">🔵 An toàn</option>
           </select>
 
           {/* Nút thêm mới - Chỉ hiện nếu có quyền ghi */}
@@ -272,89 +458,233 @@ export default function ProductManagement({ sanPhams = [], onAddProduct, thuongH
       </div>
 
       {/* 2. HIỂN THỊ DANH SÁCH SẢN PHẨM (B_SANPHAM) */}
-      <div className="bento-card !p-0 overflow-hidden">
-        <div className="overflow-x-auto">
-          <table className="w-full text-left border-collapse">
+      <div className="bento-card !p-0 overflow-hidden shadow-lg border border-slate-100">
+        <div className="overflow-x-auto relative">
+          <table className="w-full text-left border-collapse table-fixed">
             <thead>
               <tr className="bg-slate-50/75 border-b border-slate-100">
-                <th className="py-3.5 px-4 text-[11px] font-bold text-slate-400 uppercase tracking-wider font-mono">Mã SKU</th>
-                <th className="py-3.5 px-4 text-[11px] font-bold text-slate-400 uppercase tracking-wider">Tên Tròng Kính</th>
-                <th className="py-3.5 px-4 text-[11px] font-bold text-slate-400 uppercase tracking-wider">Độ Cận (SPH)</th>
-                <th className="py-3.5 px-4 text-[11px] font-bold text-slate-400 uppercase tracking-wider">Độ Loạn (CYL)</th>
-                <th className="py-3.5 px-4 text-[11px] font-bold text-slate-400 uppercase tracking-wider text-center">Tồn Đầu</th>
-                <th className="py-3.5 px-4 text-[11px] font-bold text-slate-400 uppercase tracking-wider text-center">Nhập / Xuất</th>
-                <th className="py-3.5 px-4 text-[11px] font-bold text-slate-400 uppercase tracking-wider text-center">Tồn Cuối</th>
-                <th className="py-3.5 px-4 text-[11px] font-bold text-slate-400 uppercase tracking-wider text-center">Trạng Thái</th>
+                
+                {/* SKU */}
+                <th 
+                  style={{ width: columnWidths.sku, minWidth: columnWidths.sku, maxWidth: columnWidths.sku }} 
+                  className="py-3 px-4 text-[11px] text-slate-400 uppercase tracking-wider font-mono relative"
+                >
+                  {renderSortHeader('sku', 'Mã SKU')}
+                  <div 
+                    onMouseDown={(e) => handleMouseDown('sku', e)}
+                    className="absolute right-0 top-0 bottom-0 w-2 cursor-col-resize hover:bg-red-500/40 active:bg-red-600 z-20"
+                    title="Kéo rộng cột"
+                  />
+                </th>
+
+                {/* Tên tròng kính */}
+                <th 
+                  style={{ width: columnWidths.name, minWidth: columnWidths.name, maxWidth: columnWidths.name }} 
+                  className="py-3 px-4 text-[11px] text-slate-400 uppercase tracking-wider relative"
+                >
+                  {renderSortHeader('name', 'Tên Tròng Kính')}
+                  <div 
+                    onMouseDown={(e) => handleMouseDown('name', e)}
+                    className="absolute right-0 top-0 bottom-0 w-2 cursor-col-resize hover:bg-red-500/40 active:bg-red-600 z-20"
+                    title="Kéo rộng cột"
+                  />
+                </th>
+
+                {/* SPH */}
+                <th 
+                  style={{ width: columnWidths.sph, minWidth: columnWidths.sph, maxWidth: columnWidths.sph }} 
+                  className="py-3 px-4 text-[11px] text-slate-400 uppercase tracking-wider relative"
+                >
+                  {renderSortHeader('can', 'Độ Cầu (SPH)')}
+                  <div 
+                    onMouseDown={(e) => handleMouseDown('sph', e)}
+                    className="absolute right-0 top-0 bottom-0 w-2 cursor-col-resize hover:bg-red-500/40 active:bg-red-600 z-20"
+                    title="Kéo rộng cột"
+                  />
+                </th>
+
+                {/* CYL */}
+                <th 
+                  style={{ width: columnWidths.cyl, minWidth: columnWidths.cyl, maxWidth: columnWidths.cyl }} 
+                  className="py-3 px-4 text-[11px] text-slate-400 uppercase tracking-wider relative"
+                >
+                  {renderSortHeader('loan', 'Độ Loạn (CYL)')}
+                  <div 
+                    onMouseDown={(e) => handleMouseDown('cyl', e)}
+                    className="absolute right-0 top-0 bottom-0 w-2 cursor-col-resize hover:bg-red-500/40 active:bg-red-600 z-20"
+                    title="Kéo rộng cột"
+                  />
+                </th>
+
+                {/* Tồn đầu */}
+                <th 
+                  style={{ width: columnWidths.tonDau, minWidth: columnWidths.tonDau, maxWidth: columnWidths.tonDau }} 
+                  className="py-3 px-4 text-[11px] text-slate-400 uppercase tracking-wider text-center relative"
+                >
+                  {renderSortHeader('tonDau', 'Tồn Đầu')}
+                  <div 
+                    onMouseDown={(e) => handleMouseDown('tonDau', e)}
+                    className="absolute right-0 top-0 bottom-0 w-2 cursor-col-resize hover:bg-red-500/40 active:bg-red-600 z-20"
+                    title="Kéo rộng cột"
+                  />
+                </th>
+
+                {/* Nhập/Xuất */}
+                <th 
+                  style={{ width: columnWidths.nhapXuat, minWidth: columnWidths.nhapXuat, maxWidth: columnWidths.nhapXuat }} 
+                  className="py-3 px-4 text-[11px] text-slate-400 uppercase tracking-wider text-center relative"
+                >
+                  <div className="flex justify-center gap-1 font-bold">Nhập / Xuất</div>
+                  <div 
+                    onMouseDown={(e) => handleMouseDown('nhapXuat', e)}
+                    className="absolute right-0 top-0 bottom-0 w-2 cursor-col-resize hover:bg-red-500/40 active:bg-red-600 z-20"
+                    title="Kéo rộng cột"
+                  />
+                </th>
+
+                {/* Tồn cuối */}
+                <th 
+                  style={{ width: columnWidths.tonCuoi, minWidth: columnWidths.tonCuoi, maxWidth: columnWidths.tonCuoi }} 
+                  className="py-3 px-4 text-[11px] text-slate-400 uppercase tracking-wider text-center relative"
+                >
+                  {renderSortHeader('tonCuoi', 'Tồn Cuối')}
+                  <div 
+                    onMouseDown={(e) => handleMouseDown('tonCuoi', e)}
+                    className="absolute right-0 top-0 bottom-0 w-2 cursor-col-resize hover:bg-red-500/40 active:bg-red-600 z-20"
+                    title="Kéo rộng cột"
+                  />
+                </th>
+
+                {/* Tồn tối thiểu */}
+                <th 
+                  style={{ width: columnWidths.tonToiThieu, minWidth: columnWidths.tonToiThieu, maxWidth: columnWidths.tonToiThieu }} 
+                  className="py-3 px-4 text-[11px] text-slate-400 uppercase tracking-wider text-center relative"
+                >
+                  {renderSortHeader('tonToiThieu', 'Tồn Tối Thiểu')}
+                  <div 
+                    onMouseDown={(e) => handleMouseDown('tonToiThieu', e)}
+                    className="absolute right-0 top-0 bottom-0 w-2 cursor-col-resize hover:bg-red-500/40 active:bg-red-600 z-20"
+                    title="Kéo rộng cột"
+                  />
+                </th>
+
+                {/* Trạng thái */}
+                <th 
+                  style={{ width: columnWidths.status, minWidth: columnWidths.status, maxWidth: columnWidths.status }} 
+                  className="py-3 px-4 text-[11px] text-slate-400 uppercase tracking-wider text-center relative"
+                >
+                  {renderSortHeader('status', 'Trạng Thái')}
+                  <div 
+                    onMouseDown={(e) => handleMouseDown('status', e)}
+                    className="absolute right-0 top-0 bottom-0 w-2 cursor-col-resize hover:bg-red-500/40 active:bg-red-600 z-20"
+                    title="Kéo rộng cột"
+                  />
+                </th>
+
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-50">
               {paginatedProducts.length > 0 ? (
                 paginatedProducts.map((p) => {
-                  const isLowStock = p.TON_CUOI <= p.TON_TOI_THIEU;
+                  const statusDetails = getStockStatusDetails(p.TON_CUOI, p.TON_TOI_THIEU);
                   return (
                     <tr key={p.SKU} className="hover:bg-slate-50/50 transition-colors duration-150">
-                      <td className="py-3.5 px-4">
-                        <span className="text-xs font-bold font-mono text-slate-700 bg-slate-100 py-1 px-2.5 rounded-md">
+                      
+                      {/* SKU */}
+                      <td className="py-3 px-4 font-mono truncate" style={{ width: columnWidths.sku, maxWidth: columnWidths.sku }}>
+                        <span className="text-xs font-bold text-slate-700 bg-slate-100 py-1 px-2.5 rounded-md">
                           {p.SKU}
                         </span>
                       </td>
-                      <td className="py-3.5 px-4">
-                        <div className="space-y-0.5">
-                          <p className="text-xs font-semibold text-slate-800">{p.TEN_SAN_PHAM}</p>
-                          <div className="flex items-center gap-2">
-                            <span className="text-[10px] text-slate-400 font-medium bg-slate-50 py-0.5 px-1.5 border border-slate-100 rounded-sm">
+
+                      {/* Tên tròng kính */}
+                      <td className="py-3 px-4" style={{ width: columnWidths.name, maxWidth: columnWidths.name }}>
+                        <div className="space-y-0.5 truncate">
+                          <p className="text-xs font-semibold text-slate-800 truncate" title={p.TEN_SAN_PHAM}>{p.TEN_SAN_PHAM}</p>
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <span className="text-[10px] text-slate-400 font-bold bg-slate-50 py-0.5 px-1.5 border border-slate-100 rounded-sm">
                               {p.THUONG_HIEU}
                             </span>
-                            <span className="text-[10px] text-slate-400 font-medium bg-slate-50 py-0.5 px-1.5 border border-slate-100 rounded-sm">
+                            <span className="text-[10px] text-slate-400 font-bold bg-slate-50 py-0.5 px-1.5 border border-slate-100 rounded-sm">
                               Chiết suất: {p.CHIET_XUAT}
                             </span>
                           </div>
                         </div>
                       </td>
-                      <td className="py-3.5 px-4">
-                        <span className={`text-xs font-semibold font-mono ${p.CAN < 0 ? 'text-blue-600' : 'text-amber-600'}`}>
+
+                      {/* Độ SPH */}
+                      <td className="py-3 px-4 font-mono" style={{ width: columnWidths.sph, maxWidth: columnWidths.sph }}>
+                        <span className={`text-xs font-semibold ${p.CAN < 0 ? 'text-blue-600' : 'text-amber-600'}`}>
                           {formatDop(p.CAN)}
                         </span>
                       </td>
-                      <td className="py-3.5 px-4">
-                        <span className="text-xs font-semibold font-mono text-purple-600">
+
+                      {/* Độ CYL */}
+                      <td className="py-3 px-4 font-mono" style={{ width: columnWidths.cyl, maxWidth: columnWidths.cyl }}>
+                        <span className="text-xs font-semibold text-purple-600">
                           {formatDop(p.LOAN)}
                         </span>
                       </td>
-                      <td className="py-3.5 px-4 text-center">
-                        <span className="text-xs font-medium text-slate-500 font-mono">
+
+                      {/* Tồn đầu */}
+                      <td className="py-3 px-4 text-center font-mono" style={{ width: columnWidths.tonDau, maxWidth: columnWidths.tonDau }}>
+                        <span className="text-xs font-medium text-slate-500">
                           {p.TON_DAU}
                         </span>
                       </td>
-                      <td className="py-3.5 px-4 text-center">
-                        <div className="inline-flex items-center gap-1.5 text-xs font-mono font-medium">
+
+                      {/* Nhập/Xuất */}
+                      <td className="py-3 px-4 text-center font-mono" style={{ width: columnWidths.nhapXuat, maxWidth: columnWidths.nhapXuat }}>
+                        <div className="inline-flex items-center gap-1 text-xs font-medium">
                           <span className="text-emerald-600">+{p.NHAP}</span>
                           <span className="text-slate-300">/</span>
                           <span className="text-rose-600">-{p.XUAT}</span>
                         </div>
                       </td>
-                      <td className="py-3.5 px-4 text-center">
-                        <span className={`text-xs font-bold font-mono ${isLowStock ? 'text-red-600' : 'text-slate-800'}`}>
+
+                      {/* Tồn cuối */}
+                      <td className="py-3 px-4 text-center font-mono" style={{ width: columnWidths.tonCuoi, maxWidth: columnWidths.tonCuoi }}>
+                        <span className={`text-xs font-bold ${p.TON_CUOI <= (p.TON_TOI_THIEU ?? 0) ? 'text-red-600' : 'text-slate-800'}`}>
                           {p.TON_CUOI} {p.DVT}
                         </span>
                       </td>
-                      <td className="py-3.5 px-4 text-center">
-                        {isLowStock ? (
-                          <span className="inline-flex items-center gap-1 text-[10px] font-bold bg-red-50 text-red-600 py-1 px-2.5 rounded-full">
-                            <AlertCircle className="w-3 h-3" /> Sắp hết
-                          </span>
-                        ) : (
-                          <span className="inline-flex items-center gap-1 text-[10px] font-bold bg-emerald-50 text-emerald-600 py-1 px-2.5 rounded-full">
-                            <CheckCircle className="w-3 h-3" /> An toàn
-                          </span>
-                        )}
+
+                      {/* Tồn tối thiểu (Inline edit) */}
+                      <td className="py-3 px-4 text-center" style={{ width: columnWidths.tonToiThieu, maxWidth: columnWidths.tonToiThieu }}>
+                        <input
+                          type="number"
+                          min={0}
+                          key={`${p.SKU}-${p.TON_TOI_THIEU}`}
+                          defaultValue={p.TON_TOI_THIEU ?? 0}
+                          disabled={currentUser.WRITE_ACCESS === false || currentUser.writeAccess === false}
+                          onBlur={(e) => {
+                            const val = Math.max(0, parseInt(e.target.value) || 0);
+                            if (val !== (p.TON_TOI_THIEU ?? 0) && onUpdateProduct) {
+                              onUpdateProduct(p.SKU, { TON_TOI_THIEU: val });
+                            }
+                          }}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') {
+                              (e.target as HTMLInputElement).blur();
+                            }
+                          }}
+                          className="w-16 text-center text-xs font-bold font-mono text-slate-700 bg-slate-50 hover:bg-slate-100 focus:bg-white border border-slate-200 rounded-md py-1 focus:outline-hidden focus:ring-1 focus:ring-blue-500 disabled:opacity-70 disabled:bg-slate-100 disabled:border-none"
+                        />
                       </td>
+
+                      {/* Trạng thái */}
+                      <td className="py-3 px-4 text-center" style={{ width: columnWidths.status, maxWidth: columnWidths.status }}>
+                        <span className={`inline-flex items-center justify-center text-[10px] py-1 px-2.5 rounded-full ${statusDetails.className}`}>
+                          {statusDetails.label}
+                        </span>
+                      </td>
+
                     </tr>
                   );
                 })
               ) : (
                 <tr>
-                  <td colSpan={8} className="py-12 text-center text-xs text-slate-400 font-mono">
+                  <td colSpan={9} className="py-12 text-center text-xs text-slate-400 font-mono">
                     Không tìm thấy tròng kính mắt nào khớp với tiêu chuẩn tìm kiếm.
                   </td>
                 </tr>

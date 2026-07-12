@@ -94,6 +94,7 @@ export interface ThươngHieu {
   THUONG_HIEU: string;     // Tên thương hiệu (Blick, Element, Nikki, Zeiss, Essilor, HEN...)
   CHIET_XUAT_MAC_DINH?: string; // Cấu hình chiết suất mặc định cho thương hiệu này
   TINH_NANG_MAC_DINH?: string;  // Cấu hình tính năng mặc định cho thương hiệu này
+  TINH_NANG?: string;           // Tính năng riêng biệt của dòng thương hiệu này (Ví dụ: ĐM, ASX, Đổi màu)
 }
 
 // B_CHINHANH: Danh mục chi nhánh / kho hàng trực thuộc hệ thống cửa hàng
@@ -117,4 +118,6 @@ export interface NhanVien {
   WRITE_ACCESS?: boolean;  // Có quyền thêm/sửa/xóa hay chỉ xem
   TEN_DANG_NHAP?: string;  // Tên đăng nhập hệ thống
   MAT_KHAU?: string;       // Mật khẩu mã hóa hoặc văn bản thô
+  VAI_TRO?: UserRole;      // Quyền hạn (vai trò tiếng Việt/English)
+  TRANG_THAI?: string;     // Trạng thái tài khoản (Hoạt động, khóa...)
 }

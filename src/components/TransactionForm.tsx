@@ -26,7 +26,7 @@ import {
   ListPlus
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { SanPham, NhapXuat, NhapXuatCT, LoaiPhieu, User as UserType } from '../types';
+import { SanPham, NhapXuat, NhapXuatCT, LoaiPhieu, User as UserType, ThươngHieu } from '../types';
 import { generateSKUString, formatDop, getVietnamDateString, getVietnamDateTimeString } from '../data/mockData';
 
 /**
@@ -42,7 +42,10 @@ interface TransactionFormProps {
   sanPhams: SanPham[];
   chiNhanhs: string[];
   thuongHieus: string[];
+  brandList?: ThươngHieu[];
   loaiPhieuMacDinh: 'NHẬP' | 'XUẤT';
+  prefilledSku?: string;
+  onClearPrefilledSku?: () => void;
   onSaveTransaction: (header: NhapXuat, details: NhapXuatCT[]) => void;
   onNavigateToHistory: () => void;
   onTriggerToast?: (message: string) => void;
@@ -68,7 +71,10 @@ export default function TransactionForm({
   sanPhams,
   chiNhanhs,
   thuongHieus,
+  brandList,
   loaiPhieuMacDinh,
+  prefilledSku,
+  onClearPrefilledSku,
   onSaveTransaction,
   onNavigateToHistory,
   onTriggerToast
@@ -111,6 +117,38 @@ export default function TransactionForm({
   const [selectDvt, setSelectDvt] = useState<string>('miếng');
   const [selectGhiChuDong, setSelectGhiChuDong] = useState<string>('');
 
+  // Tự động điền dữ liệu khi có SKU cần restock nhanh từ Dashboard
+  useEffect(() => {
+    if (prefilledSku) {
+      const found = sanPhams.find(p => p.SKU.toUpperCase() === prefilledSku.toUpperCase());
+      if (found) {
+        setErrorMsg('');
+        setLoaiPhieu('NHẬP');
+        setSelectBrand(found.THUONG_HIEU);
+        setSelectChietXuat(found.CHIET_XUAT);
+        setSelectTinhNang(found.TINH_NANG);
+        setSelectDoSph(found.CAN);
+        setSelectDoCyl(found.LOAN);
+        setSelectDoSphType(found.CAN <= 0 ? 'CẬN' : 'VIỄN');
+        setSelectDvt(found.DVT);
+        setIsBarcodeMode(false); // Trả về dạng form thuộc tính chi tiết để xem cho rõ
+        setSelectSoLuong(Math.max(1, found.TON_TOI_THIEU - found.TON_CUOI + 2)); // Gợi ý số lượng tối ưu để lấp đầy kho
+        
+        // Chuyển step thành 2 trên Mobile để vào thẳng màn hình cấu hình sản phẩm
+        if (window.innerWidth < 768) {
+          setCurrentStep(2);
+        }
+        
+        setSuccessMsg(`Hệ thống đã tự động chọn SKU: ${found.SKU}. Vui lòng nhập số lượng và bấm 'Thêm Vào Phiếu Chờ'.`);
+        setTimeout(() => setSuccessMsg(''), 6000);
+      }
+      
+      if (onClearPrefilledSku) {
+        onClearPrefilledSku();
+      }
+    }
+  }, [prefilledSku, sanPhams, onClearPrefilledSku]);
+
   // Chế độ tìm kiếm nhanh / Quét barcode giả lập
   const [isBarcodeMode, setIsBarcodeMode] = useState<boolean>(false);
   const [barcodeInput, setBarcodeInput] = useState<string>('');
@@ -121,13 +159,39 @@ export default function TransactionForm({
   const [cart, setCart] = useState<CartItem[]>([]);
 
   // --- 3. QUY TẮC NGHIỆP VỤ - ĐỒNG BỘ CHIẾT XUẤT VÀ TÍNH NĂNG THEO THƯƠNG HIỆU ---
+  const availableFeatures = useMemo(() => {
+    if (!brandList) return ['ĐM', 'ASX'];
+    const features = brandList
+      .filter(b => b.THUONG_HIEU === selectBrand)
+      .map(b => b.TINH_NANG || b.TINH_NANG_MAC_DINH || '')
+      .filter(f => f !== '');
+    const uniqueFeatures = Array.from(new Set(features));
+    return uniqueFeatures.length > 0 ? uniqueFeatures : ['ĐM', 'ASX'];
+  }, [brandList, selectBrand]);
+
+  useEffect(() => {
+    if (availableFeatures.length > 0 && !availableFeatures.includes(selectTinhNang)) {
+      setSelectTinhNang(availableFeatures[0]);
+    }
+  }, [availableFeatures, selectTinhNang]);
+
   const handleBrandChange = (brand: string) => {
     setSelectBrand(brand);
     
-    // Rule 1: Nếu Thương hiệu là Blick, Element, Nikki thì TÍNH NĂNG sẽ là ĐM. Còn lại sẽ là ASX.
-    const isDM = ['Blick', 'Element', 'Nikki'].includes(brand);
-    const newTinhNang = isDM ? 'ĐM' : 'ASX';
-    setSelectTinhNang(newTinhNang);
+    // Tìm tính năng đầu tiên khả dụng của thương hiệu này từ danh sách brandList
+    if (brandList) {
+      const features = brandList
+        .filter(b => b.THUONG_HIEU === brand)
+        .map(b => b.TINH_NANG || b.TINH_NANG_MAC_DINH || '')
+        .filter(f => f !== '');
+      if (features.length > 0) {
+        setSelectTinhNang(features[0]);
+      }
+    } else {
+      const isDM = ['Blick', 'Element', 'Nikki'].includes(brand);
+      const newTinhNang = isDM ? 'ĐM' : 'ASX';
+      setSelectTinhNang(newTinhNang);
+    }
 
     // Rule 2: Nếu Thương hiệu là Blick, Zeiss Clear, Essilor Pre, Essilor Rock thì Chiết suất là 1.56.
     // Zeiss Blue chiết suất sẽ là 1.60. Còn lại thì sẽ dropdown 1.56; 1.61; 1.67; 1.74
@@ -202,6 +266,17 @@ export default function TransactionForm({
   const totalCartQty = useMemo(() => {
     return cart.reduce((sum, item) => sum + item.soLuong, 0);
   }, [cart]);
+
+  // Dự đoán tồn kho sau khi giao dịch thành công để cảnh báo sớm (Tab Xuất)
+  const estimatedPostStock = useMemo(() => {
+    if (!matchedProductInDB) return 0;
+    return matchedProductInDB.TON_CUOI - (loaiPhieu === 'XUẤT' ? selectSoLuong : 0);
+  }, [matchedProductInDB, loaiPhieu, selectSoLuong]);
+
+  const isWarningLowStock = useMemo(() => {
+    if (!matchedProductInDB || loaiPhieu !== 'XUẤT') return false;
+    return estimatedPostStock <= matchedProductInDB.TON_TOI_THIEU;
+  }, [matchedProductInDB, loaiPhieu, estimatedPostStock]);
 
   // --- 6. XỬ LÝ QUÉT MÃ BARCODE GIẢ LẬP NHANH ---
   const handleApplyBarcode = () => {
@@ -622,8 +697,9 @@ export default function TransactionForm({
                           onChange={(e) => setSelectTinhNang(e.target.value)}
                           className="w-full text-sm font-semibold text-slate-700 bg-slate-50 border border-slate-200 p-2.5 rounded-xl focus:outline-hidden"
                         >
-                          <option value="ĐM">Đổi màu (ĐM)</option>
-                          <option value="ASX">Ánh sáng xanh (ASX)</option>
+                          {availableFeatures.map(f => (
+                            <option key={f} value={f}>{f}</option>
+                          ))}
                         </select>
                       </div>
                     </div>
@@ -744,11 +820,23 @@ export default function TransactionForm({
                   <div className="flex items-center justify-between text-[11px] text-slate-500 font-mono">
                     <span>Tồn kho:</span>
                     {matchedProductInDB ? (
-                      <span className="font-extrabold text-blue-600">{matchedProductInDB.TON_CUOI} miếng</span>
+                      <div className="text-right">
+                        <span className="font-extrabold text-blue-600">{matchedProductInDB.TON_CUOI} miếng</span>
+                        {matchedProductInDB.TON_CUOI <= matchedProductInDB.TON_TOI_THIEU && (
+                          <div className="text-[9px] font-bold text-amber-600 uppercase tracking-wider animate-pulse mt-0.5">
+                            ⚠️ Tồn kho thấp!
+                          </div>
+                        )}
+                      </div>
                     ) : (
                       <span className="font-bold text-red-500">⚠️ Chưa khai báo SKU</span>
                     )}
                   </div>
+                  {isWarningLowStock && (
+                    <div className="mt-2 p-2 bg-amber-50 border border-amber-250 text-amber-800 rounded-lg text-[10px] font-bold leading-tight">
+                      ⚠️ Cảnh báo: Xuất {selectSoLuong} miếng sẽ khiến tồn kho còn lại ({estimatedPostStock} miếng) giảm xuống dưới ngưỡng tối thiểu ({matchedProductInDB?.TON_TOI_THIEU} miếng)!
+                    </div>
+                  )}
                 </div>
 
                 {/* NÚT THÊM VÀO GIỎ */}
@@ -1007,7 +1095,7 @@ export default function TransactionForm({
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         
         {/* BẢNG 1: THÔNG TIN CHỨNG TỪ (1/3 Cột) */}
-        <div className="bg-white rounded-2xl p-5 space-y-4 shadow-md shadow-slate-200/60 border border-slate-100">
+        <div className="bg-white rounded-2xl p-5 space-y-4 shadow-lg shadow-slate-150/80 border border-slate-200/80 hover:shadow-xl transition-shadow duration-300">
           <div className="flex items-center gap-2 border-b border-slate-100 pb-2.5">
             <FileText className="w-4 h-4 text-blue-600" />
             <span className="text-xs font-bold text-slate-700 uppercase tracking-wider">Thông Tin Chứng Từ</span>
@@ -1015,7 +1103,7 @@ export default function TransactionForm({
 
           <div className="space-y-4">
             {/* Nhóm 1: Địa điểm */}
-            <div className="space-y-2 p-3 bg-slate-50/50 rounded-xl border border-slate-100/70">
+            <div className="space-y-2 p-3 bg-slate-50/50 rounded-xl border border-slate-150/70">
               <span className="text-[9px] uppercase font-bold text-slate-400 tracking-wider">1. Địa điểm kho</span>
               <div className="space-y-1">
                 <label className="text-[10px] uppercase font-bold text-slate-500 flex items-center gap-1">
@@ -1035,7 +1123,7 @@ export default function TransactionForm({
             </div>
 
             {/* Nhóm 2: Thời gian & Nhân sự */}
-            <div className="space-y-2.5 p-3 bg-slate-50/50 rounded-xl border border-slate-100/70">
+            <div className="space-y-2.5 p-3 bg-slate-50/50 rounded-xl border border-slate-150/70">
               <span className="text-[9px] uppercase font-bold text-slate-400 tracking-wider">2. Thời gian & Nhân sự</span>
               
               <div className="space-y-1">
@@ -1061,7 +1149,7 @@ export default function TransactionForm({
             </div>
 
             {/* Nhóm 3: Ghi chú */}
-            <div className="space-y-2 p-3 bg-slate-50/50 rounded-xl border border-slate-100/70">
+            <div className="space-y-2 p-3 bg-slate-50/50 rounded-xl border border-slate-150/70">
               <span className="text-[9px] uppercase font-bold text-slate-400 tracking-wider">3. Ghi chú chung</span>
               <div className="space-y-1">
                 <textarea
@@ -1109,7 +1197,7 @@ export default function TransactionForm({
         </div>
 
         {/* BẢNG 2: CHỌN SẢN PHẨM & QUY TẮC SKU (2/3 Cột) */}
-        <div className="bg-white rounded-2xl p-5 space-y-4 lg:col-span-2 shadow-md shadow-slate-200/60 border border-slate-100">
+        <div className="bg-white rounded-2xl p-5 space-y-4 lg:col-span-2 shadow-lg shadow-slate-150/80 border border-slate-200/80 hover:shadow-xl transition-shadow duration-300">
           
           <div className="flex items-center justify-between border-b border-slate-50 pb-2">
             <div className="flex items-center gap-2">
@@ -1192,7 +1280,7 @@ export default function TransactionForm({
                   </div>
                 </div>
 
-                {/* Tính năng (Chỉ có 2 lựa chọn ĐM hoặc ASX) */}
+                {/* Tính năng (Chỉ có các lựa chọn theo thương hiệu) */}
                 <div className="flex flex-col sm:space-y-1 sm:block grid grid-cols-3 items-center gap-2 py-0.5 sm:py-0">
                   <label className="col-span-1 text-[10px] font-bold text-slate-400 uppercase">Tính năng</label>
                   <div className="col-span-2">
@@ -1201,8 +1289,9 @@ export default function TransactionForm({
                       onChange={(e) => setSelectTinhNang(e.target.value)}
                       className="w-full text-base md:text-xs font-semibold text-slate-700 bg-slate-50 border border-slate-100 p-1.5 sm:p-2 rounded-lg focus:outline-hidden"
                     >
-                      <option value="ĐM">Đổi màu (ĐM)</option>
-                      <option value="ASX">Ánh sáng xanh (ASX)</option>
+                      {availableFeatures.map(f => (
+                        <option key={f} value={f}>{f}</option>
+                      ))}
                     </select>
                   </div>
                 </div>
@@ -1323,7 +1412,7 @@ export default function TransactionForm({
           </div>
 
           {/* TRẠNG THÁI SKU PHÁT HIỆN TỒN KHO THỰC TẾ TRONG HỆ THỐNG */}
-          <div className="bg-slate-50 p-4 rounded-xl border border-slate-100 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div className="bg-slate-50 p-4 rounded-xl border border-slate-200/80 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
             <div className="space-y-1">
               <span className="text-[10px] uppercase font-bold text-slate-400">SKU xác định:</span>
               <p className="text-xs font-bold font-mono text-slate-800 tracking-tight">{calculatedSKU}</p>
@@ -1333,9 +1422,16 @@ export default function TransactionForm({
             <div className="text-left sm:text-right shrink-0">
               <span className="text-[10px] uppercase font-bold text-slate-400">Trạng thái tồn kho:</span>
               {matchedProductInDB ? (
-                <p className="text-xs font-extrabold text-slate-700 flex items-center sm:justify-end gap-1 font-mono">
-                  Sẵn có: <span className="text-blue-600 text-sm">{matchedProductInDB.TON_CUOI}</span> {matchedProductInDB.DVT}
-                </p>
+                <div className="space-y-1">
+                  <p className="text-xs font-extrabold text-slate-700 flex items-center sm:justify-end gap-1 font-mono">
+                    Sẵn có: <span className="text-blue-600 text-sm">{matchedProductInDB.TON_CUOI}</span> {matchedProductInDB.DVT}
+                  </p>
+                  {matchedProductInDB.TON_CUOI <= matchedProductInDB.TON_TOI_THIEU && (
+                    <span className="inline-flex items-center gap-1 text-[9px] font-bold text-amber-700 bg-amber-50 border border-amber-200 py-0.5 px-2 rounded-full uppercase tracking-wider animate-pulse">
+                      ⚠️ Tồn kho thấp (Tối thiểu: {matchedProductInDB.TON_TOI_THIEU})
+                    </span>
+                  )}
+                </div>
               ) : (
                 <p className="text-xs font-extrabold text-red-600 flex items-center sm:justify-end gap-1">
                   ⚠️ Chưa tồn tại trong kho
@@ -1343,6 +1439,15 @@ export default function TransactionForm({
               )}
             </div>
           </div>
+
+          {isWarningLowStock && (
+            <div className="p-3 bg-amber-50 border border-amber-200 text-amber-800 rounded-xl text-xs font-bold leading-relaxed shadow-3xs flex items-center gap-2">
+              <AlertCircle className="w-5 h-5 shrink-0 text-amber-600 animate-pulse" />
+              <span>
+                Cảnh báo tồn kho thấp: Xuất <strong>{selectSoLuong} miếng</strong> sẽ đẩy tồn kho còn lại của SKU này ({estimatedPostStock} miếng) xuống dưới ngưỡng tối thiểu ({matchedProductInDB?.TON_TOI_THIEU} miếng)!
+              </span>
+            </div>
+          )}
 
           {/* NÚT THÊM VÀO GIỎ CHỜ XÁC NHẬN */}
           {currentUser.writeAccess !== false && (

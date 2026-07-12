@@ -37,8 +37,8 @@ interface CategoryManagementProps {
   onAddThuongHieu: (brand: ThươngHieu) => void;
   onAddChiNhanh: (branch: ChiNhanh) => void;
   onAddNhanVien: (staff: NhanVien) => void;
-  onUpdateThuongHieu: (oldBrandName: string, updatedBrand: ThươngHieu) => void;
-  onDeleteThuongHieu: (brandName: string) => void;
+  onUpdateThuongHieu: (oldBrandName: string, oldFeature: string, updatedBrand: ThươngHieu) => void;
+  onDeleteThuongHieu: (brandName: string, feature: string) => void;
   onUpdateChiNhanh: (oldBranchName: string, updatedBranch: ChiNhanh) => void;
   onDeleteChiNhanh: (branchName: string) => void;
   onUpdateNhanVien: (oldEmail: string, updatedStaff: NhanVien) => void;
@@ -69,7 +69,7 @@ export default function CategoryManagement({
   const [successMsg, setSuccessMsg] = useState<string>('');
   const [errorMsg, setErrorMsg] = useState<string>('');
 
-  const [editingBrand, setEditingBrand] = useState<{ oldName: string; brand: ThươngHieu } | null>(null);
+  const [editingBrand, setEditingBrand] = useState<{ oldName: string; oldFeature: string; brand: ThươngHieu } | null>(null);
   const [editingBranch, setEditingBranch] = useState<{ oldName: string; branch: ChiNhanh } | null>(null);
   const [editingStaff, setEditingStaff] = useState<{ oldEmail: string; staff: NhanVien } | null>(null);
 
@@ -103,29 +103,39 @@ export default function CategoryManagement({
       return;
     }
 
-    const isExist = thuongHieus.some(b => b.THUONG_HIEU.toLowerCase() === newBrandName.trim().toLowerCase());
+    const targetTN = newBrandTN;
+    const isExist = thuongHieus.some(b => 
+      b.THUONG_HIEU.toLowerCase() === newBrandName.trim().toLowerCase() && 
+      (b.TINH_NANG || b.TINH_NANG_MAC_DINH || '').toLowerCase() === targetTN.toLowerCase()
+    );
     if (isExist) {
-      setErrorMsg(`Thương hiệu [${newBrandName}] đã tồn tại trong danh mục.`);
+      setErrorMsg(`Thương hiệu [${newBrandName}] với tính năng [${targetTN}] đã tồn tại trong danh mục.`);
       return;
     }
 
     const brandRecord: ThươngHieu = {
       THUONG_HIEU: newBrandName.trim(),
       CHIET_XUAT_MAC_DINH: newBrandCX,
-      TINH_NANG_MAC_DINH: newBrandTN
+      TINH_NANG_MAC_DINH: targetTN,
+      TINH_NANG: targetTN
     };
 
     onAddThuongHieu(brandRecord);
-    setSuccessMsg(`Đã khai báo thương hiệu mới [${newBrandName}] thành công!`);
+    setSuccessMsg(`Đã khai báo thương hiệu mới [${newBrandName}] với tính năng [${targetTN}] thành công!`);
     setNewBrandName('');
     setTimeout(() => setSuccessMsg(''), 3000);
   };
 
   const handleStartEditBrand = (brand: ThươngHieu) => {
-    setEditingBrand({ oldName: brand.THUONG_HIEU, brand: { ...brand } });
+    const brandFeature = brand.TINH_NANG || brand.TINH_NANG_MAC_DINH || 'ASX';
+    setEditingBrand({ 
+      oldName: brand.THUONG_HIEU, 
+      oldFeature: brandFeature, 
+      brand: { ...brand } 
+    });
     setNewBrandName(brand.THUONG_HIEU);
     setNewBrandCX(brand.CHIET_XUAT_MAC_DINH || '1.56');
-    setNewBrandTN(brand.TINH_NANG_MAC_DINH || 'ASX');
+    setNewBrandTN(brandFeature);
   };
 
   const handleSaveEditBrand = (e: React.FormEvent) => {
@@ -142,10 +152,11 @@ export default function CategoryManagement({
     const updatedBrand: ThươngHieu = {
       THUONG_HIEU: newBrandName.trim(),
       CHIET_XUAT_MAC_DINH: newBrandCX,
-      TINH_NANG_MAC_DINH: newBrandTN
+      TINH_NANG_MAC_DINH: newBrandTN,
+      TINH_NANG: newBrandTN
     };
 
-    onUpdateThuongHieu(editingBrand.oldName, updatedBrand);
+    onUpdateThuongHieu(editingBrand.oldName, editingBrand.oldFeature, updatedBrand);
     setSuccessMsg(`Đã cập nhật thương hiệu [${newBrandName}] thành công!`);
     setEditingBrand(null);
     setNewBrandName('');
@@ -157,9 +168,9 @@ export default function CategoryManagement({
     setNewBrandName('');
   };
 
-  const handleDeleteBrandItem = (brandName: string) => {
-    onDeleteThuongHieu(brandName);
-    setSuccessMsg(`Đã xóa thương hiệu [${brandName}] khỏi danh mục.`);
+  const handleDeleteBrandItem = (brandName: string, feature: string) => {
+    onDeleteThuongHieu(brandName, feature);
+    setSuccessMsg(`Đã xóa thương hiệu [${brandName}] với tính năng [${feature}] khỏi danh mục.`);
     setTimeout(() => setSuccessMsg(''), 3000);
   };
 
@@ -493,36 +504,39 @@ export default function CategoryManagement({
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-50">
-                    {thuongHieus.map((b, index) => (
-                      <tr key={b.THUONG_HIEU} className="hover:bg-slate-50/50 transition-colors">
-                        <td className="py-3 px-4 font-mono text-slate-400">{index + 1}</td>
-                        <td className="py-3 px-4 font-bold text-slate-700">{b.THUONG_HIEU}</td>
-                        <td className="py-3 px-4 text-center font-bold text-blue-600 font-mono">{b.CHIET_XUAT_MAC_DINH || '—'}</td>
-                        <td className="py-3 px-4 text-center">
-                          <span className="bg-slate-100 text-slate-600 font-bold py-0.5 px-2 rounded text-[10px]">
-                            {b.TINH_NANG_MAC_DINH || '—'}
-                          </span>
-                        </td>
-                        {currentUser.writeAccess !== false && (
-                          <td className="py-3 px-4 text-right space-x-1.5">
-                            <button
-                              onClick={() => handleStartEditBrand(b)}
-                              className="p-1 text-blue-600 hover:bg-blue-50 rounded-md cursor-pointer transition-colors inline-flex"
-                              title="Sửa"
-                            >
-                              <Edit className="w-3.5 h-3.5" />
-                            </button>
-                            <button
-                              onClick={() => handleDeleteBrandItem(b.THUONG_HIEU)}
-                              className="p-1 text-red-600 hover:bg-red-50 rounded-md cursor-pointer transition-colors inline-flex"
-                              title="Xóa"
-                            >
-                              <Trash2 className="w-3.5 h-3.5" />
-                            </button>
+                    {thuongHieus.map((b, index) => {
+                      const feature = b.TINH_NANG || b.TINH_NANG_MAC_DINH || '—';
+                      return (
+                        <tr key={`${b.THUONG_HIEU}-${feature}-${index}`} className="hover:bg-slate-50/50 transition-colors">
+                          <td className="py-3 px-4 font-mono text-slate-400">{index + 1}</td>
+                          <td className="py-3 px-4 font-bold text-slate-700">{b.THUONG_HIEU}</td>
+                          <td className="py-3 px-4 text-center font-bold text-blue-600 font-mono">{b.CHIET_XUAT_MAC_DINH || '—'}</td>
+                          <td className="py-3 px-4 text-center">
+                            <span className="bg-slate-100 text-slate-600 font-bold py-0.5 px-2 rounded text-[10px]">
+                              {feature}
+                            </span>
                           </td>
-                        )}
-                      </tr>
-                    ))}
+                          {currentUser.writeAccess !== false && (
+                            <td className="py-3 px-4 text-right space-x-1.5">
+                              <button
+                                onClick={() => handleStartEditBrand(b)}
+                                className="p-1 text-blue-600 hover:bg-blue-50 rounded-md cursor-pointer transition-colors inline-flex"
+                                title="Sửa"
+                              >
+                                <Edit className="w-3.5 h-3.5" />
+                              </button>
+                              <button
+                                onClick={() => handleDeleteBrandItem(b.THUONG_HIEU, feature)}
+                                className="p-1 text-red-600 hover:bg-red-50 rounded-md cursor-pointer transition-colors inline-flex"
+                                title="Xóa"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            </td>
+                          )}
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>

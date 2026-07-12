@@ -15,15 +15,15 @@ import { SanPham, NhapXuat, NhapXuatCT, KiemKho, ThươngHieu, ChiNhanh, NhanVie
 
 // 1. Khởi tạo danh mục Thương hiệu mặc định
 export const MOCK_THUONG_HIEU: ThươngHieu[] = [
-  { THUONG_HIEU: 'Blick', CHIET_XUAT_MAC_DINH: '1.56', TINH_NANG_MAC_DINH: 'ĐM' },
-  { THUONG_HIEU: 'Element', CHIET_XUAT_MAC_DINH: '1.56', TINH_NANG_MAC_DINH: 'ĐM' },
-  { THUONG_HIEU: 'Nikki', CHIET_XUAT_MAC_DINH: '1.56', TINH_NANG_MAC_DINH: 'ĐM' },
-  { THUONG_HIEU: 'Zeiss Clear', CHIET_XUAT_MAC_DINH: '1.56', TINH_NANG_MAC_DINH: 'ASX' },
-  { THUONG_HIEU: 'Zeiss Blue', CHIET_XUAT_MAC_DINH: '1.60', TINH_NANG_MAC_DINH: 'ASX' },
-  { THUONG_HIEU: 'Essilor Pre', CHIET_XUAT_MAC_DINH: '1.56', TINH_NANG_MAC_DINH: 'ASX' },
-  { THUONG_HIEU: 'Essilor Rock', CHIET_XUAT_MAC_DINH: '1.56', TINH_NANG_MAC_DINH: 'ASX' },
-  { THUONG_HIEU: 'Essilor', CHIET_XUAT_MAC_DINH: '1.61', TINH_NANG_MAC_DINH: 'ASX' },
-  { THUONG_HIEU: 'HEN', CHIET_XUAT_MAC_DINH: '1.67', TINH_NANG_MAC_DINH: 'ASX' }
+  { THUONG_HIEU: 'Blick', CHIET_XUAT_MAC_DINH: '1.56', TINH_NANG_MAC_DINH: 'ĐM', TINH_NANG: 'ĐM' },
+  { THUONG_HIEU: 'Element', CHIET_XUAT_MAC_DINH: '1.56', TINH_NANG_MAC_DINH: 'ĐM', TINH_NANG: 'ĐM' },
+  { THUONG_HIEU: 'Element', CHIET_XUAT_MAC_DINH: '1.56', TINH_NANG_MAC_DINH: 'ASX', TINH_NANG: 'ASX' },
+  { THUONG_HIEU: 'Nikki', CHIET_XUAT_MAC_DINH: '1.56', TINH_NANG_MAC_DINH: 'ĐM', TINH_NANG: 'ĐM' },
+  { THUONG_HIEU: 'Zeiss', CHIET_XUAT_MAC_DINH: '1.56', TINH_NANG_MAC_DINH: 'ĐM', TINH_NANG: 'ĐM' },
+  { THUONG_HIEU: 'Essilor', CHIET_XUAT_MAC_DINH: '1.61', TINH_NANG_MAC_DINH: 'ĐM', TINH_NANG: 'ĐM' },
+  { THUONG_HIEU: 'Essilor', CHIET_XUAT_MAC_DINH: '1.61', TINH_NANG_MAC_DINH: 'ASX', TINH_NANG: 'ASX' },
+  { THUONG_HIEU: 'Essilor', CHIET_XUAT_MAC_DINH: '1.61', TINH_NANG_MAC_DINH: 'Đổi màu', TINH_NANG: 'Đổi màu' },
+  { THUONG_HIEU: 'HEN', CHIET_XUAT_MAC_DINH: '1.67', TINH_NANG_MAC_DINH: 'ASX', TINH_NANG: 'ASX' }
 ];
 
 // 2. Khởi tạo danh mục Chi nhánh mặc định
@@ -46,7 +46,11 @@ export const MOCK_NHAN_VIEN: NhanVien[] = [
     ROLE: 'ADMIN',
     PASSWORD: '12345',
     PERMISSIONS: ['DASHBOARD', 'PRODUCT', 'TRANSACTION', 'AUDIT', 'HISTORY', 'CATEGORY', 'APPS_SCRIPT'],
-    WRITE_ACCESS: true
+    WRITE_ACCESS: true,
+    TEN_DANG_NHAP: 'admin',
+    MAT_KHAU: '12345',
+    VAI_TRO: 'ADMIN',
+    TRANG_THAI: 'Hoạt động'
   },
   {
     MA_NV: 'NV0002',
@@ -58,7 +62,11 @@ export const MOCK_NHAN_VIEN: NhanVien[] = [
     ROLE: 'KHO',
     PASSWORD: '12345',
     PERMISSIONS: ['PRODUCT', 'TRANSACTION', 'AUDIT', 'HISTORY'],
-    WRITE_ACCESS: true
+    WRITE_ACCESS: true,
+    TEN_DANG_NHAP: 'kho',
+    MAT_KHAU: '12345',
+    VAI_TRO: 'KHO',
+    TRANG_THAI: 'Hoạt động'
   },
   {
     MA_NV: 'NV0003',
@@ -70,7 +78,11 @@ export const MOCK_NHAN_VIEN: NhanVien[] = [
     ROLE: 'NHAN_VIEN',
     PASSWORD: '12345',
     PERMISSIONS: ['PRODUCT', 'TRANSACTION', 'HISTORY'],
-    WRITE_ACCESS: false
+    WRITE_ACCESS: false,
+    TEN_DANG_NHAP: 'nhanvien',
+    MAT_KHAU: '12345',
+    VAI_TRO: 'NHAN_VIEN',
+    TRANG_THAI: 'Hoạt động'
   }
 ];
 

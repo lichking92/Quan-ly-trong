@@ -63,6 +63,11 @@ export default function TransactionHistory({
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [historyTypeFilter, setHistoryTypeFilter] = useState<'Tất cả' | 'NHẬP' | 'XUẤT' | 'KIỂM KHO'>('Tất cả');
 
+  // Sắp xếp & Gom nhóm
+  const [sortBy, setSortBy] = useState<'HOA_DON' | 'NGAY'>('NGAY');
+  const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc');
+  const [groupByDate, setGroupByDate] = useState<boolean>(false);
+
   // Trạng thái cho Form Sửa/Thêm dòng trong phiếu chi tiết
   const [editingRowId, setEditingRowId] = useState<string | null>(null);
   const [editQty, setEditQty] = useState<number>(0);
@@ -77,15 +82,42 @@ export default function TransactionHistory({
   const [successMsg, setSuccessMsg] = useState<string>('');
 
   // --- 2. LỌC DANH SÁCH HÓA ĐƠN HIỂN THỊ ---
-  const filteredInvoices = useMemo(() => {
-    return nhapXuats.filter(h => {
+  const sortedInvoices = useMemo(() => {
+    const list = nhapXuats.filter(h => {
       const matchType = historyTypeFilter === 'Tất cả' || h.LOAI === historyTypeFilter;
       const matchSearch = h.HOA_DON.toLowerCase().includes(searchQuery.toLowerCase()) ||
                           h.TEN_NGUOI_TAO.toLowerCase().includes(searchQuery.toLowerCase()) ||
                           (h.GHI_CHU && h.GHI_CHU.toLowerCase().includes(searchQuery.toLowerCase()));
       return matchType && matchSearch;
-    }).sort((a, b) => b.HOA_DON.localeCompare(a.HOA_DON)); // Phiếu mới nhất lên đầu
-  }, [nhapXuats, historyTypeFilter, searchQuery]);
+    });
+
+    list.sort((a, b) => {
+      let comparison = 0;
+      if (sortBy === 'HOA_DON') {
+        comparison = a.HOA_DON.localeCompare(b.HOA_DON);
+      } else {
+        comparison = a.NGAY.localeCompare(b.NGAY);
+      }
+      return sortOrder === 'asc' ? comparison : -comparison;
+    });
+
+    return list;
+  }, [nhapXuats, historyTypeFilter, searchQuery, sortBy, sortOrder]);
+
+  const filteredInvoices = sortedInvoices;
+
+  const groupedInvoices = useMemo(() => {
+    if (!groupByDate) return null;
+    const groups: { [key: string]: NhapXuat[] } = {};
+    sortedInvoices.forEach(inv => {
+      const d = inv.NGAY;
+      if (!groups[d]) {
+        groups[d] = [];
+      }
+      groups[d].push(inv);
+    });
+    return groups;
+  }, [sortedInvoices, groupByDate]);
 
   // Chi tiết sản phẩm của hóa đơn đang chọn
   const activeDetails = useMemo(() => {
@@ -343,62 +375,145 @@ export default function TransactionHistory({
       {/* THIẾT KẾ MASTER-DETAIL TRÁNH LAG VÀ LỖI BẤM KHÔNG LÊN TRÊN IFRAME */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
         
-        {/* PANEL TRÁI: DANH SÁCH PHIẾU DẠNG LIST */}
+        {/* PANEL TRÁI: DANH SÁCH PHIẾU DẠNG BẢNG (TABLE) CHUYÊN NGHIỆP */}
         <div className="bento-card !p-0 overflow-hidden lg:col-span-5 flex flex-col max-h-[700px] bg-white border border-slate-100 rounded-2xl shadow-xs">
-          <div className="bg-slate-50 px-4 py-3.5 border-b border-slate-100 flex items-center justify-between shrink-0">
+          <div className="bg-slate-50 px-4 py-3 border-b border-slate-100 flex items-center justify-between shrink-0">
             <span className="text-xs font-bold text-slate-700 uppercase tracking-wide">Danh Sách Phiếu ({filteredInvoices.length})</span>
-            <span className="text-[10px] font-mono font-bold text-slate-400 bg-slate-100 py-0.5 px-2 rounded-full">
-              Mới nhất
-            </span>
           </div>
 
-          <div className="overflow-y-auto divide-y divide-slate-100/70 flex-1 max-h-[600px]">
-            {filteredInvoices.length > 0 ? (
-              filteredInvoices.map((h) => {
-                const isSelected = h.HOA_DON === selectedInvoice;
-                let badgeColor = 'bg-emerald-50 text-emerald-700 border-emerald-100';
-                if (h.LOAI === 'XUẤT') badgeColor = 'bg-rose-50 text-rose-700 border-rose-100';
-                if (h.LOAI === 'KIỂM KHO') badgeColor = 'bg-blue-50 text-blue-700 border-blue-100';
+          {/* Sắp xếp và Gom nhóm */}
+          <div className="bg-slate-50/40 p-2.5 border-b border-slate-100 flex flex-wrap items-center justify-between gap-2 shrink-0">
+            <div className="flex items-center gap-1.5">
+              <span className="text-[10px] uppercase font-bold text-slate-400">Sắp xếp:</span>
+              <select
+                value={sortBy}
+                onChange={(e) => setSortBy(e.target.value as any)}
+                className="text-[10px] font-bold text-slate-700 bg-white border border-slate-200 rounded px-1.5 py-0.5 focus:outline-hidden"
+              >
+                <option value="NGAY">Ngày lập</option>
+                <option value="HOA_DON">Số phiếu</option>
+              </select>
+              <button
+                onClick={() => setSortOrder(prev => prev === 'asc' ? 'desc' : 'asc')}
+                className="text-[10px] font-bold text-slate-500 hover:text-slate-750 bg-white border border-slate-200 rounded px-1.5 py-0.5 cursor-pointer"
+                title={sortOrder === 'asc' ? 'Tăng dần' : 'Giảm dần'}
+              >
+                {sortOrder === 'asc' ? '▲' : '▼'}
+              </button>
+            </div>
 
-                return (
-                  <div
-                    key={h.HOA_DON}
-                    onClick={() => {
-                      setSelectedInvoice(h.HOA_DON);
-                      handleCancelEditRow();
-                      setShowAddRowForm(false);
-                    }}
-                    className={`p-4 flex flex-col gap-2 cursor-pointer transition-all border-l-4 ${
-                      isSelected 
-                        ? 'bg-blue-50/35 border-l-red-600' 
-                        : 'border-l-transparent hover:bg-slate-50/50'
-                    }`}
-                  >
-                    <div className="flex items-center justify-between gap-2">
-                      <span className="font-mono font-extrabold text-slate-800 text-xs">{h.HOA_DON}</span>
-                      <span className={`text-[9px] font-bold py-0.5 px-2 rounded-full border uppercase tracking-wider ${badgeColor}`}>
-                        {h.LOAI}
-                      </span>
-                    </div>
+            <button
+              onClick={() => setGroupByDate(prev => !prev)}
+              className={`text-[10px] font-bold px-2 py-0.5 rounded border transition-all cursor-pointer ${
+                groupByDate 
+                  ? 'bg-blue-50 text-blue-600 border-blue-250' 
+                  : 'bg-white text-slate-500 border-slate-200 hover:text-slate-750'
+              }`}
+            >
+              📂 Gom nhóm theo Ngày
+            </button>
+          </div>
 
-                    <div className="flex justify-between items-center text-[11px] text-slate-500 font-medium">
-                      <p className="flex items-center gap-1">
-                        <MapPin className="w-3.5 h-3.5 text-slate-300 shrink-0" />
-                        <span className="truncate max-w-[150px]">{h.CHI_NHANH}</span>
-                      </p>
-                      <p className="flex items-center gap-1 font-mono text-slate-400">
-                        <Calendar className="w-3.5 h-3.5 text-slate-300 shrink-0" />
-                        {h.NGAY}
-                      </p>
+          <div className="overflow-y-auto flex-1 max-h-[600px]">
+            {sortedInvoices.length > 0 ? (
+              groupByDate && groupedInvoices ? (
+                // VIEW GOM NHÓM THEO NGÀY
+                <div className="space-y-4 p-2">
+                  {(Object.entries(groupedInvoices) as [string, NhapXuat[]][]).map(([date, items]) => (
+                    <div key={date} className="space-y-1">
+                      <div className="bg-slate-100/70 text-slate-750 font-bold px-2.5 py-1 text-[10px] rounded-lg flex items-center justify-between border border-slate-200/50">
+                        <span>📅 Ngày {date}</span>
+                        <span className="font-mono text-[9px] text-slate-400">({items.length} phiếu)</span>
+                      </div>
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-left text-xs border-collapse">
+                          <thead>
+                            <tr className="border-b border-slate-100 text-slate-400 text-[9px] uppercase font-bold">
+                              <th className="py-1 px-2">Số phiếu</th>
+                              <th className="py-1 px-2">Loại</th>
+                              <th className="py-1 px-2 text-right">Tổng SL</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {items.map(h => {
+                              const isSelected = h.HOA_DON === selectedInvoice;
+                              let badgeColor = 'bg-emerald-50 text-emerald-700 border-emerald-100';
+                              if (h.LOAI === 'XUẤT') badgeColor = 'bg-rose-50 text-rose-700 border-rose-100';
+                              if (h.LOAI === 'KIỂM KHO') badgeColor = 'bg-blue-50 text-blue-700 border-blue-100';
+                              return (
+                                <tr
+                                  key={h.HOA_DON}
+                                  onClick={() => {
+                                    setSelectedInvoice(h.HOA_DON);
+                                    handleCancelEditRow();
+                                    setShowAddRowForm(false);
+                                  }}
+                                  className={`cursor-pointer border-b border-slate-50/50 hover:bg-slate-50 transition-colors ${
+                                    isSelected ? 'bg-blue-50/50 font-bold' : ''
+                                  }`}
+                                >
+                                  <td className="py-2 px-2 font-mono font-bold text-slate-800">{h.HOA_DON}</td>
+                                  <td className="py-2 px-2">
+                                    <span className={`text-[8px] font-bold py-0.25 px-1.5 rounded-full border uppercase ${badgeColor}`}>
+                                      {h.LOAI}
+                                    </span>
+                                  </td>
+                                  <td className="py-2 px-2 text-right font-mono text-slate-750 font-bold">{h.TONG_SL}</td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
                     </div>
+                  ))}
+                </div>
+              ) : (
+                // VIEW BẢNG THÔNG THƯỜNG KHÔNG GOM NHÓM
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left text-xs border-collapse">
+                    <thead>
+                      <tr className="bg-slate-50/70 border-b border-slate-200 text-slate-400 text-[10px] uppercase font-bold">
+                        <th className="py-2 px-3">Số phiếu</th>
+                        <th className="py-2 px-3">Loại</th>
+                        <th className="py-2 px-3">Ngày lập</th>
+                        <th className="py-2 px-3 text-right">Tổng SL</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {sortedInvoices.map((h) => {
+                        const isSelected = h.HOA_DON === selectedInvoice;
+                        let badgeColor = 'bg-emerald-50 text-emerald-700 border-emerald-100';
+                        if (h.LOAI === 'XUẤT') badgeColor = 'bg-rose-50 text-rose-700 border-rose-100';
+                        if (h.LOAI === 'KIỂM KHO') badgeColor = 'bg-blue-50 text-blue-700 border-blue-100';
 
-                    <div className="flex items-center justify-between text-[10px] text-slate-400 pt-1.5 border-t border-slate-50 mt-1">
-                      <span>Người lập: <strong className="text-slate-600 font-sans">{h.TEN_NGUOI_TAO}</strong></span>
-                      <span className="font-mono font-bold text-slate-700">Tổng SL: {h.TONG_SL} miếng</span>
-                    </div>
-                  </div>
-                );
-              })
+                        return (
+                          <tr
+                            key={h.HOA_DON}
+                            onClick={() => {
+                              setSelectedInvoice(h.HOA_DON);
+                              handleCancelEditRow();
+                              setShowAddRowForm(false);
+                            }}
+                            className={`cursor-pointer border-b border-slate-100 hover:bg-slate-50 transition-colors ${
+                              isSelected ? 'bg-blue-50/40 font-bold' : ''
+                            }`}
+                          >
+                            <td className="py-3 px-3 font-mono font-bold text-slate-800">{h.HOA_DON}</td>
+                            <td className="py-3 px-3">
+                              <span className={`text-[9px] font-bold py-0.5 px-2 rounded-full border uppercase tracking-wider ${badgeColor}`}>
+                                {h.LOAI}
+                              </span>
+                            </td>
+                            <td className="py-3 px-3 font-mono text-slate-500">{h.NGAY}</td>
+                            <td className="py-3 px-3 text-right font-mono font-bold text-slate-750">{h.TONG_SL}</td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )
             ) : (
               <div className="py-24 text-center text-xs text-slate-400 font-mono italic">
                 <FileText className="w-10 h-10 text-slate-200 mx-auto mb-2" />

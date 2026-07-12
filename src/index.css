@@ -24,15 +24,122 @@
 
 /* Khởi tạo biến Dark Mode */
 .dark-theme {
-  --bg-main: #090d16;
-  --bg-card: #131b2e;
-  --border-color: #1e293b;
-  --text-main: #f8fafc;
-  --text-muted: #94a3b8;
+  --bg-main: #0f172a;
+  --bg-card: #1e293b;
+  --border-color: #334155;
+  --text-main: #ffffff;
+  --text-muted: #cbd5e1;
   --bg-input: #0f172a;
-  --border-input: #1e293b;
-  --text-input: #f1f5f9;
-  --bg-hover: #1e293b;
+  --border-input: #475569;
+  --text-input: #f8fafc;
+  --bg-hover: #334155;
+}
+
+/* Các lớp ghi đè tương phản cao cho chế độ tối (High Contrast Dark Mode) */
+.dark-theme .bento-card,
+.dark-theme [class*="bento-card"],
+.dark-theme .bg-white {
+  background-color: var(--bg-card) !important;
+  border-color: var(--border-color) !important;
+  color: var(--text-main) !important;
+}
+
+.dark-theme .bg-slate-50,
+.dark-theme .bg-slate-100,
+.dark-theme .bg-slate-50/40,
+.dark-theme .bg-slate-100/80 {
+  background-color: #0f172a !important;
+}
+
+.dark-theme select,
+.dark-theme input,
+.dark-theme textarea {
+  background-color: var(--bg-input) !important;
+  border-color: var(--border-input) !important;
+  color: var(--text-input) !important;
+}
+
+.dark-theme text,
+.dark-theme .text-slate-900,
+.dark-theme .text-slate-850,
+.dark-theme .text-slate-800,
+.dark-theme .text-slate-700,
+.dark-theme .text-slate-650 {
+  color: #ffffff !important;
+}
+
+.dark-theme .text-slate-600,
+.dark-theme .text-slate-500,
+.dark-theme .text-slate-400 {
+  color: #cbd5e1 !important;
+}
+
+.dark-theme .border-slate-100,
+.dark-theme .border-slate-150,
+.dark-theme .border-slate-50,
+.dark-theme .divide-slate-50,
+.dark-theme .border-slate-200 {
+  border-color: #334155 !important;
+}
+
+.dark-theme .divide-y > :not([hidden]) ~ :not([hidden]) {
+  border-color: #334155 !important;
+}
+
+.dark-theme .hover\:bg-slate-50:hover,
+.dark-theme .hover\:bg-slate-50/40:hover,
+.dark-theme .hover\:bg-slate-100:hover {
+  background-color: #334155 !important;
+}
+
+.dark-theme .bg-blue-50 {
+  background-color: rgba(37, 99, 235, 0.25) !important;
+  color: #60a5fa !important;
+}
+
+.dark-theme .text-blue-600 {
+  color: #60a5fa !important;
+}
+
+.dark-theme .text-emerald-600 {
+  color: #34d399 !important;
+}
+
+.dark-theme .bg-emerald-50 {
+  background-color: rgba(16, 185, 129, 0.25) !important;
+  color: #34d399 !important;
+}
+
+.dark-theme .bg-purple-50 {
+  background-color: rgba(139, 92, 246, 0.25) !important;
+  color: #c084fc !important;
+}
+
+.dark-theme .text-purple-600 {
+  color: #c084fc !important;
+}
+
+.dark-theme .bg-rose-50 {
+  background-color: rgba(244, 63, 94, 0.25) !important;
+  color: #f43f5e !important;
+}
+
+.dark-theme .text-rose-600 {
+  color: #f43f5e !important;
+}
+
+/* Treat tables headers specifically in Dark Mode to ensure high visual prominence */
+.dark-theme th,
+.dark-theme thead,
+.dark-theme .bg-slate-50/80 {
+  background-color: #0f172a !important;
+  color: #ffffff !important;
+}
+
+/* Ensure selected rows in dark mode are clearly distinguishable */
+.dark-theme tr.bg-blue-50/40,
+.dark-theme .bg-blue-50/40 {
+  background-color: rgba(37, 99, 235, 0.3) !important;
 }
 
 /* Ghi đè bento-card & các phần tử dùng chung để đồng bộ động */

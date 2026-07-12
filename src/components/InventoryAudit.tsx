@@ -24,7 +24,7 @@ import {
   Filter
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { SanPham, KiemKho, User as UserType } from '../types';
+import { SanPham, KiemKho, User as UserType, ThươngHieu } from '../types';
 import { generateSKUString, formatDop, getVietnamDateString, getVietnamDateTimeString } from '../data/mockData';
 
 /**
@@ -43,6 +43,7 @@ interface InventoryAuditProps {
   kiemKhos: KiemKho[];
   onSaveAudit: (newAudit: KiemKho) => void;
   thuongHieus: string[];
+  brandList?: ThươngHieu[];
   chiNhanhs: string[];
 }
 
@@ -63,6 +64,7 @@ export default function InventoryAudit({
   kiemKhos, 
   onSaveAudit,
   thuongHieus,
+  brandList,
   chiNhanhs 
 }: InventoryAuditProps) {
 
@@ -111,11 +113,39 @@ export default function InventoryAudit({
   }, [currentUser, chiNhanhs]);
 
   // --- 4. ĐỒNG BỘ CHIẾT XUẤT VÀ TÍNH NĂNG THEO THƯƠNG HIỆU (Giống TransactionForm) ---
+  const availableFeatures = useMemo(() => {
+    if (!brandList) return ['ĐM', 'ASX'];
+    const features = brandList
+      .filter(b => b.THUONG_HIEU === selectBrand)
+      .map(b => b.TINH_NANG || b.TINH_NANG_MAC_DINH || '')
+      .filter(f => f !== '');
+    const uniqueFeatures = Array.from(new Set(features));
+    return uniqueFeatures.length > 0 ? uniqueFeatures : ['ĐM', 'ASX'];
+  }, [brandList, selectBrand]);
+
+  useEffect(() => {
+    if (availableFeatures.length > 0 && !availableFeatures.includes(selectTinhNang)) {
+      setSelectTinhNang(availableFeatures[0]);
+    }
+  }, [availableFeatures, selectTinhNang]);
+
   const handleBrandChange = (brand: string) => {
     setSelectBrand(brand);
-    const isDM = ['Blick', 'Element', 'Nikki'].includes(brand);
-    const newTinhNang = isDM ? 'ĐM' : 'ASX';
-    setSelectTinhNang(newTinhNang);
+    
+    // Tìm tính năng đầu tiên khả dụng của thương hiệu này từ danh sách brandList
+    if (brandList) {
+      const features = brandList
+        .filter(b => b.THUONG_HIEU === brand)
+        .map(b => b.TINH_NANG || b.TINH_NANG_MAC_DINH || '')
+        .filter(f => f !== '');
+      if (features.length > 0) {
+        setSelectTinhNang(features[0]);
+      }
+    } else {
+      const isDM = ['Blick', 'Element', 'Nikki'].includes(brand);
+      const newTinhNang = isDM ? 'ĐM' : 'ASX';
+      setSelectTinhNang(newTinhNang);
+    }
 
     if (['Blick', 'Zeiss Clear', 'Essilor Pre', 'Essilor Rock'].includes(brand)) {
       setSelectChietXuat('1.56');
@@ -498,8 +528,9 @@ export default function InventoryAudit({
                   onChange={(e) => setSelectTinhNang(e.target.value)}
                   className="w-full text-xs font-bold text-slate-700 bg-slate-50 border border-slate-150 p-2.5 rounded-lg focus:outline-hidden"
                 >
-                  <option value="ĐM">Đổi màu (ĐM)</option>
-                  <option value="ASX">Lọc ánh sáng xanh (ASX)</option>
+                  {availableFeatures.map(f => (
+                    <option key={f} value={f}>{f}</option>
+                  ))}
                 </select>
               </div>
 
