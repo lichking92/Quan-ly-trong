@@ -63,7 +63,7 @@ import TransactionForm from './components/TransactionForm';
 import InventoryAudit from './components/InventoryAudit';
 import TransactionHistory from './components/TransactionHistory';
 import CategoryManagement from './components/CategoryManagement';
-import AppsScriptExporter from './components/AppsScriptExporter';
+
 
 /**
  * FILE: App.tsx
@@ -1459,10 +1459,6 @@ export default function App() {
                   onUpdateNhanVien={handleUpdateNhanVien}
                   onDeleteNhanVien={handleDeleteNhanVien}
                 />
-              )}
-
-              {activeTab === 'APPS_SCRIPT' && (
-                <AppsScriptExporter />
               )}
             </motion.div>
           </AnimatePresence>
