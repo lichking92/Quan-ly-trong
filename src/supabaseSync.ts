@@ -341,142 +341,370 @@ export async function fetchAllUserData(userId: string): Promise<UserDataPayload>
  * Đồng bộ hoặc Thêm/Sửa một Sản phẩm
  */
 export async function syncSanPham(p: SanPham, userId: string) {
-  const res = await supabase.from('b_sanpham').upsert({
-    "SKU": p.SKU,
-    "TEN_SAN_PHAM": p.TEN_SAN_PHAM,
-    "THUONG_HIEU": p.THUONG_HIEU,
-    "CHIET_XUAT": p.CHIET_XUAT,
-    "TINH_NANG": p.TINH_NANG,
-    "CAN": p.CAN,
-    "LOAN": p.LOAN,
-    "DVT": p.DVT,
-    "TON_DAU": p.TON_DAU,
-    "NHAP": p.NHAP,
-    "XUAT": p.XUAT,
-    "TON_CUOI": p.TON_CUOI,
-    "TON_TOI_THIEU": p.TON_TOI_THIEU,
-    user_id: userId
-  }, { onConflict: 'SKU,user_id' });
-  if (res.error) console.error("Lỗi syncSanPham:", res.error);
-  return res;
+  try {
+    const payload = {
+      "SKU": p.SKU,
+      "TEN_SAN_PHAM": p.TEN_SAN_PHAM,
+      "THUONG_HIEU": p.THUONG_HIEU,
+      "CHIET_XUAT": p.CHIET_XUAT,
+      "TINH_NANG": p.TINH_NANG,
+      "CAN": p.CAN,
+      "LOAN": p.LOAN,
+      "DVT": p.DVT,
+      "TON_DAU": p.TON_DAU,
+      "NHAP": p.NHAP,
+      "XUAT": p.XUAT,
+      "TON_CUOI": p.TON_CUOI,
+      "TON_TOI_THIEU": p.TON_TOI_THIEU,
+      user_id: userId
+    };
+
+    const { data: existing, error: checkError } = await supabase
+      .from('b_sanpham')
+      .select('SKU')
+      .eq('SKU', p.SKU)
+      .eq('user_id', userId)
+      .maybeSingle();
+
+    if (checkError) {
+      console.warn("Lỗi kiểm tra b_sanpham:", checkError.message);
+    }
+
+    let res;
+    if (existing) {
+      res = await supabase
+        .from('b_sanpham')
+        .update(payload)
+        .eq('SKU', p.SKU)
+        .eq('user_id', userId)
+        .select();
+      if (res.error) console.error("Lỗi syncSanPham (update):", res.error);
+    } else {
+      res = await supabase
+        .from('b_sanpham')
+        .insert(payload)
+        .select();
+      if (res.error) console.error("Lỗi syncSanPham (insert):", res.error);
+    }
+    return res;
+  } catch (err: any) {
+    console.error("Lỗi ngoài dự kiến trong syncSanPham:", err);
+    return { error: err };
+  }
 }
 
 /**
  * Đồng bộ danh sách Sản phẩm (hỗ trợ lưu nhiều sản phẩm cùng lúc)
  */
 export async function syncSanPhams(pList: SanPham[], userId: string) {
-  const rows = pList.map(p => ({
-    "SKU": p.SKU,
-    "TEN_SAN_PHAM": p.TEN_SAN_PHAM,
-    "THUONG_HIEU": p.THUONG_HIEU,
-    "CHIET_XUAT": p.CHIET_XUAT,
-    "TINH_NANG": p.TINH_NANG,
-    "CAN": p.CAN,
-    "LOAN": p.LOAN,
-    "DVT": p.DVT,
-    "TON_DAU": p.TON_DAU,
-    "NHAP": p.NHAP,
-    "XUAT": p.XUAT,
-    "TON_CUOI": p.TON_CUOI,
-    "TON_TOI_THIEU": p.TON_TOI_THIEU,
-    user_id: userId
-  }));
-  const res = await supabase.from('b_sanpham').upsert(rows, { onConflict: 'SKU,user_id' });
-  if (res.error) console.error("Lỗi syncSanPhams:", res.error);
-  return res;
+  try {
+    const promises = pList.map(async (p) => {
+      const payload = {
+        "SKU": p.SKU,
+        "TEN_SAN_PHAM": p.TEN_SAN_PHAM,
+        "THUONG_HIEU": p.THUONG_HIEU,
+        "CHIET_XUAT": p.CHIET_XUAT,
+        "TINH_NANG": p.TINH_NANG,
+        "CAN": p.CAN,
+        "LOAN": p.LOAN,
+        "DVT": p.DVT,
+        "TON_DAU": p.TON_DAU,
+        "NHAP": p.NHAP,
+        "XUAT": p.XUAT,
+        "TON_CUOI": p.TON_CUOI,
+        "TON_TOI_THIEU": p.TON_TOI_THIEU,
+        user_id: userId
+      };
+
+      const { data: existing } = await supabase
+        .from('b_sanpham')
+        .select('SKU')
+        .eq('SKU', p.SKU)
+        .eq('user_id', userId)
+        .maybeSingle();
+
+      if (existing) {
+        return supabase
+          .from('b_sanpham')
+          .update(payload)
+          .eq('SKU', p.SKU)
+          .eq('user_id', userId)
+          .select();
+      } else {
+        return supabase
+          .from('b_sanpham')
+          .insert(payload)
+          .select();
+      }
+    });
+
+    const results = await Promise.all(promises);
+    const failed = results.find(r => r.error);
+    if (failed) {
+      console.error("Lỗi syncSanPhams:", failed.error);
+      return { error: failed.error };
+    }
+    return { data: results.map(r => r.data).flat(), error: null };
+  } catch (err: any) {
+    console.error("Lỗi ngoài dự kiến trong syncSanPhams:", err);
+    return { error: err };
+  }
 }
 
 /**
  * Đồng bộ hoặc Thêm/Sửa Phiếu xuất nhập
  */
 export async function syncNhapXuat(nx: NhapXuat, userId: string) {
-  const res = await supabase.from('b_nhapxuat').upsert({
-    "HOA_DON": nx.HOA_DON,
-    "CHI_NHANH": nx.CHI_NHANH,
-    "NGAY": nx.NGAY,
-    "LOAI": nx.LOAI,
-    "TONG_SL": nx.TONG_SL,
-    "NGUOI_TAO": nx.NGUOI_TAO,
-    "TEN_NGUOI_TAO": nx.TEN_NGUOI_TAO,
-    "TG_TAO": nx.TG_TAO,
-    "GHI_CHU": nx.GHI_CHU,
-    user_id: userId
-  }, { onConflict: 'HOA_DON,user_id' });
-  if (res.error) console.error("Lỗi syncNhapXuat:", res.error);
-  return res;
+  try {
+    const payload = {
+      "HOA_DON": nx.HOA_DON,
+      "CHI_NHANH": nx.CHI_NHANH,
+      "NGAY": nx.NGAY,
+      "LOAI": nx.LOAI,
+      "TONG_SL": nx.TONG_SL,
+      "NGUOI_TAO": nx.NGUOI_TAO,
+      "TEN_NGUOI_TAO": nx.TEN_NGUOI_TAO,
+      "TG_TAO": nx.TG_TAO,
+      "GHI_CHU": nx.GHI_CHU,
+      user_id: userId
+    };
+
+    const { data: existing, error: checkError } = await supabase
+      .from('b_nhapxuat')
+      .select('HOA_DON')
+      .eq('HOA_DON', nx.HOA_DON)
+      .eq('user_id', userId)
+      .maybeSingle();
+
+    if (checkError) {
+      console.warn("Lỗi kiểm tra b_nhapxuat:", checkError.message);
+    }
+
+    let res;
+    if (existing) {
+      res = await supabase
+        .from('b_nhapxuat')
+        .update(payload)
+        .eq('HOA_DON', nx.HOA_DON)
+        .eq('user_id', userId)
+        .select();
+      if (res.error) console.error("Lỗi syncNhapXuat (update):", res.error);
+    } else {
+      res = await supabase
+        .from('b_nhapxuat')
+        .insert(payload)
+        .select();
+      if (res.error) console.error("Lỗi syncNhapXuat (insert):", res.error);
+    }
+    return res;
+  } catch (err: any) {
+    console.error("Lỗi ngoài dự kiến trong syncNhapXuat:", err);
+    return { error: err };
+  }
 }
 
 /**
  * Đồng bộ danh sách chi tiết hóa đơn
  */
 export async function syncNhapXuatCTs(details: NhapXuatCT[], userId: string) {
-  const rows = details.map(d => ({
-    "id": d.ID,
-    "HOA_DON": d.HOA_DON,
-    "SKU": d.SKU,
-    "TEN_SP": d.TEN_SP,
-    "THUONG_HIEU": d.THUONG_HIEU,
-    "CHIET_XUAT": d.CHIET_XUAT,
-    "TINH_NANG": d.TINH_NANG,
-    "SPH": d.SPH,
-    "CYL": d.CYL,
-    "SO_LUONG": d.SO_LUONG,
-    "DVT": d.DVT,
-    "GHI_CHU": d.GHI_CHU,
-    "LOAI": d.LOAI,
-    "NGAY": d.NGAY,
-    user_id: userId
-  }));
-  const res = await supabase.from('b_nhapxuatct').upsert(rows);
-  if (res.error) console.error("Lỗi syncNhapXuatCTs:", res.error);
-  return res;
+  try {
+    const promises = details.map(async (d) => {
+      const payload = {
+        "id": d.ID,
+        "HOA_DON": d.HOA_DON,
+        "SKU": d.SKU,
+        "TEN_SP": d.TEN_SP,
+        "THUONG_HIEU": d.THUONG_HIEU,
+        "CHIET_XUAT": d.CHIET_XUAT,
+        "TINH_NANG": d.TINH_NANG,
+        "SPH": d.SPH,
+        "CYL": d.CYL,
+        "SO_LUONG": d.SO_LUONG,
+        "DVT": d.DVT,
+        "GHI_CHU": d.GHI_CHU,
+        "LOAI": d.LOAI,
+        "NGAY": d.NGAY,
+        user_id: userId
+      };
+
+      const { data: existing } = await supabase
+        .from('b_nhapxuatct')
+        .select('id')
+        .eq('id', d.ID)
+        .eq('user_id', userId)
+        .maybeSingle();
+
+      if (existing) {
+        return supabase
+          .from('b_nhapxuatct')
+          .update(payload)
+          .eq('id', d.ID)
+          .eq('user_id', userId)
+          .select();
+      } else {
+        return supabase
+          .from('b_nhapxuatct')
+          .insert(payload)
+          .select();
+      }
+    });
+
+    const results = await Promise.all(promises);
+    const failed = results.find(r => r.error);
+    if (failed) {
+      console.error("Lỗi syncNhapXuatCTs:", failed.error);
+      return { error: failed.error };
+    }
+    return { data: results.map(r => r.data).flat(), error: null };
+  } catch (err: any) {
+    console.error("Lỗi ngoài dự kiến trong syncNhapXuatCTs:", err);
+    return { error: err };
+  }
 }
 
 /**
  * Đồng bộ phiếu kiểm kho
  */
 export async function syncKiemKho(k: KiemKho, userId: string) {
-  const res = await supabase.from('b_kiemkho').upsert({
-    "MA_PHIEU": k.MA_PHIEU,
-    "SKU": k.SKU,
-    "TON_HE_THONG": k.TON_HE_THONG,
-    "TON_THUC_TE": k.TON_THUC_TE,
-    "LECH": k.LECH,
-    "LOAI_BU": k.LOAI_BU,
-    "NGUOI_KIEM": k.NGUOI_KIEM,
-    "THOI_DIEM": k.THOI_DIEM,
-    user_id: userId
-  }, { onConflict: 'MA_PHIEU,SKU,user_id' });
-  if (res.error) console.error("Lỗi syncKiemKho:", res.error);
-  return res;
+  try {
+    const payload = {
+      "MA_PHIEU": k.MA_PHIEU,
+      "SKU": k.SKU,
+      "TON_HE_THONG": k.TON_HE_THONG,
+      "TON_THUC_TE": k.TON_THUC_TE,
+      "LECH": k.LECH,
+      "LOAI_BU": k.LOAI_BU,
+      "NGUOI_KIEM": k.NGUOI_KIEM,
+      "THOI_DIEM": k.THOI_DIEM,
+      user_id: userId
+    };
+
+    const { data: existing, error: checkError } = await supabase
+      .from('b_kiemkho')
+      .select('MA_PHIEU, SKU')
+      .eq('MA_PHIEU', k.MA_PHIEU)
+      .eq('SKU', k.SKU)
+      .eq('user_id', userId)
+      .maybeSingle();
+
+    if (checkError) {
+      console.warn("Lỗi kiểm tra b_kiemkho:", checkError.message);
+    }
+
+    let res;
+    if (existing) {
+      res = await supabase
+        .from('b_kiemkho')
+        .update(payload)
+        .eq('MA_PHIEU', k.MA_PHIEU)
+        .eq('SKU', k.SKU)
+        .eq('user_id', userId)
+        .select();
+      if (res.error) console.error("Lỗi syncKiemKho (update):", res.error);
+    } else {
+      res = await supabase
+        .from('b_kiemkho')
+        .insert(payload)
+        .select();
+      if (res.error) console.error("Lỗi syncKiemKho (insert):", res.error);
+    }
+    return res;
+  } catch (err: any) {
+    console.error("Lỗi ngoài dự kiến trong syncKiemKho:", err);
+    return { error: err };
+  }
 }
 
 /**
  * Đồng bộ Thương hiệu
  */
 export async function syncThuongHieu(t: ThươngHieu, userId: string) {
-  const res = await supabase.from('b_thuonghieu').upsert({
-    "THUONG_HIEU": t.THUONG_HIEU,
-    "CHIET_XUAT_MAC_DINH": t.CHIET_XUAT_MAC_DINH,
-    "TINH_NANG_MAC_DINH": t.TINH_NANG_MAC_DINH,
-    user_id: userId
-  }, { onConflict: 'THUONG_HIEU,user_id' });
-  if (res.error) console.error("Lỗi syncThuongHieu:", res.error);
-  return res;
+  try {
+    const payload = {
+      "THUONG_HIEU": t.THUONG_HIEU,
+      "CHIET_XUAT_MAC_DINH": t.CHIET_XUAT_MAC_DINH,
+      "TINH_NANG_MAC_DINH": t.TINH_NANG_MAC_DINH,
+      user_id: userId
+    };
+
+    const { data: existing, error: checkError } = await supabase
+      .from('b_thuonghieu')
+      .select('THUONG_HIEU')
+      .eq('THUONG_HIEU', t.THUONG_HIEU)
+      .eq('user_id', userId)
+      .maybeSingle();
+
+    if (checkError) {
+      console.warn("Lỗi kiểm tra b_thuonghieu:", checkError.message);
+    }
+
+    let res;
+    if (existing) {
+      res = await supabase
+        .from('b_thuonghieu')
+        .update(payload)
+        .eq('THUONG_HIEU', t.THUONG_HIEU)
+        .eq('user_id', userId)
+        .select();
+      if (res.error) console.error("Lỗi syncThuongHieu (update):", res.error);
+    } else {
+      res = await supabase
+        .from('b_thuonghieu')
+        .insert(payload)
+        .select();
+      if (res.error) console.error("Lỗi syncThuongHieu (insert):", res.error);
+    }
+    return res;
+  } catch (err: any) {
+    console.error("Lỗi ngoài dự kiến trong syncThuongHieu:", err);
+    return { error: err };
+  }
 }
 
 /**
  * Đồng bộ Chi nhánh
  */
 export async function syncChiNhanh(c: ChiNhanh, userId: string) {
-  const res = await supabase.from('b_chinhanh').upsert({
-    "CHI_NHANH": c.CHI_NHANH,
-    "DIA_CHI": c.DIA_CHI,
-    "SDT": c.SDT,
-    user_id: userId
-  }, { onConflict: 'CHI_NHANH,user_id' });
-  if (res.error) console.error("Lỗi syncChiNhanh:", res.error);
-  return res;
+  try {
+    const payload = {
+      "CHI_NHANH": c.CHI_NHANH,
+      "DIA_CHI": c.DIA_CHI,
+      "SDT": c.SDT,
+      user_id: userId
+    };
+
+    const { data: existing, error: checkError } = await supabase
+      .from('b_chinhanh')
+      .select('CHI_NHANH')
+      .eq('CHI_NHANH', c.CHI_NHANH)
+      .eq('user_id', userId)
+      .maybeSingle();
+
+    if (checkError) {
+      console.warn("Lỗi kiểm tra b_chinhanh:", checkError.message);
+    }
+
+    let res;
+    if (existing) {
+      res = await supabase
+        .from('b_chinhanh')
+        .update(payload)
+        .eq('CHI_NHANH', c.CHI_NHANH)
+        .eq('user_id', userId)
+        .select();
+      if (res.error) console.error("Lỗi syncChiNhanh (update):", res.error);
+    } else {
+      res = await supabase
+        .from('b_chinhanh')
+        .insert(payload)
+        .select();
+      if (res.error) console.error("Lỗi syncChiNhanh (insert):", res.error);
+    }
+    return res;
+  } catch (err: any) {
+    console.error("Lỗi ngoài dự kiến trong syncChiNhanh:", err);
+    return { error: err };
+  }
 }
 
 /**
