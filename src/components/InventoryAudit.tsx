@@ -24,7 +24,8 @@ import {
   Info
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { SanPham, KiemKho, User as UserType } from '../types';
+import { SanPham, KiemKho, User as UserType, ThươngHieu } from '../types';
+import { generateSKUString, formatDop } from '../data/mockData';
 
 /**
  * FILE: InventoryAudit.tsx
@@ -39,6 +40,7 @@ interface InventoryAuditProps {
   currentUser: UserType;
   sanPhams: SanPham[];
   kiemKhos: KiemKho[];
+  thuongHieus: ThươngHieu[];
   onSaveAudit: (newAudit: KiemKho) => void;
 }
 
@@ -51,7 +53,7 @@ interface AuditRow {
   loaiBu: 'NHẬP BÙ' | 'XUẤT BÙ' | 'KHÔNG LỆCH';
 }
 
-export default function InventoryAudit({ currentUser, sanPhams, kiemKhos, onSaveAudit }: InventoryAuditProps) {
+export default function InventoryAudit({ currentUser, sanPhams, kiemKhos, thuongHieus, onSaveAudit }: InventoryAuditProps) {
   // --- 1. QUẢN LÝ TRẠNG THÁI WIZARD ---
   const [currentStep, setCurrentStep] = useState<number>(1);
   const [successMsg, setSuccessMsg] = useState<string>('');
@@ -68,6 +70,111 @@ export default function InventoryAudit({ currentUser, sanPhams, kiemKhos, onSave
   // Trạng thái Bước 2: Danh sách chi tiết kiểm kho
   const [auditRows, setAuditRows] = useState<AuditRow[]>([]);
   const [searchSKUQuery, setSearchSKUQuery] = useState<string>('');
+
+  // --- THÔNG TIN CHỌN SẢN PHẨM ĐỂ KIỂM KHO (BRAND -> FEATURE -> SPECS) ---
+  const [selectBrand, setSelectBrand] = useState<string>('Blick');
+  const [selectChietXuat, setSelectChietXuat] = useState<string>('1.56');
+  const [selectTinhNang, setSelectTinhNang] = useState<string>('ĐM');
+  const [selectDoSphType, setSelectDoSphType] = useState<'CẬN' | 'VIỄN'>('CẬN');
+  const [selectDoSph, setSelectDoSph] = useState<number>(-2.00);
+  const [selectDoCyl, setSelectDoCyl] = useState<number>(0.00);
+
+  // --- QUY TẮC NGHIỆP VỤ - ĐỒNG BỘ CHIẾT XUẤT VÀ TÍNH NĂNG THEO THƯƠNG HIỆU ---
+  const handleBrandChange = (brand: string) => {
+    setSelectBrand(brand);
+    
+    // Tìm đối tượng thương hiệu tương ứng
+    const brandObj = thuongHieus.find(t => t.THUONG_HIEU === brand);
+    
+    // Rule 1: Nếu Thương hiệu có danh sách tính năng riêng biệt, chọn tính năng đầu tiên hoặc mặc định, ngược lại dùng fallback
+    let newTinhNang = 'ASX';
+    if (brandObj) {
+      if (brandObj.TINH_NANG_LIST && brandObj.TINH_NANG_LIST.length > 0) {
+        newTinhNang = brandObj.TINH_NANG_LIST[0];
+      } else {
+        newTinhNang = brandObj.TINH_NANG_MAC_DINH || 'ASX';
+      }
+    } else {
+      const isDM = ['Blick', 'Element', 'Nikki'].includes(brand);
+      newTinhNang = isDM ? 'ĐM' : 'ASX';
+    }
+    setSelectTinhNang(newTinhNang);
+
+    // Rule 2: Nếu Thương hiệu là Blick, Zeiss Clear, Essilor Pre, Essilor Rock thì Chiết suất là 1.56.
+    // Zeiss Blue chiết suất sẽ là 1.60. Còn lại thì sẽ dropdown 1.56; 1.61; 1.67; 1.74
+    if (['Blick', 'Zeiss Clear', 'Essilor Pre', 'Essilor Rock'].includes(brand)) {
+      setSelectChietXuat('1.56');
+    } else if (brand === 'Zeiss Blue') {
+      setSelectChietXuat('1.60');
+    } else {
+      setSelectChietXuat(brandObj?.CHIET_XUAT_MAC_DINH || '1.61');
+    }
+  };
+
+  // --- DYNAMIC AVAILABLE FEATURES MEMO ---
+  const activeBrandObj = useMemo(() => {
+    return thuongHieus.find(t => t.THUONG_HIEU === selectBrand);
+  }, [thuongHieus, selectBrand]);
+
+  const availableFeatures = useMemo(() => {
+    if (activeBrandObj?.TINH_NANG_LIST && activeBrandObj.TINH_NANG_LIST.length > 0) {
+      return activeBrandObj.TINH_NANG_LIST;
+    }
+    return [activeBrandObj?.TINH_NANG_MAC_DINH || 'ASX'];
+  }, [activeBrandObj]);
+
+  // Độ cận: -0.00 đến -8.00 | Độ viễn: +0.75 đến +4.00 (bước nhảy 0.25)
+  const sphOptions = useMemo(() => {
+    const opts: number[] = [];
+    if (selectDoSphType === 'CẬN') {
+      for (let i = 0; i >= -8.00; i -= 0.25) {
+        opts.push(Number(i.toFixed(2)));
+      }
+    } else {
+      for (let i = 0.75; i <= 4.00; i += 0.25) {
+        opts.push(Number(i.toFixed(2)));
+      }
+    }
+    return opts;
+  }, [selectDoSphType]);
+
+  useEffect(() => {
+    if (selectDoSphType === 'CẬN') {
+      setSelectDoSph(-2.00);
+    } else {
+      setSelectDoSph(1.50);
+    }
+  }, [selectDoSphType]);
+
+  // Độ loạn: -0.00 đến -2.00 (bước nhảy 0.25)
+  const cylOptions = useMemo(() => {
+    const opts: number[] = [];
+    for (let i = 0; i >= -2.00; i -= 0.25) {
+      opts.push(Number(i.toFixed(2)));
+    }
+    return opts;
+  }, []);
+
+  // Tính SKU và truy vấn tồn kho thực tế
+  const calculatedSKU = useMemo(() => {
+    return generateSKUString(selectBrand, selectChietXuat, selectTinhNang, selectDoSph, selectDoCyl);
+  }, [selectBrand, selectChietXuat, selectTinhNang, selectDoSph, selectDoCyl]);
+
+  // Tìm sản phẩm tương ứng trong cơ sở dữ liệu
+  const matchedProductInDB = useMemo(() => {
+    if (!calculatedSKU) return null;
+    return sanPhams.find(p => p.SKU.toUpperCase() === calculatedSKU.toUpperCase()) || null;
+  }, [calculatedSKU, sanPhams]);
+
+  // Tên sản phẩm hiển thị thông tin
+  const calculatedProductName = useMemo(() => {
+    if (matchedProductInDB) return matchedProductInDB.TEN_SAN_PHAM;
+    
+    const labelTinhNang = selectTinhNang === 'ĐM' ? 'Đổi màu' : 'Lọc ánh sáng xanh';
+    const labelDo = selectDoSphType === 'CẬN' ? `Cận ${formatDop(selectDoSph)}` : `Viễn ${formatDop(selectDoSph)}`;
+    const labelCyl = selectDoCyl !== 0 ? ` Loạn ${formatDop(selectDoCyl)}` : '';
+    return `Tròng kính ${labelTinhNang} ${selectBrand} ${selectChietXuat} ${labelDo}${labelCyl}`;
+  }, [matchedProductInDB, selectBrand, selectChietXuat, selectTinhNang, selectDoSph, selectDoCyl, selectDoSphType]);
 
   // --- 2. LỌC DANH SÁCH SKU ĐỂ THÊM VÀO PHIẾU ---
   const filteredSKUOptions = useMemo(() => {
@@ -100,6 +207,15 @@ export default function InventoryAudit({ currentUser, sanPhams, kiemKhos, onSave
     setAuditRows(prev => [...prev, newRow]);
     setSearchSKUQuery('');
     setErrorMsg('');
+  };
+
+  const handleSelectSpecsToAudit = () => {
+    setErrorMsg('');
+    if (!matchedProductInDB) {
+      setErrorMsg(`Lỗi nghiệp vụ: SKU [${calculatedSKU}] chưa tồn tại trong kho sản phẩm. Vui lòng tạo sản phẩm này trước khi kiểm kê.`);
+      return;
+    }
+    handleAddSKUToAudit(matchedProductInDB);
   };
 
   // Cập nhật số lượng đếm thực tế của 1 dòng
@@ -351,64 +467,138 @@ export default function InventoryAudit({ currentUser, sanPhams, kiemKhos, onSave
                 transition={{ duration: 0.15 }}
                 className="bento-card !p-5 space-y-4"
               >
-                <div className="border-b border-slate-50 pb-2 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
-                  <h3 className="font-sans font-bold text-slate-800 text-xs uppercase flex items-center gap-1.5">
-                    <ClipboardCheck className="w-4 h-4 text-blue-500" /> Bước 2: Thiết lập chi tiết danh sách kiểm kho
-                  </h3>
-                  {auditRows.length > 0 && (
-                    <button
-                      onClick={handleResetAllRows}
-                      className="text-[10px] text-blue-600 hover:text-blue-800 font-bold flex items-center gap-1 cursor-pointer"
-                      title="Đặt tất cả số tồn thực tế bằng số tồn hệ thống"
-                    >
-                      <RotateCcw className="w-3.5 h-3.5" /> Đặt về khớp (Hệ thống)
-                    </button>
-                  )}
-                </div>
+                       {/* BỘ LỌC SẢN PHẨM CHUYÊN NGHIỆP: BRAND -> FEATURE -> SPECS */}
+                <div className="space-y-3 p-4 bg-slate-50/80 border border-slate-100 rounded-xl">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
+                    
+                    {/* Thương hiệu */}
+                    <div className="space-y-1">
+                      <label className="text-[9px] uppercase font-bold text-slate-400">Thương hiệu</label>
+                      <select
+                        value={selectBrand}
+                        onChange={(e) => handleBrandChange(e.target.value)}
+                        className="w-full text-xs font-semibold text-slate-700 bg-white border border-slate-200 p-2 rounded-lg focus:outline-hidden cursor-pointer"
+                      >
+                        {thuongHieus.map(b => (
+                          <option key={b.THUONG_HIEU} value={b.THUONG_HIEU}>{b.THUONG_HIEU}</option>
+                        ))}
+                      </select>
+                    </div>
 
-                {/* Ô tìm kiếm & Chọn SKU */}
-                <div className="space-y-1.5 relative">
-                  <label className="text-[10px] uppercase font-bold text-slate-400 block">
-                    Gõ tìm SKU hoặc Tên Tròng Kính để thêm vào danh sách kiểm kê
-                  </label>
-                  <div className="relative">
-                    <span className="absolute inset-y-0 left-0 flex items-center pl-3 text-slate-400">
-                      <Search className="w-4 h-4" />
-                    </span>
-                    <input
-                      type="text"
-                      placeholder="Nhập thương hiệu, SKU, độ cận viễn để tìm tròng kính..."
-                      value={searchSKUQuery}
-                      onChange={(e) => setSearchSKUQuery(e.target.value)}
-                      className="w-full pl-9 pr-4 py-2.5 text-xs bg-slate-50 border border-slate-100 rounded-lg focus:outline-hidden text-slate-700 font-semibold focus:ring-2 focus:ring-blue-500/20"
-                    />
-                  </div>
-
-                  {/* Dropdown gợi ý tìm kiếm */}
-                  {searchSKUQuery && (
-                    <div className="absolute top-full left-0 right-0 border border-slate-100 rounded-lg max-h-48 overflow-y-auto divide-y divide-slate-50 shadow-md bg-white text-xs z-30">
-                      {filteredSKUOptions.length > 0 ? (
-                        filteredSKUOptions.slice(0, 15).map(p => (
-                          <button
-                            key={p.SKU}
-                            type="button"
-                            onClick={() => handleAddSKUToAudit(p)}
-                            className="w-full text-left p-2.5 hover:bg-slate-50 transition-colors block"
-                          >
-                            <p className="font-bold text-slate-700 font-mono flex items-center justify-between">
-                              <span>{p.SKU}</span>
-                              <span className="text-[10px] font-semibold text-slate-400 bg-slate-100 px-1.5 py-0.5 rounded">Tồn: {p.TON_CUOI}</span>
-                            </p>
-                            <p className="text-[10px] text-slate-400 truncate mt-0.5">{p.TEN_SAN_PHAM}</p>
-                          </button>
-                        ))
+                    {/* Chiết suất */}
+                    <div className="space-y-1">
+                      <label className="text-[9px] uppercase font-bold text-slate-400">Chiết suất</label>
+                      {['Blick', 'Zeiss Clear', 'Essilor Pre', 'Essilor Rock', 'Zeiss Blue'].includes(selectBrand) ? (
+                        <input
+                          type="text"
+                          disabled
+                          value={selectChietXuat}
+                          className="w-full text-xs font-bold text-slate-400 bg-slate-100 border border-slate-200 p-2 rounded-lg focus:outline-hidden cursor-not-allowed"
+                        />
                       ) : (
-                        <div className="p-3 text-center text-slate-400 italic">
-                          Không tìm thấy SKU nào trùng khớp
-                        </div>
+                        <select
+                          value={selectChietXuat}
+                          onChange={(e) => setSelectChietXuat(e.target.value)}
+                          className="w-full text-xs font-semibold text-slate-700 bg-white border border-slate-200 p-2 rounded-lg focus:outline-hidden cursor-pointer"
+                        >
+                          <option value="1.56">1.56</option>
+                          <option value="1.61">1.61</option>
+                          <option value="1.67">1.67</option>
+                          <option value="1.74">1.74</option>
+                        </select>
                       )}
                     </div>
-                  )}
+
+                    {/* Tính năng (Dropdown theo thương hiệu) */}
+                    <div className="space-y-1">
+                      <label className="text-[9px] uppercase font-bold text-slate-400">Tính năng</label>
+                      <select
+                        value={selectTinhNang}
+                        onChange={(e) => setSelectTinhNang(e.target.value)}
+                        className="w-full text-xs font-semibold text-slate-700 bg-white border border-slate-200 p-2 rounded-lg focus:outline-hidden cursor-pointer font-mono"
+                      >
+                        {availableFeatures.map(f => (
+                          <option key={f} value={f}>{f}</option>
+                        ))}
+                      </select>
+                    </div>
+
+                    {/* Loại Độ */}
+                    <div className="space-y-1">
+                      <label className="text-[9px] uppercase font-bold text-slate-400">Loại độ</label>
+                      <select
+                        value={selectDoSphType}
+                        onChange={(e) => setSelectDoSphType(e.target.value as 'CẬN' | 'VIỄN')}
+                        className="w-full text-xs font-semibold text-slate-700 bg-white border border-slate-200 p-2 rounded-lg focus:outline-hidden cursor-pointer"
+                      >
+                        <option value="CẬN">Cận thị</option>
+                        <option value="VIỄN">Viễn thị</option>
+                      </select>
+                    </div>
+
+                    {/* Độ SPH */}
+                    <div className="space-y-1">
+                      <label className="text-[9px] uppercase font-bold text-slate-400">Độ cầu (SPH)</label>
+                      <select
+                        value={selectDoSph}
+                        onChange={(e) => setSelectDoSph(Number(e.target.value))}
+                        className="w-full text-xs font-semibold text-slate-700 bg-white border border-slate-200 p-2 rounded-lg focus:outline-hidden cursor-pointer font-mono"
+                      >
+                        {sphOptions.map(val => (
+                          <option key={val} value={val}>{formatDop(val)}</option>
+                        ))}
+                      </select>
+                    </div>
+
+                    {/* Độ CYL */}
+                    <div className="space-y-1">
+                      <label className="text-[9px] uppercase font-bold text-slate-400">Độ loạn (CYL)</label>
+                      <select
+                        value={selectDoCyl}
+                        onChange={(e) => setSelectDoCyl(Number(e.target.value))}
+                        className="w-full text-xs font-semibold text-slate-700 bg-white border border-slate-200 p-2 rounded-lg focus:outline-hidden cursor-pointer font-mono"
+                      >
+                        {cylOptions.map(val => (
+                          <option key={val} value={val}>{formatDop(val)}</option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+
+                  {/* THÔNG TIN KHỚP SKU THỜI GIAN THỰC */}
+                  <div className="p-3 rounded-xl border border-dashed border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-white/50">
+                    <div className="space-y-1">
+                      <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider block">SKU tính toán tự động:</span>
+                      <span className="text-xs font-mono font-extrabold text-blue-600 bg-blue-50 px-2 py-0.5 rounded border border-blue-100">
+                        {calculatedSKU}
+                      </span>
+                      <span className="text-xs font-bold text-slate-700 block mt-1">{calculatedProductName}</span>
+                    </div>
+
+                    <div className="sm:text-right flex flex-col justify-center">
+                      <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider block">Hệ thống ghi nhận tồn:</span>
+                      {matchedProductInDB ? (
+                        <span className={`text-lg font-extrabold font-mono ${matchedProductInDB.TON_CUOI <= 0 ? 'text-red-600' : 'text-slate-800'}`}>
+                          {matchedProductInDB.TON_CUOI} <span className="text-xs font-semibold text-slate-400">cái</span>
+                        </span>
+                      ) : (
+                        <span className="text-xs font-bold text-red-500 bg-red-50 px-2 py-0.5 rounded mt-0.5">
+                          SKU chưa khai báo
+                        </span>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="flex justify-end">
+                    <button
+                      type="button"
+                      onClick={handleSelectSpecsToAudit}
+                      className="flex items-center gap-1.5 bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs py-2 px-4 rounded-lg cursor-pointer transition-all shadow-xs"
+                    >
+                      <Plus className="w-4 h-4" />
+                      <span>Thêm vào danh sách kiểm</span>
+                    </button>
+                  </div>
                 </div>
 
                 {/* BẢNG CHI TIẾT CÁC SKU ĐÃ CHỌN ĐỂ KIỂM */}

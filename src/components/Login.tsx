@@ -47,50 +47,35 @@ export default function Login({ onLoginSuccess }: LoginProps) {
 
     const lowerUser = emailInput.toLowerCase();
 
-    // 1. Nếu là tài khoản test nhanh cục bộ không chứa ký tự '@'
-    if (!lowerUser.includes('@')) {
+    // 1. Kiểm tra tài khoản trong danh sách nhân viên local trước (Bao gồm cả admin, kho, nhanvien và tài khoản do Admin tạo mới)
+    const savedNhanViens = localStorage.getItem('B_NHANVIEN');
+    const listNhanVien: NhanVien[] = savedNhanViens ? JSON.parse(savedNhanViens) : [];
+    const matchedStaff = listNhanVien.find(
+      n => (n.TEN_DANG_NHAP?.toLowerCase() === lowerUser || n.USERNAME?.toLowerCase() === lowerUser || n.EMAIL?.toLowerCase() === lowerUser) && (n.MAT_KHAU === cleanPass || n.PASSWORD === cleanPass)
+    );
+
+    if (matchedStaff) {
       setLoading(false);
-      // Kiểm tra tài khoản Admin mặc định hoặc gõ "admin"
-      if (lowerUser === 'admin' && cleanPass === '12345') {
-        onLoginSuccess({
-          username: 'nguyenkienduc.digital@gmail.com',
-          fullName: 'Nguyễn Kiến Đức',
-          role: 'ADMIN',
-          branch: 'Kho Trung Tâm',
-          writeAccess: true
-        });
-        return;
-      }
-
-      // Kiểm tra tài khoản Thủ Kho mặc định hoặc gõ "kho"
-      if (lowerUser === 'kho' && cleanPass === '12345') {
-        onLoginSuccess({
-          username: 'kho@gmail.com',
-          fullName: 'Trần Văn Kho',
-          role: 'KHO',
-          branch: 'Kho Trung Tâm',
-          writeAccess: true
-        });
-        return;
-      }
-
-      // Kiểm tra tài khoản Nhân viên bán hàng mặc định hoặc gõ "nhanvien"
-      if (lowerUser === 'nhanvien' && cleanPass === '12345') {
-        onLoginSuccess({
-          username: 'nhanvien@gmail.com',
-          fullName: 'Lê Thị Bán Hàng',
-          role: 'NHAN_VIEN',
-          branch: 'Chi nhánh Quận 1',
-          writeAccess: false
-        });
-        return;
-      }
-
-      setErrorMsg('Tài khoản demo không chính xác. Hãy nhập một email hợp lệ để kết nối qua Supabase.');
+      const isOwner = matchedStaff.EMAIL?.toLowerCase() === 'nguyenkienduc.digital@gmail.com';
+      onLoginSuccess({
+        username: matchedStaff.EMAIL || matchedStaff.TEN_DANG_NHAP || matchedStaff.USERNAME || 'staff',
+        fullName: matchedStaff.HO_TEN,
+        role: matchedStaff.ROLE,
+        branch: matchedStaff.CHI_NHANH,
+        writeAccess: isOwner ? true : (matchedStaff.WRITE_ACCESS ?? false),
+        WRITE_ACCESS: isOwner ? true : (matchedStaff.WRITE_ACCESS ?? false)
+      });
       return;
     }
 
-    // 2. Xử lý qua Supabase Auth
+    // 2. Nếu không khớp tài khoản local và không chứa ký tự '@' (không phải email)
+    if (!lowerUser.includes('@')) {
+      setLoading(false);
+      setErrorMsg('Tài khoản hoặc mật khẩu không chính xác. Vui lòng thử lại hoặc liên hệ Admin.');
+      return;
+    }
+
+    // 3. Xử lý qua Supabase Auth nếu là Email và chưa khớp mật khẩu local
     try {
       if (isSignUp) {
         const { data, error } = await supabase.auth.signUp({
@@ -226,14 +211,14 @@ export default function Login({ onLoginSuccess }: LoginProps) {
         {/* FORM ĐĂNG NHẬP / ĐĂNG KÝ */}
         <form onSubmit={handleSubmit} className="space-y-5">
           <div className="space-y-1.5">
-            <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Email Tài Khoản</label>
+            <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Tên Đăng Nhập hoặc Email</label>
             <div className="relative">
               <span className="absolute inset-y-0 left-0 flex items-center pl-3.5 text-slate-500">
                 <UserIcon className="w-4 h-4" />
               </span>
               <input
                 type="text"
-                placeholder={isSignUp ? "Nhập địa chỉ email đăng ký" : "Nhập 'admin', 'kho' hoặc tài khoản email"}
+                placeholder={isSignUp ? "Nhập địa chỉ email đăng ký" : "Nhập tên đăng nhập hoặc email tài khoản"}
                 value={username}
                 onChange={(e) => setUsername(e.target.value)}
                 className="w-full text-xs font-semibold text-white bg-slate-800/60 border border-slate-750 rounded-xl py-3 pl-10 pr-4 focus:outline-hidden focus:border-blue-500 focus:ring-2 focus:ring-blue-500/10 transition-all font-mono"

@@ -92,6 +92,7 @@ export interface ThươngHieu {
   THUONG_HIEU: string;     // Tên thương hiệu (Blick, Element, Nikki, Zeiss, Essilor, HEN...)
   CHIET_XUAT_MAC_DINH?: string; // Cấu hình chiết suất mặc định cho thương hiệu này
   TINH_NANG_MAC_DINH?: string;  // Cấu hình tính năng mặc định cho thương hiệu này
+  TINH_NANG_LIST?: string[];    // Danh sách các tính năng được cấu hình cho thương hiệu này (ví dụ: ['ASX', 'ĐM'])
 }
 
 // B_CHINHANH: Danh mục chi nhánh / kho hàng trực thuộc hệ thống cửa hàng
@@ -108,9 +109,12 @@ export interface NhanVien {
   CHUC_VU: string;         // Chức vụ (Quản lý, Nhân viên kho, Kế toán, Chủ cửa hàng)
   BO_PHAN: string;         // Bộ phận làm việc
   CHI_NHANH: string;       // Chi nhánh công tác
-  EMAIL: string;           // Email liên hệ (dùng để xác thực phân quyền)
+  EMAIL?: string;          // Email liên hệ (tùy chọn)
   ROLE: UserRole;          // Quyền hạn thao tác trên hệ thống (ADMIN, KHO, NHAN_VIEN)
-  PASSWORD?: string;       // Mật khẩu đăng nhập hệ thống
+  TEN_DANG_NHAP: string;   // Tên đăng nhập được Admin cấp (Lưu b_nhanvien trên Supabase)
+  MAT_KHAU: string;        // Mật khẩu đăng nhập hệ thống (Lưu b_nhanvien trên Supabase)
+  USERNAME?: string;       // Tương thích ngược tên đăng nhập
+  PASSWORD?: string;       // Tương thích ngược mật khẩu
   PERMISSIONS?: string[];  // Danh sách các tab/chức năng được phép dùng
   WRITE_ACCESS?: boolean;  // Có quyền thêm/sửa/xóa hay chỉ xem
 }

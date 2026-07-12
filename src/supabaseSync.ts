@@ -52,6 +52,10 @@ export async function ensureUserOnboarded(userId: string): Promise<UserDataPaylo
           "CHI_NHANH": "Kho Trung Tâm",
           "EMAIL": email,
           "ROLE": "ADMIN",
+          "TEN_DANG_NHAP": email.split('@')[0],
+          "MAT_KHAU": "123456",
+          "USERNAME": email.split('@')[0],
+          "PASSWORD": "123456",
           "PERMISSIONS": ["DASHBOARD", "PRODUCT", "TRANSACTION", "HISTORY", "AUDIT", "CATEGORY"],
           "WRITE_ACCESS": true,
           user_id: userId
@@ -97,8 +101,12 @@ export async function ensureUserOnboarded(userId: string): Promise<UserDataPaylo
             "CHUC_VU": n.CHUC_VU,
             "BO_PHAN": n.BO_PHAN,
             "CHI_NHANH": n.CHI_NHANH,
-            "EMAIL": n.EMAIL,
+            "EMAIL": n.EMAIL || '',
             "ROLE": n.ROLE,
+            "TEN_DANG_NHAP": n.TEN_DANG_NHAP || n.USERNAME || '',
+            "MAT_KHAU": n.MAT_KHAU || n.PASSWORD || '123456',
+            "USERNAME": n.TEN_DANG_NHAP || n.USERNAME || '',
+            "PASSWORD": n.MAT_KHAU || n.PASSWORD || '123456',
             "PERMISSIONS": n.PERMISSIONS,
             "WRITE_ACCESS": n.WRITE_ACCESS,
             user_id: userId
@@ -279,8 +287,12 @@ export async function fetchAllUserData(userId: string): Promise<UserDataPayload>
     CHUC_VU: item.CHUC_VU,
     BO_PHAN: item.BO_PHAN,
     CHI_NHANH: item.CHI_NHANH,
-    EMAIL: item.EMAIL,
+    EMAIL: item.EMAIL || '',
     ROLE: item.ROLE,
+    TEN_DANG_NHAP: item.TEN_DANG_NHAP || item.USERNAME || '',
+    MAT_KHAU: item.MAT_KHAU || item.PASSWORD || '',
+    USERNAME: item.TEN_DANG_NHAP || item.USERNAME || '',
+    PASSWORD: item.MAT_KHAU || item.PASSWORD || '',
     PERMISSIONS: item.PERMISSIONS || [],
     WRITE_ACCESS: item.WRITE_ACCESS ?? false
   }));
@@ -448,12 +460,14 @@ export async function syncNhanVien(n: NhanVien, userId: string) {
     "CHUC_VU": n.CHUC_VU,
     "BO_PHAN": n.BO_PHAN,
     "CHI_NHANH": n.CHI_NHANH,
-    "EMAIL": n.EMAIL,
+    "EMAIL": n.EMAIL || '',
     "ROLE": n.ROLE,
+    "TEN_DANG_NHAP": n.TEN_DANG_NHAP,
+    "MAT_KHAU": n.MAT_KHAU,
     "PERMISSIONS": n.PERMISSIONS,
     "WRITE_ACCESS": n.WRITE_ACCESS,
     user_id: userId
-  }, { onConflict: 'EMAIL,user_id' });
+  }, { onConflict: 'MA_NV,user_id' });
   if (res.error) console.error("Lỗi syncNhanVien:", res.error);
   return res;
 }
@@ -492,8 +506,8 @@ export async function deleteChiNhanh(chiNhanh: string, userId: string) {
 /**
  * Xóa Nhân viên
  */
-export async function deleteNhanVien(email: string, userId: string) {
-  const res = await supabase.from('b_nhanvien').delete().eq('EMAIL', email).eq('user_id', userId);
+export async function deleteNhanVien(maNv: string, userId: string) {
+  const res = await supabase.from('b_nhanvien').delete().eq('MA_NV', maNv).eq('user_id', userId);
   if (res.error) console.error("Lỗi deleteNhanVien:", res.error);
   return res;
 }

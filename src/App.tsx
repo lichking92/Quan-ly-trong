@@ -382,6 +382,31 @@ export default function App() {
   }
   const [syncError, setSyncError] = useState<SyncError | null>(null);
 
+  // --- HỆ THỐNG THÔNG BÁO GLOBAL TOAST / MODAL TRUNG TÂM ---
+  const [globalToast, setGlobalToast] = useState<{
+    show: boolean;
+    title: string;
+    message: string;
+    type: 'success' | 'error' | 'info';
+  }>({
+    show: false,
+    title: '',
+    message: '',
+    type: 'success'
+  });
+
+  const showToast = (title: string, message: string, type: 'success' | 'error' | 'info' = 'success') => {
+    setGlobalToast({
+      show: true,
+      title,
+      message,
+      type
+    });
+    setTimeout(() => {
+      setGlobalToast(prev => ({ ...prev, show: false }));
+    }, 3000);
+  };
+
   // --- 5. HÀM THAO TÁC NGHIỆP VỤ (VỚI COMMENT SÂU SẮC NHƯ LÃO TƯỚNG 30 NĂM TUỔI NGHỀ) ---
 
   /**
@@ -389,6 +414,12 @@ export default function App() {
    */
   const handleAddProduct = async (newProduct: SanPham) => {
     setSanPhams(prev => [...prev, newProduct]);
+
+    showToast(
+      'Khai Báo Thành Công',
+      `Mã SKU [${newProduct.SKU}] đã được khởi tạo và lưu trữ thành công trên hệ thống.`,
+      'success'
+    );
 
     // Đồng bộ Supabase
     if (currentUser && currentUser.username.includes('@')) {
@@ -491,6 +522,12 @@ export default function App() {
     setNhapXuats(prev => [...prev, finalizedHeader]);
     setNhapXuatCTs(prev => [...prev, ...finalizedDetails]);
 
+    showToast(
+      'Lưu Phiếu Thành Công',
+      `Phiếu [${newInvoiceId}] (${header.LOAI}) đã được thiết lập và phân bổ tồn kho thành công.`,
+      'success'
+    );
+
     // Cập nhật số lượng nhập, xuất, và tồn cuối trực tiếp vào bảng sản phẩm ngay lập tức
     let updatedProducts: SanPham[] = [];
     setSanPhams(prevProducts => {
@@ -576,6 +613,12 @@ export default function App() {
     };
 
     setKiemKhos(prev => [...prev, finalizedAudit]);
+
+    showToast(
+      'Kiểm Kho Thành Công',
+      `Phiếu kiểm kê [${newAuditId}] đã được ghi nhận và bù trừ chênh lệch tồn kho thành công.`,
+      'success'
+    );
 
     // Đồng bộ lượng chênh lệch kiểm kê bù trừ trực tiếp vào sản phẩm tương ứng (B_SANPHAM)
     let updatedProducts: SanPham[] = [];
@@ -1462,7 +1505,7 @@ export default function App() {
         </AnimatePresence>
 
         {/* PHẦN THÂN HIỂN THỊ CÁC COMPONENT CHỨC NĂNG */}
-        <main className="flex-1 p-4 md:p-6 overflow-y-auto">
+        <main className="flex-1 p-4 md:p-6 pb-24 md:pb-6 overflow-y-auto">
           {syncError && (
             <div className="bg-red-50 border-l-4 border-red-500 p-4 mb-6 rounded-xl shadow-sm flex items-start justify-between animate-fade-in">
               <div className="flex">
@@ -1535,7 +1578,7 @@ export default function App() {
                   currentUser={currentUser}
                   sanPhams={sanPhams}
                   onAddProduct={handleAddProduct}
-                  thuongHieus={listBrandNames}
+                  thuongHieus={thuongHieus}
                   onUpdateMinStock={handleUpdateMinStock}
                 />
               )}
@@ -1545,7 +1588,7 @@ export default function App() {
                   currentUser={currentUser}
                   sanPhams={sanPhams}
                   chiNhanhs={listBranchNames}
-                  thuongHieus={listBrandNames}
+                  thuongHieus={thuongHieus}
                   loaiPhieuMacDinh="XUẤT"
                   onSaveTransaction={handleSaveTransaction}
                   onNavigateToHistory={() => changeTab('HISTORY')}
@@ -1557,7 +1600,7 @@ export default function App() {
                   currentUser={currentUser}
                   sanPhams={sanPhams}
                   chiNhanhs={listBranchNames}
-                  thuongHieus={listBrandNames}
+                  thuongHieus={thuongHieus}
                   loaiPhieuMacDinh="NHẬP"
                   onSaveTransaction={handleSaveTransaction}
                   onNavigateToHistory={() => changeTab('HISTORY')}
@@ -1569,6 +1612,7 @@ export default function App() {
                   currentUser={currentUser}
                   sanPhams={sanPhams}
                   kiemKhos={kiemKhos}
+                  thuongHieus={thuongHieus}
                   onSaveAudit={handleSaveAudit}
                 />
               )}
@@ -1644,13 +1688,98 @@ export default function App() {
         </main>
 
         {/* FOOTER CHUYÊN NGHIỆP */}
-        <footer className="bg-white border-t border-[#e2e8f0] py-3 text-center text-[10px] text-[#64748b] shrink-0 font-medium shadow-[0_-1px_3px_rgba(0,0,0,0.02)]">
+        <footer className="bg-white border-t border-[#e2e8f0] py-3 text-center text-[10px] text-[#64748b] shrink-0 font-medium shadow-[0_-1px_3px_rgba(0,0,0,0.02)] mb-16 md:mb-0">
           <p className="flex items-center justify-center gap-1.5">
             <span>© 2026 Glass Stock Pro. Thiết kế & vận hành bởi Nguyễn Kiến Đức.</span>
             <span className="text-slate-300">|</span>
             <span className="font-mono text-blue-500">Cập nhật thời gian thực bằng Google Apps Script & Sheets</span>
           </p>
         </footer>
+
+        {/* THANH ĐIỀU HƯỚNG BOTTOM CHO MOBILE (One-Hand Operation) */}
+        <div className="fixed bottom-0 left-0 right-0 bg-[#0f172a] text-white border-t border-slate-800 z-50 md:hidden flex justify-around items-center h-16 shadow-2xl px-2">
+          <button
+            onClick={() => changeTab('HOME')}
+            className={`flex flex-col items-center justify-center flex-1 py-1 h-full transition-colors ${
+              activeTab === 'HOME' ? 'text-red-500' : 'text-slate-400 hover:text-slate-200'
+            }`}
+          >
+            <HomeIcon className="w-5 h-5" />
+            <span className="text-[10px] font-bold mt-1">Trang chủ</span>
+          </button>
+          
+          <button
+            onClick={() => changeTab('TRANSACTION_XUAT')}
+            className={`flex flex-col items-center justify-center flex-1 py-1 h-full transition-colors ${
+              activeTab === 'TRANSACTION_XUAT' ? 'text-rose-500' : 'text-slate-400'
+            }`}
+          >
+            <TrendingDown className="w-5 h-5" />
+            <span className="text-[10px] font-bold mt-1">Lập Xuất</span>
+          </button>
+          
+          <button
+            onClick={() => changeTab('TRANSACTION_NHAP')}
+            className={`flex flex-col items-center justify-center flex-1 py-1 h-full transition-colors ${
+              activeTab === 'TRANSACTION_NHAP' ? 'text-emerald-500' : 'text-slate-400'
+            }`}
+          >
+            <TrendingUp className="w-5 h-5" />
+            <span className="text-[10px] font-bold mt-1">Lập Nhập</span>
+          </button>
+          
+          <button
+            onClick={() => changeTab('PRODUCT')}
+            className={`flex flex-col items-center justify-center flex-1 py-1 h-full transition-colors ${
+              activeTab === 'PRODUCT' ? 'text-amber-500' : 'text-slate-400'
+            }`}
+          >
+            <Boxes className="w-5 h-5" />
+            <span className="text-[10px] font-bold mt-1">Sản phẩm</span>
+          </button>
+          
+          <button
+            onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
+            className={`flex flex-col items-center justify-center flex-1 py-1 h-full transition-colors ${
+              isMobileMenuOpen ? 'text-blue-500' : 'text-slate-400 hover:text-slate-200'
+            }`}
+          >
+            <Menu className="w-5 h-5" />
+            <span className="text-[10px] font-bold mt-1">Menu</span>
+          </button>
+        </div>
+
+        {/* THÔNG BÁO THÀNH CÔNG/TOAST TRUNG TÂM (Aesthetic Toast/Modal) */}
+        <AnimatePresence>
+          {globalToast.show && (
+            <div className="fixed inset-0 flex items-center justify-center z-50 p-4 bg-slate-900/45 backdrop-blur-xs pointer-events-none">
+              <motion.div
+                initial={{ opacity: 0, scale: 0.9, y: 15 }}
+                animate={{ opacity: 1, scale: 1, y: 0 }}
+                exit={{ opacity: 0, scale: 0.95, y: -10 }}
+                transition={{ type: 'spring', damping: 25, stiffness: 380 }}
+                className="bg-white rounded-2xl p-6 shadow-2xl border border-slate-100 flex flex-col items-center text-center max-w-sm w-full pointer-events-auto"
+              >
+                <div className="w-12 h-12 bg-emerald-50 rounded-full flex items-center justify-center text-emerald-500 mb-4 border border-emerald-100">
+                  <CheckCircle className="w-6 h-6 animate-pulse" />
+                </div>
+                <h3 className="font-sans font-extrabold text-slate-950 text-sm mb-1 uppercase tracking-wide">
+                  {globalToast.title}
+                </h3>
+                <p className="text-slate-500 text-xs leading-relaxed font-semibold">
+                  {globalToast.message}
+                </p>
+                
+                <button 
+                  onClick={() => setGlobalToast(prev => ({ ...prev, show: false }))}
+                  className="mt-4 text-[10px] font-extrabold text-slate-400 hover:text-slate-600 uppercase tracking-wider cursor-pointer"
+                >
+                  Đóng nhanh
+                </button>
+              </motion.div>
+            </div>
+          )}
+        </AnimatePresence>
 
       </div>
 

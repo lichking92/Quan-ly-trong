@@ -136,11 +136,10 @@ export default function Home({ currentUser, setActiveTab, lowStockCount }: HomeP
               <Sparkles className="w-3.5 h-3.5 text-red-500" /> Nhịp đập hệ thống ổn định
             </div>
             <h2 className="text-xl sm:text-2xl font-extrabold tracking-tight font-sans">
-              Xin chào, <span className="text-red-500">{currentUser.fullName}</span>!
+              Hệ Thống Quản Lý Kho Glass Stock Pro
             </h2>
             <p className="text-slate-300 text-xs sm:text-sm max-w-xl leading-relaxed">
-              Chào mừng bạn trở lại hệ thống quản trị <strong className="text-white">Glass Stock Pro</strong>. 
-              Hãy chọn một module tác vụ nhanh bên dưới để bắt đầu quản lý hoặc kiểm kê tròng kính mắt.
+              Vui lòng chọn một phân hệ bên dưới để bắt đầu quản lý và kiểm kê tròng kính kho một cách trực quan, chính xác.
             </p>
           </div>
 

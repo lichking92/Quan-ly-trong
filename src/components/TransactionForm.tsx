@@ -28,7 +28,7 @@ import {
   Tag
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { SanPham, NhapXuat, NhapXuatCT, LoaiPhieu, User as UserType } from '../types';
+import { SanPham, NhapXuat, NhapXuatCT, LoaiPhieu, User as UserType, ThươngHieu } from '../types';
 import { generateSKUString, formatDop } from '../data/mockData';
 
 /**
@@ -44,7 +44,7 @@ interface TransactionFormProps {
   currentUser: UserType;
   sanPhams: SanPham[];
   chiNhanhs: string[];
-  thuongHieus: string[];
+  thuongHieus: ThươngHieu[];
   loaiPhieuMacDinh: 'NHẬP' | 'XUẤT';
   onSaveTransaction: (header: NhapXuat, details: NhapXuatCT[]) => void;
   onNavigateToHistory: () => void;
@@ -110,13 +110,37 @@ export default function TransactionForm({
   // Giỏ hàng chờ xác nhận
   const [cart, setCart] = useState<CartItem[]>([]);
 
+  // --- 3.5 DYNAMIC AVAILABLE FEATURES MEMO ---
+  const activeBrandObj = useMemo(() => {
+    return thuongHieus.find(t => t.THUONG_HIEU === selectBrand);
+  }, [thuongHieus, selectBrand]);
+
+  const availableFeatures = useMemo(() => {
+    if (activeBrandObj?.TINH_NANG_LIST && activeBrandObj.TINH_NANG_LIST.length > 0) {
+      return activeBrandObj.TINH_NANG_LIST;
+    }
+    return [activeBrandObj?.TINH_NANG_MAC_DINH || 'ASX'];
+  }, [activeBrandObj]);
+
   // --- 4. QUY TẮC NGHIỆP VỤ - ĐỒNG BỘ CHIẾT XUẤT VÀ TÍNH NĂNG THEO THƯƠNG HIỆU ---
   const handleBrandChange = (brand: string) => {
     setSelectBrand(brand);
     
-    // Rule 1: Nếu Thương hiệu là Blick, Element, Nikki thì TÍNH NĂNG sẽ là ĐM. Còn lại sẽ là ASX.
-    const isDM = ['Blick', 'Element', 'Nikki'].includes(brand);
-    const newTinhNang = isDM ? 'ĐM' : 'ASX';
+    // Tìm đối tượng thương hiệu tương ứng
+    const brandObj = thuongHieus.find(t => t.THUONG_HIEU === brand);
+    
+    // Rule 1: Nếu Thương hiệu có danh sách tính năng riêng biệt, chọn tính năng đầu tiên hoặc mặc định, ngược lại dùng fallback
+    let newTinhNang = 'ASX';
+    if (brandObj) {
+      if (brandObj.TINH_NANG_LIST && brandObj.TINH_NANG_LIST.length > 0) {
+        newTinhNang = brandObj.TINH_NANG_LIST[0];
+      } else {
+        newTinhNang = brandObj.TINH_NANG_MAC_DINH || 'ASX';
+      }
+    } else {
+      const isDM = ['Blick', 'Element', 'Nikki'].includes(brand);
+      newTinhNang = isDM ? 'ĐM' : 'ASX';
+    }
     setSelectTinhNang(newTinhNang);
 
     // Rule 2: Nếu Thương hiệu là Blick, Zeiss Clear, Essilor Pre, Essilor Rock thì Chiết suất là 1.56.
@@ -126,7 +150,7 @@ export default function TransactionForm({
     } else if (brand === 'Zeiss Blue') {
       setSelectChietXuat('1.60');
     } else {
-      setSelectChietXuat('1.61');
+      setSelectChietXuat(brandObj?.CHIET_XUAT_MAC_DINH || '1.61');
     }
   };
 
@@ -547,7 +571,7 @@ export default function TransactionForm({
                   </div>
                 ) : (
                   /* GIAO DIỆN LẬP THỦ CÔNG (FORM CO ĐỌC CHẶT CHẼ) */
-                  <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3.5 p-4 bg-slate-50/80 border border-slate-100 rounded-xl">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2.5 p-3 bg-slate-50/80 border border-slate-100 rounded-xl">
                     
                     {/* Thương hiệu */}
                     <div className="space-y-1">
@@ -555,10 +579,10 @@ export default function TransactionForm({
                       <select
                         value={selectBrand}
                         onChange={(e) => handleBrandChange(e.target.value)}
-                        className="w-full text-xs font-semibold text-slate-700 bg-white border border-slate-200 p-2 rounded-lg focus:outline-hidden cursor-pointer"
+                        className="w-full text-xs font-semibold text-slate-700 bg-white border border-slate-200 py-1.5 px-2 rounded-lg focus:outline-hidden cursor-pointer"
                       >
-                        {thuongHieus.map(brand => (
-                          <option key={brand} value={brand}>{brand}</option>
+                        {thuongHieus.map(b => (
+                          <option key={b.THUONG_HIEU} value={b.THUONG_HIEU}>{b.THUONG_HIEU}</option>
                         ))}
                       </select>
                     </div>
@@ -571,13 +595,13 @@ export default function TransactionForm({
                           type="text"
                           disabled
                           value={selectChietXuat}
-                          className="w-full text-xs font-bold text-slate-400 bg-slate-100 border border-slate-200 p-2 rounded-lg focus:outline-hidden cursor-not-allowed"
+                          className="w-full text-xs font-bold text-slate-400 bg-slate-100 border border-slate-200 py-1.5 px-2 rounded-lg focus:outline-hidden cursor-not-allowed"
                         />
                       ) : (
                         <select
                           value={selectChietXuat}
                           onChange={(e) => setSelectChietXuat(e.target.value)}
-                          className="w-full text-xs font-semibold text-slate-700 bg-white border border-slate-200 p-2 rounded-lg focus:outline-hidden cursor-pointer"
+                          className="w-full text-xs font-semibold text-slate-700 bg-white border border-slate-200 py-1.5 px-2 rounded-lg focus:outline-hidden cursor-pointer"
                         >
                           <option value="1.56">1.56</option>
                           <option value="1.61">1.61</option>
@@ -587,15 +611,18 @@ export default function TransactionForm({
                       )}
                     </div>
 
-                    {/* Tính năng */}
+                    {/* Tính năng (Dropdown theo thương hiệu) */}
                     <div className="space-y-1">
                       <label className="text-[9px] uppercase font-bold text-slate-400">Tính năng</label>
-                      <input
-                        type="text"
-                        disabled
-                        value={selectTinhNang === 'ĐM' ? 'Đổi màu (ĐM)' : 'Chống ánh sáng xanh (ASX)'}
-                        className="w-full text-xs font-bold text-slate-400 bg-slate-100 border border-slate-200 p-2 rounded-lg focus:outline-hidden cursor-not-allowed"
-                      />
+                      <select
+                        value={selectTinhNang}
+                        onChange={(e) => setSelectTinhNang(e.target.value)}
+                        className="w-full text-xs font-semibold text-slate-700 bg-white border border-slate-200 py-1.5 px-2 rounded-lg focus:outline-hidden cursor-pointer font-mono"
+                      >
+                        {availableFeatures.map(f => (
+                          <option key={f} value={f}>{f}</option>
+                        ))}
+                      </select>
                     </div>
 
                     {/* Loại Độ */}
@@ -604,7 +631,7 @@ export default function TransactionForm({
                       <select
                         value={selectDoSphType}
                         onChange={(e) => setSelectDoSphType(e.target.value as 'CẬN' | 'VIỄN')}
-                        className="w-full text-xs font-semibold text-slate-700 bg-white border border-slate-200 p-2 rounded-lg focus:outline-hidden cursor-pointer"
+                        className="w-full text-xs font-semibold text-slate-700 bg-white border border-slate-200 py-1.5 px-2 rounded-lg focus:outline-hidden cursor-pointer"
                       >
                         <option value="CẬN">Cận thị</option>
                         <option value="VIỄN">Viễn thị</option>
@@ -617,7 +644,7 @@ export default function TransactionForm({
                       <select
                         value={selectDoSph}
                         onChange={(e) => setSelectDoSph(Number(e.target.value))}
-                        className="w-full text-xs font-semibold text-slate-700 bg-white border border-slate-200 p-2 rounded-lg focus:outline-hidden cursor-pointer font-mono"
+                        className="w-full text-xs font-semibold text-slate-700 bg-white border border-slate-200 py-1.5 px-2 rounded-lg focus:outline-hidden cursor-pointer font-mono"
                       >
                         {sphOptions.map(val => (
                           <option key={val} value={val}>{formatDop(val)}</option>
@@ -631,7 +658,7 @@ export default function TransactionForm({
                       <select
                         value={selectDoCyl}
                         onChange={(e) => setSelectDoCyl(Number(e.target.value))}
-                        className="w-full text-xs font-semibold text-slate-700 bg-white border border-slate-200 p-2 rounded-lg focus:outline-hidden cursor-pointer font-mono"
+                        className="w-full text-xs font-semibold text-slate-700 bg-white border border-slate-200 py-1.5 px-2 rounded-lg focus:outline-hidden cursor-pointer font-mono"
                       >
                         {cylOptions.map(val => (
                           <option key={val} value={val}>{formatDop(val)}</option>
@@ -671,19 +698,35 @@ export default function TransactionForm({
                   <div className="space-y-1">
                     <label className="text-[9px] uppercase font-bold text-slate-400">Số lượng lập phiếu</label>
                     <div className="flex gap-2">
-                      <input
-                        type="number"
-                        min={1}
-                        value={selectSoLuong}
-                        onChange={(e) => setSelectSoLuong(Math.max(1, parseInt(e.target.value) || 1))}
-                        className="w-24 text-xs font-bold text-slate-700 bg-slate-50 border border-slate-250 p-2 rounded-lg font-mono text-center focus:outline-hidden"
-                      />
+                      <div className="flex items-center bg-slate-50 border border-slate-250 rounded-lg overflow-hidden shrink-0 h-9">
+                        <button
+                          type="button"
+                          onClick={() => setSelectSoLuong(prev => Math.max(1, prev - 1))}
+                          className="w-10 h-full font-extrabold text-slate-600 hover:bg-slate-200 active:bg-slate-300 transition-colors flex items-center justify-center cursor-pointer text-base select-none"
+                        >
+                          -
+                        </button>
+                        <input
+                          type="number"
+                          min={1}
+                          value={selectSoLuong}
+                          onChange={(e) => setSelectSoLuong(Math.max(1, parseInt(e.target.value) || 1))}
+                          className="w-11 h-full text-xs font-bold text-slate-750 bg-transparent text-center focus:outline-hidden font-mono border-x border-slate-200"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => setSelectSoLuong(prev => prev + 1)}
+                          className="w-10 h-full font-extrabold text-slate-600 hover:bg-slate-200 active:bg-slate-300 transition-colors flex items-center justify-center cursor-pointer text-base select-none"
+                        >
+                          +
+                        </button>
+                      </div>
                       <input
                         type="text"
                         placeholder="Ghi chú dòng sản phẩm..."
                         value={selectGhiChuDong}
                         onChange={(e) => setSelectGhiChuDong(e.target.value)}
-                        className="flex-1 text-xs font-semibold text-slate-700 bg-slate-50 border border-slate-250 p-2 rounded-lg focus:outline-hidden"
+                        className="flex-1 text-xs font-semibold text-slate-750 bg-slate-50 border border-slate-250 p-2 rounded-lg focus:outline-hidden h-9"
                       />
                     </div>
                   </div>
@@ -754,7 +797,8 @@ export default function TransactionForm({
                     Danh sách chi tiết dòng sản phẩm ({cart.length} dòng)
                   </span>
 
-                  <div className="border border-slate-100 rounded-xl overflow-hidden shadow-2xs max-h-48 overflow-y-auto">
+                  {/* Dạng bảng cho máy tính */}
+                  <div className="hidden sm:block border border-slate-100 rounded-xl overflow-hidden shadow-2xs max-h-48 overflow-y-auto bg-white">
                     <table className="w-full text-left text-xs">
                       <thead className="bg-slate-50 text-[10px] uppercase font-bold text-slate-400 border-b border-slate-100">
                         <tr>
@@ -773,6 +817,23 @@ export default function TransactionForm({
                         ))}
                       </tbody>
                     </table>
+                  </div>
+
+                  {/* Dạng thẻ cho thiết bị di động */}
+                  <div className="block sm:hidden space-y-2 max-h-56 overflow-y-auto pr-1">
+                    {cart.map((item) => (
+                      <div key={item.id} className="p-3 bg-white border border-slate-100 rounded-xl shadow-3xs flex items-center justify-between gap-3">
+                        <div className="space-y-0.5">
+                          <span className="text-[9px] font-mono font-bold text-blue-600 bg-blue-50 px-1.5 py-0.5 rounded border border-blue-100/50">
+                            {item.sku}
+                          </span>
+                          <p className="text-[11px] font-bold text-slate-700 leading-tight line-clamp-2 mt-1">{item.tenSp}</p>
+                        </div>
+                        <div className="text-right shrink-0 font-mono font-extrabold text-slate-800">
+                          {item.soLuong} <span className="text-[9px] font-sans font-medium text-slate-400 block">{item.dvt}</span>
+                        </div>
+                      </div>
+                    ))}
                   </div>
                 </div>
 
@@ -822,12 +883,12 @@ export default function TransactionForm({
           )}
 
           {/* GIỎ HÀNG CHI TIẾT */}
-          <div className="bento-card !p-5 flex flex-col max-h-[450px]">
+          <div className="bento-card !p-4 flex flex-col max-h-[280px]">
             <h3 className="font-sans font-bold text-slate-800 text-xs uppercase border-b border-slate-50 pb-2 mb-3 flex items-center gap-1.5">
               <ShoppingCart className="w-4 h-4 text-slate-400" /> Chi tiết dòng sản phẩm ({cart.length})
             </h3>
 
-            <div className="flex-1 overflow-y-auto divide-y divide-slate-50 pr-1 space-y-3">
+            <div className="flex-1 overflow-y-auto divide-y divide-slate-50 pr-1 space-y-2.5">
               {cart.length > 0 ? (
                 cart.map((item) => (
                   <div key={item.id} className="pt-2 pb-3.5 space-y-1 text-xs">

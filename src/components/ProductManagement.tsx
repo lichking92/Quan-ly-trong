@@ -19,7 +19,7 @@ import {
   ArrowRight
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { SanPham } from '../types';
+import { SanPham, ThươngHieu } from '../types';
 import { generateSKUString, formatDop } from '../data/mockData';
 
 /**
@@ -74,7 +74,7 @@ export const getStockStatus = (tonCuoi: number, tonToiThieu: number) => {
 interface ProductManagementProps {
   sanPhams: SanPham[];
   onAddProduct: (newProduct: SanPham) => void;
-  thuongHieus: string[];
+  thuongHieus: ThươngHieu[];
   currentUser: any;
   onUpdateMinStock?: (sku: string, newMinStock: number) => void;
 }
@@ -120,13 +120,37 @@ export default function ProductManagement({ sanPhams, onAddProduct, thuongHieus,
   const [formDvt, setFormDvt] = useState<string>('miếng');
   const [formError, setFormError] = useState<string>('');
 
+  // --- 2.5 DYNAMIC AVAILABLE FEATURES MEMO ---
+  const activeBrandObj = useMemo(() => {
+    return thuongHieus.find(t => t.THUONG_HIEU === formBrand);
+  }, [thuongHieus, formBrand]);
+
+  const availableFeatures = useMemo(() => {
+    if (activeBrandObj?.TINH_NANG_LIST && activeBrandObj.TINH_NANG_LIST.length > 0) {
+      return activeBrandObj.TINH_NANG_LIST;
+    }
+    return [activeBrandObj?.TINH_NANG_MAC_DINH || 'ASX'];
+  }, [activeBrandObj]);
+
   // --- 3. ĐỒNG BỘ ĐỘNG THEO QUY TẮC NGHIỆP VỤ (RULE 1, 2) KHI THAY ĐỔI THƯƠNG HIỆU ---
   const handleBrandChange = (brand: string) => {
     setFormBrand(brand);
     
-    // Quy tắc 1: Nếu Thương hiệu là Blick, Element, Nikki thì TÍNH NĂNG sẽ là ĐM. Còn lại sẽ là ASX.
-    const isDM = ['Blick', 'Element', 'Nikki'].includes(brand);
-    const newTinhNang = isDM ? 'ĐM' : 'ASX';
+    // Tìm đối tượng thương hiệu tương ứng
+    const brandObj = thuongHieus.find(t => t.THUONG_HIEU === brand);
+    
+    // Quy tắc 1: Nếu Thương hiệu có TINH_NANG_LIST thì lấy tính năng đầu tiên hoặc mặc định, nếu không thì dùng quy tắc cũ
+    let newTinhNang = 'ASX';
+    if (brandObj) {
+      if (brandObj.TINH_NANG_LIST && brandObj.TINH_NANG_LIST.length > 0) {
+        newTinhNang = brandObj.TINH_NANG_LIST[0];
+      } else {
+        newTinhNang = brandObj.TINH_NANG_MAC_DINH || 'ASX';
+      }
+    } else {
+      const isDM = ['Blick', 'Element', 'Nikki'].includes(brand);
+      newTinhNang = isDM ? 'ĐM' : 'ASX';
+    }
     setFormTinhNang(newTinhNang);
 
     // Quy tắc 2: Nếu Thương hiệu là Blick, Zeiss Clear, Essilor Pre, Essilor Rock thì Chiết suất là 1.56.
@@ -136,7 +160,7 @@ export default function ProductManagement({ sanPhams, onAddProduct, thuongHieus,
     } else if (brand === 'Zeiss Blue') {
       setFormChietXuat('1.60');
     } else {
-      setFormChietXuat('1.61'); // Giá trị mặc định cho dropdown tùy chọn
+      setFormChietXuat(brandObj?.CHIET_XUAT_MAC_DINH || '1.61'); // Giá trị mặc định cho dropdown tùy chọn
     }
   };
 
@@ -333,7 +357,7 @@ export default function ProductManagement({ sanPhams, onAddProduct, thuongHieus,
           >
             <option value="Tất cả">Mọi thương hiệu</option>
             {thuongHieus.map(b => (
-              <option key={b} value={b}>{b}</option>
+              <option key={b.THUONG_HIEU} value={b.THUONG_HIEU}>{b.THUONG_HIEU}</option>
             ))}
           </select>
 
@@ -467,8 +491,9 @@ export default function ProductManagement({ sanPhams, onAddProduct, thuongHieus,
                         )}
                       </td>
                       <td className="py-3.5 px-4 text-center">
-                        <span className={`inline-flex items-center gap-1 text-[10px] font-bold py-1 px-2.5 rounded-full ${status.colorClass}`}>
-                          {status.level >= 4 && <AlertCircle className="w-3.5 h-3.5 text-red-500 animate-pulse" />}
+                        <span className={`inline-flex items-center gap-1.5 text-[10px] font-bold py-1 px-2.5 rounded-full ${status.colorClass}`}>
+                          {status.level === 5 && <ShieldAlert className="w-4 h-4 text-red-600 animate-pulse" />}
+                          {status.level === 4 && <AlertCircle className="w-3.5 h-3.5 text-orange-500" />}
                           {status.label}
                         </span>
                       </td>
@@ -605,12 +630,12 @@ export default function ProductManagement({ sanPhams, onAddProduct, thuongHieus,
                       className="w-full text-xs font-semibold text-slate-700 bg-slate-50 border border-slate-100 rounded-lg p-2.5"
                     >
                       {thuongHieus.map(b => (
-                        <option key={b} value={b}>{b}</option>
+                        <option key={b.THUONG_HIEU} value={b.THUONG_HIEU}>{b.THUONG_HIEU}</option>
                       ))}
                     </select>
                   </div>
 
-                  {/* Tính năng (Chỉ có 2 lựa chọn ĐM hoặc ASX) */}
+                  {/* Tính năng (Dropdown theo thương hiệu) */}
                   <div className="space-y-1">
                     <label className="text-[11px] font-bold text-slate-500 uppercase flex items-center gap-1">
                       Tính Năng
@@ -618,10 +643,11 @@ export default function ProductManagement({ sanPhams, onAddProduct, thuongHieus,
                     <select
                       value={formTinhNang}
                       onChange={(e) => setFormTinhNang(e.target.value)}
-                      className="w-full text-xs font-semibold text-slate-700 bg-slate-50 border border-slate-100 rounded-lg p-2.5 focus:outline-hidden"
+                      className="w-full text-xs font-semibold text-slate-700 bg-slate-50 border border-slate-100 rounded-lg p-2.5 focus:outline-hidden font-mono"
                     >
-                      <option value="ĐM">Đổi màu (ĐM)</option>
-                      <option value="ASX">Ánh sáng xanh (ASX)</option>
+                      {availableFeatures.map(f => (
+                        <option key={f} value={f}>{f}</option>
+                      ))}
                     </select>
                   </div>
                 </div>

@@ -15,15 +15,15 @@ import { SanPham, NhapXuat, NhapXuatCT, KiemKho, ThươngHieu, ChiNhanh, NhanVie
 
 // 1. Khởi tạo danh mục Thương hiệu mặc định
 export const MOCK_THUONG_HIEU: ThươngHieu[] = [
-  { THUONG_HIEU: 'Blick', CHIET_XUAT_MAC_DINH: '1.56', TINH_NANG_MAC_DINH: 'ĐM' },
-  { THUONG_HIEU: 'Element', CHIET_XUAT_MAC_DINH: '1.56', TINH_NANG_MAC_DINH: 'ĐM' },
-  { THUONG_HIEU: 'Nikki', CHIET_XUAT_MAC_DINH: '1.56', TINH_NANG_MAC_DINH: 'ĐM' },
-  { THUONG_HIEU: 'Zeiss Clear', CHIET_XUAT_MAC_DINH: '1.56', TINH_NANG_MAC_DINH: 'ASX' },
-  { THUONG_HIEU: 'Zeiss Blue', CHIET_XUAT_MAC_DINH: '1.60', TINH_NANG_MAC_DINH: 'ASX' },
-  { THUONG_HIEU: 'Essilor Pre', CHIET_XUAT_MAC_DINH: '1.56', TINH_NANG_MAC_DINH: 'ASX' },
-  { THUONG_HIEU: 'Essilor Rock', CHIET_XUAT_MAC_DINH: '1.56', TINH_NANG_MAC_DINH: 'ASX' },
-  { THUONG_HIEU: 'Essilor', CHIET_XUAT_MAC_DINH: '1.61', TINH_NANG_MAC_DINH: 'ASX' },
-  { THUONG_HIEU: 'HEN', CHIET_XUAT_MAC_DINH: '1.67', TINH_NANG_MAC_DINH: 'ASX' }
+  { THUONG_HIEU: 'Blick', CHIET_XUAT_MAC_DINH: '1.56', TINH_NANG_MAC_DINH: 'ĐM', TINH_NANG_LIST: ['ĐM'] },
+  { THUONG_HIEU: 'Element', CHIET_XUAT_MAC_DINH: '1.56', TINH_NANG_MAC_DINH: 'ĐM', TINH_NANG_LIST: ['ĐM'] },
+  { THUONG_HIEU: 'Nikki', CHIET_XUAT_MAC_DINH: '1.56', TINH_NANG_MAC_DINH: 'ĐM', TINH_NANG_LIST: ['ĐM'] },
+  { THUONG_HIEU: 'Zeiss Clear', CHIET_XUAT_MAC_DINH: '1.56', TINH_NANG_MAC_DINH: 'ASX', TINH_NANG_LIST: ['ASX'] },
+  { THUONG_HIEU: 'Zeiss Blue', CHIET_XUAT_MAC_DINH: '1.60', TINH_NANG_MAC_DINH: 'ASX', TINH_NANG_LIST: ['ASX'] },
+  { THUONG_HIEU: 'Essilor Pre', CHIET_XUAT_MAC_DINH: '1.56', TINH_NANG_MAC_DINH: 'ASX', TINH_NANG_LIST: ['ASX'] },
+  { THUONG_HIEU: 'Essilor Rock', CHIET_XUAT_MAC_DINH: '1.56', TINH_NANG_MAC_DINH: 'ASX', TINH_NANG_LIST: ['ASX'] },
+  { THUONG_HIEU: 'Essilor', CHIET_XUAT_MAC_DINH: '1.61', TINH_NANG_MAC_DINH: 'ASX', TINH_NANG_LIST: ['ASX', 'ĐM'] },
+  { THUONG_HIEU: 'HEN', CHIET_XUAT_MAC_DINH: '1.67', TINH_NANG_MAC_DINH: 'ASX', TINH_NANG_LIST: ['ASX'] }
 ];
 
 // 2. Khởi tạo danh mục Chi nhánh mặc định
@@ -44,6 +44,7 @@ export const MOCK_NHAN_VIEN: NhanVien[] = [
     CHI_NHANH: 'Kho Trung Tâm',
     EMAIL: 'nguyenkienduc.digital@gmail.com', // Trùng khớp với email user đăng nhập để auto-phân quyền ADMIN
     ROLE: 'ADMIN',
+    USERNAME: 'admin',
     PASSWORD: '12345',
     PERMISSIONS: ['DASHBOARD', 'PRODUCT', 'TRANSACTION', 'AUDIT', 'HISTORY', 'CATEGORY', 'APPS_SCRIPT'],
     WRITE_ACCESS: true
@@ -56,6 +57,7 @@ export const MOCK_NHAN_VIEN: NhanVien[] = [
     CHI_NHANH: 'Kho Trung Tâm',
     EMAIL: 'kho@gmail.com',
     ROLE: 'KHO',
+    USERNAME: 'kho',
     PASSWORD: '12345',
     PERMISSIONS: ['PRODUCT', 'TRANSACTION', 'AUDIT', 'HISTORY'],
     WRITE_ACCESS: true
@@ -68,6 +70,7 @@ export const MOCK_NHAN_VIEN: NhanVien[] = [
     CHI_NHANH: 'Chi nhánh Quận 1',
     EMAIL: 'nhanvien@gmail.com',
     ROLE: 'NHAN_VIEN',
+    USERNAME: 'nhanvien',
     PASSWORD: '12345',
     PERMISSIONS: ['PRODUCT', 'TRANSACTION', 'HISTORY'],
     WRITE_ACCESS: false
