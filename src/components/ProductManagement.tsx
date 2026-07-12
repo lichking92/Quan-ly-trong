@@ -19,7 +19,7 @@ import {
   ArrowRight
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { SanPham, ThươngHieu } from '../types';
+import { SanPham } from '../types';
 import { generateSKUString, formatDop } from '../data/mockData';
 
 /**
@@ -30,74 +30,19 @@ import { generateSKUString, formatDop } from '../data/mockData';
  *        và cung cấp Form tạo sản phẩm mới tự động hóa sinh SKU và kiểm tra trùng lặp chặt chẽ.
  */
 
-export const getStockStatus = (tonCuoi: number, tonToiThieu: number) => {
-  if (tonCuoi <= 0) {
-    return {
-      level: 5,
-      label: 'Hết hàng',
-      colorClass: 'bg-red-50 text-red-600 border border-red-200',
-      iconClass: 'text-red-500'
-    };
-  }
-  if (tonCuoi < tonToiThieu) {
-    return {
-      level: 4,
-      label: 'Sắp hết hàng',
-      colorClass: 'bg-orange-50 text-orange-600 border border-orange-200',
-      iconClass: 'text-orange-500'
-    };
-  }
-  if (tonCuoi === tonToiThieu) {
-    return {
-      level: 3,
-      label: 'Hàng còn ít',
-      colorClass: 'bg-amber-50 text-amber-600 border border-amber-200',
-      iconClass: 'text-amber-500'
-    };
-  }
-  if (tonCuoi > tonToiThieu * 2) {
-    return {
-      level: 1,
-      label: 'Còn nhiều hàng',
-      colorClass: 'bg-emerald-50 text-emerald-600 border border-emerald-200',
-      iconClass: 'text-emerald-500'
-    };
-  }
-  return {
-    level: 2,
-    label: 'Tồn kho an toàn',
-    colorClass: 'bg-blue-50 text-blue-600 border border-blue-200',
-    iconClass: 'text-blue-500'
-  };
-};
-
 interface ProductManagementProps {
   sanPhams: SanPham[];
   onAddProduct: (newProduct: SanPham) => void;
-  thuongHieus: ThươngHieu[];
+  thuongHieus: string[];
   currentUser: any;
-  onUpdateMinStock?: (sku: string, newMinStock: number) => void;
 }
 
-export default function ProductManagement({ sanPhams, onAddProduct, thuongHieus, currentUser, onUpdateMinStock }: ProductManagementProps) {
+export default function ProductManagement({ sanPhams = [], onAddProduct, thuongHieus = [], currentUser }: ProductManagementProps) {
   // --- 1. QUẢN LÝ TRẠNG THÁI HIỂN THỊ & TÌM KIẾM ---
   const [searchTerm, setSearchTerm] = useState<string>('');
   const [filterBrand, setFilterBrand] = useState<string>('Tất cả');
-  const [filterStockStatus, setFilterStockStatus] = useState<string>('Tất cả');
+  const [filterStockStatus, setFilterStockStatus] = useState<'Tất cả' | 'Sắp hết' | 'An toàn'>('Tất cả');
   const [showAddModal, setShowAddModal] = useState<boolean>(false);
-
-  // --- TRẠNG THÁI SẮP XẾP CỘT ---
-  const [sortField, setSortField] = useState<string | null>(null);
-  const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('asc');
-
-  const handleSort = (field: string) => {
-    if (sortField === field) {
-      setSortDirection(prev => prev === 'asc' ? 'desc' : 'asc');
-    } else {
-      setSortField(field);
-      setSortDirection('asc');
-    }
-  };
 
   // --- PHÂN TRANG CHO SẢN PHẨM (TỐI ƯU HÓA TRÁNH LAG) ---
   const [currentPage, setCurrentPage] = useState<number>(1);
@@ -109,7 +54,13 @@ export default function ProductManagement({ sanPhams, onAddProduct, thuongHieus,
   }, [searchTerm, filterBrand, filterStockStatus]);
 
   // --- 2. QUẢN LÝ TRẠNG THÁI FORM TẠO MỚI ---
-  const [formBrand, setFormBrand] = useState<string>('Blick');
+  const [formBrand, setFormBrand] = useState<string>(thuongHieus[0] || 'Blick');
+
+  React.useEffect(() => {
+    if (thuongHieus && thuongHieus.length > 0 && !thuongHieus.includes(formBrand)) {
+      setFormBrand(thuongHieus[0]);
+    }
+  }, [thuongHieus, formBrand]);
   const [formChietXuat, setFormChietXuat] = useState<string>('1.56');
   const [formTinhNang, setFormTinhNang] = useState<string>('ĐM');
   const [formDoSphType, setFormDoSphType] = useState<'CẬN' | 'VIỄN'>('CẬN');
@@ -120,37 +71,13 @@ export default function ProductManagement({ sanPhams, onAddProduct, thuongHieus,
   const [formDvt, setFormDvt] = useState<string>('miếng');
   const [formError, setFormError] = useState<string>('');
 
-  // --- 2.5 DYNAMIC AVAILABLE FEATURES MEMO ---
-  const activeBrandObj = useMemo(() => {
-    return thuongHieus.find(t => t.THUONG_HIEU === formBrand);
-  }, [thuongHieus, formBrand]);
-
-  const availableFeatures = useMemo(() => {
-    if (activeBrandObj?.TINH_NANG_LIST && activeBrandObj.TINH_NANG_LIST.length > 0) {
-      return activeBrandObj.TINH_NANG_LIST;
-    }
-    return [activeBrandObj?.TINH_NANG_MAC_DINH || 'ASX'];
-  }, [activeBrandObj]);
-
   // --- 3. ĐỒNG BỘ ĐỘNG THEO QUY TẮC NGHIỆP VỤ (RULE 1, 2) KHI THAY ĐỔI THƯƠNG HIỆU ---
   const handleBrandChange = (brand: string) => {
     setFormBrand(brand);
     
-    // Tìm đối tượng thương hiệu tương ứng
-    const brandObj = thuongHieus.find(t => t.THUONG_HIEU === brand);
-    
-    // Quy tắc 1: Nếu Thương hiệu có TINH_NANG_LIST thì lấy tính năng đầu tiên hoặc mặc định, nếu không thì dùng quy tắc cũ
-    let newTinhNang = 'ASX';
-    if (brandObj) {
-      if (brandObj.TINH_NANG_LIST && brandObj.TINH_NANG_LIST.length > 0) {
-        newTinhNang = brandObj.TINH_NANG_LIST[0];
-      } else {
-        newTinhNang = brandObj.TINH_NANG_MAC_DINH || 'ASX';
-      }
-    } else {
-      const isDM = ['Blick', 'Element', 'Nikki'].includes(brand);
-      newTinhNang = isDM ? 'ĐM' : 'ASX';
-    }
+    // Quy tắc 1: Nếu Thương hiệu là Blick, Element, Nikki thì TÍNH NĂNG sẽ là ĐM. Còn lại sẽ là ASX.
+    const isDM = ['Blick', 'Element', 'Nikki'].includes(brand);
+    const newTinhNang = isDM ? 'ĐM' : 'ASX';
     setFormTinhNang(newTinhNang);
 
     // Quy tắc 2: Nếu Thương hiệu là Blick, Zeiss Clear, Essilor Pre, Essilor Rock thì Chiết suất là 1.56.
@@ -160,7 +87,7 @@ export default function ProductManagement({ sanPhams, onAddProduct, thuongHieus,
     } else if (brand === 'Zeiss Blue') {
       setFormChietXuat('1.60');
     } else {
-      setFormChietXuat(brandObj?.CHIET_XUAT_MAC_DINH || '1.61'); // Giá trị mặc định cho dropdown tùy chọn
+      setFormChietXuat('1.61'); // Giá trị mặc định cho dropdown tùy chọn
     }
   };
 
@@ -213,57 +140,16 @@ export default function ProductManagement({ sanPhams, onAddProduct, thuongHieus,
 
   // --- 5. LỌC DANH SÁCH SẢN PHẨM HIỂN THỊ ---
   const filteredProducts = useMemo(() => {
-    let result = sanPhams.filter(p => {
+    return sanPhams.filter(p => {
       const matchSearch = p.SKU.toLowerCase().includes(searchTerm.toLowerCase()) || 
                           p.TEN_SAN_PHAM.toLowerCase().includes(searchTerm.toLowerCase());
       const matchBrand = filterBrand === 'Tất cả' || p.THUONG_HIEU === filterBrand;
-      
-      const status = getStockStatus(p.TON_CUOI, p.TON_TOI_THIEU);
       const matchStock = filterStockStatus === 'Tất cả' || 
-                         (filterStockStatus === 'Còn nhiều hàng' && status.level === 1) ||
-                         (filterStockStatus === 'Tồn kho an toàn' && status.level === 2) ||
-                         (filterStockStatus === 'Hàng còn ít' && status.level === 3) ||
-                         (filterStockStatus === 'Sắp hết hàng' && status.level === 4) ||
-                         (filterStockStatus === 'Hết hàng' && status.level === 5);
-      
+                         (filterStockStatus === 'Sắp hết' && p.TON_CUOI <= p.TON_TOI_THIEU) ||
+                         (filterStockStatus === 'An toàn' && p.TON_CUOI > p.TON_TOI_THIEU);
       return matchSearch && matchBrand && matchStock;
     });
-
-    if (sortField) {
-      result = [...result].sort((a, b) => {
-        if (sortField === 'TRANG_THAI') {
-          const isAEmpty = a.TON_CUOI <= 0;
-          const isBEmpty = b.TON_CUOI <= 0;
-          if (isAEmpty && !isBEmpty) return -1;
-          if (!isAEmpty && isBEmpty) return 1;
-          
-          const levelA = getStockStatus(a.TON_CUOI, a.TON_TOI_THIEU).level;
-          const levelB = getStockStatus(b.TON_CUOI, b.TON_TOI_THIEU).level;
-          
-          return sortDirection === 'asc' ? levelB - levelA : levelA - levelB;
-        }
-
-        const valA = a[sortField as keyof SanPham];
-        const valB = b[sortField as keyof SanPham];
-
-        if (valA === undefined || valA === null) return 1;
-        if (valB === undefined || valB === null) return -1;
-
-        if (typeof valA === 'string' && typeof valB === 'string') {
-          return sortDirection === 'asc' 
-            ? valA.localeCompare(valB, 'vi', { sensitivity: 'accent' }) 
-            : valB.localeCompare(valA, 'vi', { sensitivity: 'accent' });
-        } else if (typeof valA === 'number' && typeof valB === 'number') {
-          return sortDirection === 'asc' 
-            ? valA - valB 
-            : valB - valA;
-        }
-        return 0;
-      });
-    }
-
-    return result;
-  }, [sanPhams, searchTerm, filterBrand, filterStockStatus, sortField, sortDirection]);
+  }, [sanPhams, searchTerm, filterBrand, filterStockStatus]);
 
   const totalPages = useMemo(() => {
     return Math.ceil(filteredProducts.length / itemsPerPage) || 1;
@@ -342,7 +228,7 @@ export default function ProductManagement({ sanPhams, onAddProduct, thuongHieus,
             placeholder="Tìm kiếm SKU hoặc tên tròng kính..."
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
-            className="w-full pl-9 pr-4 py-2 text-xs bg-slate-50 border border-slate-100 rounded-xl focus:outline-hidden focus:ring-2 focus:ring-blue-500/20 text-slate-700 font-medium"
+            className="w-full pl-9 pr-4 py-2 text-base md:text-xs bg-slate-50 border border-slate-100 rounded-xl focus:outline-hidden focus:ring-2 focus:ring-blue-500/20 text-slate-700 font-medium"
           />
         </div>
 
@@ -353,26 +239,23 @@ export default function ProductManagement({ sanPhams, onAddProduct, thuongHieus,
           <select
             value={filterBrand}
             onChange={(e) => setFilterBrand(e.target.value)}
-            className="text-xs bg-slate-50 border border-slate-100 text-slate-600 font-semibold py-2 px-3 rounded-xl focus:outline-hidden"
+            className="text-base md:text-xs bg-slate-50 border border-slate-100 text-slate-600 font-semibold py-2 px-3 rounded-xl focus:outline-hidden"
           >
             <option value="Tất cả">Mọi thương hiệu</option>
             {thuongHieus.map(b => (
-              <option key={b.THUONG_HIEU} value={b.THUONG_HIEU}>{b.THUONG_HIEU}</option>
+              <option key={b} value={b}>{b}</option>
             ))}
           </select>
 
           {/* Lọc trạng thái tồn */}
           <select
             value={filterStockStatus}
-            onChange={(e) => setFilterStockStatus(e.target.value)}
-            className="text-xs bg-slate-50 border border-slate-100 text-slate-600 font-semibold py-2 px-3 rounded-xl focus:outline-hidden"
+            onChange={(e) => setFilterStockStatus(e.target.value as any)}
+            className="text-base md:text-xs bg-slate-50 border border-slate-100 text-slate-600 font-semibold py-2 px-3 rounded-xl focus:outline-hidden"
           >
             <option value="Tất cả">Mọi trạng thái kho</option>
-            <option value="Còn nhiều hàng">Còn nhiều hàng (Xanh lá) 🟢</option>
-            <option value="Tồn kho an toàn">Tồn kho an toàn (Xanh dương) 🔵</option>
-            <option value="Hàng còn ít">Hàng còn ít (Vàng) 🟡</option>
-            <option value="Sắp hết hàng">Sắp hết hàng (Cam) 🟠</option>
-            <option value="Hết hàng">Hết hàng (Đỏ) 🔴</option>
+            <option value="Sắp hết">Sắp hết hàng ⚠️</option>
+            <option value="An toàn">An toàn tồn kho ✅</option>
           </select>
 
           {/* Nút thêm mới - Chỉ hiện nếu có quyền ghi */}
@@ -394,40 +277,20 @@ export default function ProductManagement({ sanPhams, onAddProduct, thuongHieus,
           <table className="w-full text-left border-collapse">
             <thead>
               <tr className="bg-slate-50/75 border-b border-slate-100">
-                <th onClick={() => handleSort('SKU')} className="py-3.5 px-4 text-[11px] font-bold text-slate-400 uppercase tracking-wider font-mono cursor-pointer hover:bg-slate-100 select-none">
-                  Mã SKU {sortField === 'SKU' ? (sortDirection === 'asc' ? '▲' : '▼') : '⇅'}
-                </th>
-                <th onClick={() => handleSort('TEN_SAN_PHAM')} className="py-3.5 px-4 text-[11px] font-bold text-slate-400 uppercase tracking-wider cursor-pointer hover:bg-slate-100 select-none">
-                  Tên Tròng Kính {sortField === 'TEN_SAN_PHAM' ? (sortDirection === 'asc' ? '▲' : '▼') : '⇅'}
-                </th>
-                <th onClick={() => handleSort('CAN')} className="py-3.5 px-4 text-[11px] font-bold text-slate-400 uppercase tracking-wider cursor-pointer hover:bg-slate-100 select-none">
-                  Độ Cận (SPH) {sortField === 'CAN' ? (sortDirection === 'asc' ? '▲' : '▼') : '⇅'}
-                </th>
-                <th onClick={() => handleSort('LOAN')} className="py-3.5 px-4 text-[11px] font-bold text-slate-400 uppercase tracking-wider cursor-pointer hover:bg-slate-100 select-none">
-                  Độ Loạn (CYL) {sortField === 'LOAN' ? (sortDirection === 'asc' ? '▲' : '▼') : '⇅'}
-                </th>
-                <th onClick={() => handleSort('TON_DAU')} className="py-3.5 px-4 text-[11px] font-bold text-slate-400 uppercase tracking-wider text-center cursor-pointer hover:bg-slate-100 select-none">
-                  Tồn Đầu {sortField === 'TON_DAU' ? (sortDirection === 'asc' ? '▲' : '▼') : '⇅'}
-                </th>
-                <th className="py-3.5 px-4 text-[11px] font-bold text-slate-400 uppercase tracking-wider text-center select-none">
-                  Nhập / Xuất
-                </th>
-                <th onClick={() => handleSort('TON_CUOI')} className="py-3.5 px-4 text-[11px] font-bold text-slate-400 uppercase tracking-wider text-center cursor-pointer hover:bg-slate-100 select-none">
-                  Tồn Cuối {sortField === 'TON_CUOI' ? (sortDirection === 'asc' ? '▲' : '▼') : '⇅'}
-                </th>
-                <th onClick={() => handleSort('TON_TOI_THIEU')} className="py-3.5 px-4 text-[11px] font-bold text-slate-400 uppercase tracking-wider text-center cursor-pointer hover:bg-slate-100 select-none">
-                  Tồn tối thiểu {sortField === 'TON_TOI_THIEU' ? (sortDirection === 'asc' ? '▲' : '▼') : '⇅'}
-                </th>
-                <th onClick={() => handleSort('TRANG_THAI')} className="py-3.5 px-4 text-[11px] font-bold text-slate-400 uppercase tracking-wider text-center cursor-pointer hover:bg-slate-100 select-none">
-                  Trạng Thái {sortField === 'TRANG_THAI' ? (sortDirection === 'asc' ? '▲' : '▼') : '⇅'}
-                </th>
+                <th className="py-3.5 px-4 text-[11px] font-bold text-slate-400 uppercase tracking-wider font-mono">Mã SKU</th>
+                <th className="py-3.5 px-4 text-[11px] font-bold text-slate-400 uppercase tracking-wider">Tên Tròng Kính</th>
+                <th className="py-3.5 px-4 text-[11px] font-bold text-slate-400 uppercase tracking-wider">Độ Cận (SPH)</th>
+                <th className="py-3.5 px-4 text-[11px] font-bold text-slate-400 uppercase tracking-wider">Độ Loạn (CYL)</th>
+                <th className="py-3.5 px-4 text-[11px] font-bold text-slate-400 uppercase tracking-wider text-center">Tồn Đầu</th>
+                <th className="py-3.5 px-4 text-[11px] font-bold text-slate-400 uppercase tracking-wider text-center">Nhập / Xuất</th>
+                <th className="py-3.5 px-4 text-[11px] font-bold text-slate-400 uppercase tracking-wider text-center">Tồn Cuối</th>
+                <th className="py-3.5 px-4 text-[11px] font-bold text-slate-400 uppercase tracking-wider text-center">Trạng Thái</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-50">
               {paginatedProducts.length > 0 ? (
                 paginatedProducts.map((p) => {
-                  const status = getStockStatus(p.TON_CUOI, p.TON_TOI_THIEU);
-                  const isRedText = p.TON_CUOI <= 0 || p.TON_CUOI < p.TON_TOI_THIEU;
+                  const isLowStock = p.TON_CUOI <= p.TON_TOI_THIEU;
                   return (
                     <tr key={p.SKU} className="hover:bg-slate-50/50 transition-colors duration-150">
                       <td className="py-3.5 px-4">
@@ -471,38 +334,27 @@ export default function ProductManagement({ sanPhams, onAddProduct, thuongHieus,
                         </div>
                       </td>
                       <td className="py-3.5 px-4 text-center">
-                        <span className={`text-xs font-bold font-mono ${isRedText ? 'text-red-600 font-extrabold' : 'text-slate-800'}`}>
+                        <span className={`text-xs font-bold font-mono ${isLowStock ? 'text-red-600' : 'text-slate-800'}`}>
                           {p.TON_CUOI} {p.DVT}
                         </span>
                       </td>
                       <td className="py-3.5 px-4 text-center">
-                        {currentUser.WRITE_ACCESS !== false && onUpdateMinStock ? (
-                          <input
-                            type="number"
-                            min={0}
-                            value={p.TON_TOI_THIEU}
-                            onChange={(e) => onUpdateMinStock(p.SKU, Math.max(0, parseInt(e.target.value) || 0))}
-                            className="w-16 px-2 py-1 text-xs text-center border border-slate-200 hover:border-slate-300 focus:border-red-500 focus:ring-2 focus:ring-red-500/15 rounded-lg font-mono bg-slate-50/50 hover:bg-white focus:bg-white transition-all outline-hidden font-bold text-slate-700"
-                          />
+                        {isLowStock ? (
+                          <span className="inline-flex items-center gap-1 text-[10px] font-bold bg-red-50 text-red-600 py-1 px-2.5 rounded-full">
+                            <AlertCircle className="w-3 h-3" /> Sắp hết
+                          </span>
                         ) : (
-                          <span className="text-xs font-semibold font-mono text-slate-600">
-                            {p.TON_TOI_THIEU}
+                          <span className="inline-flex items-center gap-1 text-[10px] font-bold bg-emerald-50 text-emerald-600 py-1 px-2.5 rounded-full">
+                            <CheckCircle className="w-3 h-3" /> An toàn
                           </span>
                         )}
-                      </td>
-                      <td className="py-3.5 px-4 text-center">
-                        <span className={`inline-flex items-center gap-1.5 text-[10px] font-bold py-1 px-2.5 rounded-full ${status.colorClass}`}>
-                          {status.level === 5 && <ShieldAlert className="w-4 h-4 text-red-600 animate-pulse" />}
-                          {status.level === 4 && <AlertCircle className="w-3.5 h-3.5 text-orange-500" />}
-                          {status.label}
-                        </span>
                       </td>
                     </tr>
                   );
                 })
               ) : (
                 <tr>
-                  <td colSpan={9} className="py-12 text-center text-xs text-slate-400 font-mono">
+                  <td colSpan={8} className="py-12 text-center text-xs text-slate-400 font-mono">
                     Không tìm thấy tròng kính mắt nào khớp với tiêu chuẩn tìm kiếm.
                   </td>
                 </tr>
@@ -627,15 +479,15 @@ export default function ProductManagement({ sanPhams, onAddProduct, thuongHieus,
                     <select
                       value={formBrand}
                       onChange={(e) => handleBrandChange(e.target.value)}
-                      className="w-full text-xs font-semibold text-slate-700 bg-slate-50 border border-slate-100 rounded-lg p-2.5"
+                      className="w-full text-base md:text-xs font-semibold text-slate-700 bg-slate-50 border border-slate-100 rounded-lg p-2.5"
                     >
                       {thuongHieus.map(b => (
-                        <option key={b.THUONG_HIEU} value={b.THUONG_HIEU}>{b.THUONG_HIEU}</option>
+                        <option key={b} value={b}>{b}</option>
                       ))}
                     </select>
                   </div>
 
-                  {/* Tính năng (Dropdown theo thương hiệu) */}
+                  {/* Tính năng (Chỉ có 2 lựa chọn ĐM hoặc ASX) */}
                   <div className="space-y-1">
                     <label className="text-[11px] font-bold text-slate-500 uppercase flex items-center gap-1">
                       Tính Năng
@@ -643,11 +495,10 @@ export default function ProductManagement({ sanPhams, onAddProduct, thuongHieus,
                     <select
                       value={formTinhNang}
                       onChange={(e) => setFormTinhNang(e.target.value)}
-                      className="w-full text-xs font-semibold text-slate-700 bg-slate-50 border border-slate-100 rounded-lg p-2.5 focus:outline-hidden font-mono"
+                      className="w-full text-base md:text-xs font-semibold text-slate-700 bg-slate-50 border border-slate-100 rounded-lg p-2.5 focus:outline-hidden"
                     >
-                      {availableFeatures.map(f => (
-                        <option key={f} value={f}>{f}</option>
-                      ))}
+                      <option value="ĐM">Đổi màu (ĐM)</option>
+                      <option value="ASX">Ánh sáng xanh (ASX)</option>
                     </select>
                   </div>
                 </div>
@@ -661,13 +512,13 @@ export default function ProductManagement({ sanPhams, onAddProduct, thuongHieus,
                         type="text"
                         value={formChietXuat}
                         disabled
-                        className="w-full text-xs font-bold text-slate-500 bg-slate-100 border border-slate-100 rounded-lg p-2.5"
+                        className="w-full text-base md:text-xs font-bold text-slate-500 bg-slate-100 border border-slate-100 rounded-lg p-2.5"
                       />
                     ) : (
                       <select
                         value={formChietXuat}
                         onChange={(e) => setFormChietXuat(e.target.value)}
-                        className="w-full text-xs font-semibold text-slate-700 bg-slate-50 border border-slate-100 rounded-lg p-2.5 animate-pulse"
+                        className="w-full text-base md:text-xs font-semibold text-slate-700 bg-slate-50 border border-slate-100 rounded-lg p-2.5 animate-pulse"
                       >
                         <option value="1.56">1.56</option>
                         <option value="1.61">1.61</option>
@@ -710,7 +561,7 @@ export default function ProductManagement({ sanPhams, onAddProduct, thuongHieus,
                     <select
                       value={formDoSph}
                       onChange={(e) => setFormDoSph(Number(e.target.value))}
-                      className="w-full text-xs font-semibold text-slate-700 bg-slate-50 border border-slate-100 rounded-lg p-2.5 font-mono"
+                      className="w-full text-base md:text-xs font-semibold text-slate-700 bg-slate-50 border border-slate-100 rounded-lg p-2.5 font-mono"
                     >
                       {sphOptions.map(sph => (
                         <option key={sph} value={sph}>{formatDop(sph)}</option>
@@ -724,7 +575,7 @@ export default function ProductManagement({ sanPhams, onAddProduct, thuongHieus,
                     <select
                       value={formDoCyl}
                       onChange={(e) => setFormDoCyl(Number(e.target.value))}
-                      className="w-full text-xs font-semibold text-slate-700 bg-slate-50 border border-slate-100 rounded-lg p-2.5 font-mono"
+                      className="w-full text-base md:text-xs font-semibold text-slate-700 bg-slate-50 border border-slate-100 rounded-lg p-2.5 font-mono"
                     >
                       {cylOptions.map(cyl => (
                         <option key={cyl} value={cyl}>{formatDop(cyl)}</option>
@@ -742,7 +593,7 @@ export default function ProductManagement({ sanPhams, onAddProduct, thuongHieus,
                       min={0}
                       value={formTonDau}
                       onChange={(e) => setFormTonDau(Math.max(0, parseInt(e.target.value) || 0))}
-                      className="w-full text-xs font-semibold text-slate-700 bg-slate-50 border border-slate-100 rounded-lg p-2.5 font-mono"
+                      className="w-full text-base md:text-xs font-semibold text-slate-700 bg-slate-50 border border-slate-100 rounded-lg p-2.5 font-mono"
                     />
                   </div>
 
@@ -754,7 +605,7 @@ export default function ProductManagement({ sanPhams, onAddProduct, thuongHieus,
                       min={0}
                       value={formTonToiThieu}
                       onChange={(e) => setFormTonToiThieu(Math.max(0, parseInt(e.target.value) || 0))}
-                      className="w-full text-xs font-semibold text-slate-700 bg-slate-50 border border-slate-100 rounded-lg p-2.5 font-mono"
+                      className="w-full text-base md:text-xs font-semibold text-slate-700 bg-slate-50 border border-slate-100 rounded-lg p-2.5 font-mono"
                     />
                   </div>
 
@@ -765,7 +616,7 @@ export default function ProductManagement({ sanPhams, onAddProduct, thuongHieus,
                       type="text"
                       value="miếng"
                       disabled
-                      className="w-full text-xs font-bold text-slate-500 bg-slate-100 border border-slate-100 rounded-lg p-2.5"
+                      className="w-full text-base md:text-xs font-bold text-slate-500 bg-slate-100 border border-slate-100 rounded-lg p-2.5"
                     />
                   </div>
                 </div>

@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { 
   FolderTree, 
   Tag, 
@@ -41,10 +41,9 @@ interface CategoryManagementProps {
   onDeleteThuongHieu: (brandName: string) => void;
   onUpdateChiNhanh: (oldBranchName: string, updatedBranch: ChiNhanh) => void;
   onDeleteChiNhanh: (branchName: string) => void;
-  onUpdateNhanVien: (oldMaNv: string, updatedStaff: NhanVien) => void;
-  onDeleteNhanVien: (maNv: string) => void;
+  onUpdateNhanVien: (oldEmail: string, updatedStaff: NhanVien) => void;
+  onDeleteNhanVien: (email: string) => void;
   currentUser: any;
-  onlyStaff?: boolean;
 }
 
 export default function CategoryManagement({
@@ -60,30 +59,24 @@ export default function CategoryManagement({
   onDeleteChiNhanh,
   onUpdateNhanVien,
   onDeleteNhanVien,
-  currentUser,
-  onlyStaff = false
+  currentUser
 }: CategoryManagementProps) {
   
   // --- 1. QUẢN LÝ TAB DANH MỤC HIỆN TẠI ---
-  const [activeSubTab, setActiveSubTab] = useState<'BRAND' | 'BRANCH' | 'STAFF'>(onlyStaff ? 'STAFF' : 'BRAND');
+  const [activeSubTab, setActiveSubTab] = useState<'BRAND' | 'BRANCH' | 'STAFF'>('BRAND');
   
-  useEffect(() => {
-    setActiveSubTab(onlyStaff ? 'STAFF' : 'BRAND');
-  }, [onlyStaff]);
-
   // Các trạng thái Form và Edit
   const [successMsg, setSuccessMsg] = useState<string>('');
   const [errorMsg, setErrorMsg] = useState<string>('');
 
   const [editingBrand, setEditingBrand] = useState<{ oldName: string; brand: ThươngHieu } | null>(null);
   const [editingBranch, setEditingBranch] = useState<{ oldName: string; branch: ChiNhanh } | null>(null);
-  const [editingStaff, setEditingStaff] = useState<{ oldMaNv: string; staff: NhanVien } | null>(null);
+  const [editingStaff, setEditingStaff] = useState<{ oldEmail: string; staff: NhanVien } | null>(null);
 
   // Form Thương hiệu
   const [newBrandName, setNewBrandName] = useState<string>('');
   const [newBrandCX, setNewBrandCX] = useState<string>('1.56');
   const [newBrandTN, setNewBrandTN] = useState<string>('ASX');
-  const [newBrandFeaturesText, setNewBrandFeaturesText] = useState<string>('ASX, ĐM');
 
   // Form Chi nhánh
   const [newBranchName, setNewBranchName] = useState<string>('');
@@ -116,21 +109,15 @@ export default function CategoryManagement({
       return;
     }
 
-    const featuresList = newBrandFeaturesText.split(',')
-      .map(f => f.trim())
-      .filter(f => f.length > 0);
-
     const brandRecord: ThươngHieu = {
       THUONG_HIEU: newBrandName.trim(),
       CHIET_XUAT_MAC_DINH: newBrandCX,
-      TINH_NANG_MAC_DINH: newBrandTN,
-      TINH_NANG_LIST: featuresList.length > 0 ? featuresList : [newBrandTN]
+      TINH_NANG_MAC_DINH: newBrandTN
     };
 
     onAddThuongHieu(brandRecord);
     setSuccessMsg(`Đã khai báo thương hiệu mới [${newBrandName}] thành công!`);
     setNewBrandName('');
-    setNewBrandFeaturesText('ASX, ĐM');
     setTimeout(() => setSuccessMsg(''), 3000);
   };
 
@@ -139,7 +126,6 @@ export default function CategoryManagement({
     setNewBrandName(brand.THUONG_HIEU);
     setNewBrandCX(brand.CHIET_XUAT_MAC_DINH || '1.56');
     setNewBrandTN(brand.TINH_NANG_MAC_DINH || 'ASX');
-    setNewBrandFeaturesText(brand.TINH_NANG_LIST ? brand.TINH_NANG_LIST.join(', ') : (brand.TINH_NANG_MAC_DINH || 'ASX'));
   };
 
   const handleSaveEditBrand = (e: React.FormEvent) => {
@@ -153,29 +139,22 @@ export default function CategoryManagement({
       return;
     }
 
-    const featuresList = newBrandFeaturesText.split(',')
-      .map(f => f.trim())
-      .filter(f => f.length > 0);
-
     const updatedBrand: ThươngHieu = {
       THUONG_HIEU: newBrandName.trim(),
       CHIET_XUAT_MAC_DINH: newBrandCX,
-      TINH_NANG_MAC_DINH: newBrandTN,
-      TINH_NANG_LIST: featuresList.length > 0 ? featuresList : [newBrandTN]
+      TINH_NANG_MAC_DINH: newBrandTN
     };
 
     onUpdateThuongHieu(editingBrand.oldName, updatedBrand);
     setSuccessMsg(`Đã cập nhật thương hiệu [${newBrandName}] thành công!`);
     setEditingBrand(null);
     setNewBrandName('');
-    setNewBrandFeaturesText('ASX, ĐM');
     setTimeout(() => setSuccessMsg(''), 3000);
   };
 
   const handleCancelEditBrand = () => {
     setEditingBrand(null);
     setNewBrandName('');
-    setNewBrandFeaturesText('ASX, ĐM');
   };
 
   const handleDeleteBrandItem = (brandName: string) => {
@@ -268,15 +247,18 @@ export default function CategoryManagement({
     setSuccessMsg('');
 
     if (!newStaffName.trim() || !newStaffUsername.trim() || !newStaffPassword.trim()) {
-      setErrorMsg('Vui lòng nhập đầy đủ các trường: Họ tên, Tên đăng nhập và Mật khẩu.');
+      setErrorMsg('Vui lòng cung cấp đầy đủ Họ tên, Tên đăng nhập và Mật khẩu.');
       return;
     }
 
-    const isUsernameExist = nhanViens.some(n => n.TEN_DANG_NHAP.toLowerCase() === newStaffUsername.trim().toLowerCase());
-    if (isUsernameExist) {
+    const isExist = nhanViens.some(n => (n.TEN_DANG_NHAP || '').toLowerCase() === newStaffUsername.trim().toLowerCase());
+    if (isExist) {
       setErrorMsg(`Tên đăng nhập [${newStaffUsername}] đã được sử dụng.`);
       return;
     }
+
+    // Tự sinh email ẩn để đảm bảo tính đồng bộ và không lỗi schema DB cũ
+    const generatedEmail = `${newStaffUsername.trim().toLowerCase()}@glassstock.com`;
 
     const staffRecord: NhanVien = {
       MA_NV: `NV${String(nhanViens.length + 1).padStart(4, '0')}`,
@@ -284,19 +266,16 @@ export default function CategoryManagement({
       CHUC_VU: newStaffChucVu,
       BO_PHAN: newStaffRole === 'ADMIN' ? 'Ban Giám Đốc' : newStaffRole === 'KHO' ? 'Bộ Phận Kho' : 'Bộ Phận Bán Hàng',
       CHI_NHANH: newStaffBranch,
-      EMAIL: newStaffEmail.trim() ? newStaffEmail.trim().toLowerCase() : '',
+      EMAIL: generatedEmail,
       ROLE: newStaffRole,
+      WRITE_ACCESS: newStaffRole === 'ADMIN' || newStaffRole === 'KHO',
       TEN_DANG_NHAP: newStaffUsername.trim(),
-      MAT_KHAU: newStaffPassword.trim(),
-      USERNAME: newStaffUsername.trim(),
-      PASSWORD: newStaffPassword.trim(),
-      WRITE_ACCESS: newStaffRole === 'ADMIN' || newStaffRole === 'KHO'
+      MAT_KHAU: newStaffPassword.trim()
     };
 
     onAddNhanVien(staffRecord);
     setSuccessMsg(`Đã tạo nhân sự mới [${newStaffName}] với quyền [${newStaffRole}] thành công!`);
     setNewStaffName('');
-    setNewStaffEmail('');
     setNewStaffUsername('');
     setNewStaffPassword('');
     setNewStaffChucVu('Nhân viên bán kính');
@@ -304,14 +283,13 @@ export default function CategoryManagement({
   };
 
   const handleStartEditStaff = (staff: NhanVien) => {
-    setEditingStaff({ oldMaNv: staff.MA_NV, staff: { ...staff } });
+    setEditingStaff({ oldEmail: staff.EMAIL, staff: { ...staff } });
     setNewStaffName(staff.HO_TEN);
-    setNewStaffEmail(staff.EMAIL || '');
+    setNewStaffUsername(staff.TEN_DANG_NHAP || '');
+    setNewStaffPassword(staff.MAT_KHAU || '');
     setNewStaffBranch(staff.CHI_NHANH);
     setNewStaffChucVu(staff.CHUC_VU);
     setNewStaffRole(staff.ROLE);
-    setNewStaffUsername(staff.TEN_DANG_NHAP || staff.USERNAME || '');
-    setNewStaffPassword(staff.MAT_KHAU || staff.PASSWORD || '');
   };
 
   const handleSaveEditStaff = (e: React.FormEvent) => {
@@ -325,34 +303,23 @@ export default function CategoryManagement({
       return;
     }
 
-    const isUsernameExist = nhanViens.some(
-      n => n.MA_NV !== editingStaff.oldMaNv && n.TEN_DANG_NHAP.toLowerCase() === newStaffUsername.trim().toLowerCase()
-    );
-    if (isUsernameExist) {
-      setErrorMsg(`Tên đăng nhập [${newStaffUsername}] đã được sử dụng bởi một nhân sự khác.`);
-      return;
-    }
-
     const updatedStaff: NhanVien = {
       MA_NV: editingStaff.staff.MA_NV,
       HO_TEN: newStaffName.trim(),
       CHUC_VU: newStaffChucVu,
       BO_PHAN: newStaffRole === 'ADMIN' ? 'Ban Giám Đốc' : newStaffRole === 'KHO' ? 'Bộ Phận Kho' : 'Bộ Phận Bán Hàng',
       CHI_NHANH: newStaffBranch,
-      EMAIL: newStaffEmail.trim() ? newStaffEmail.trim().toLowerCase() : '',
+      EMAIL: editingStaff.staff.EMAIL, // Giữ nguyên Email cũ làm khóa duy nhất cho các logic đồng bộ cũ
       ROLE: newStaffRole,
+      WRITE_ACCESS: newStaffRole === 'ADMIN' || newStaffRole === 'KHO',
       TEN_DANG_NHAP: newStaffUsername.trim(),
-      MAT_KHAU: newStaffPassword.trim(),
-      USERNAME: newStaffUsername.trim(),
-      PASSWORD: newStaffPassword.trim(),
-      WRITE_ACCESS: newStaffRole === 'ADMIN' || newStaffRole === 'KHO'
+      MAT_KHAU: newStaffPassword.trim()
     };
 
-    onUpdateNhanVien(editingStaff.oldMaNv, updatedStaff);
+    onUpdateNhanVien(editingStaff.oldEmail, updatedStaff);
     setSuccessMsg(`Đã cập nhật nhân sự [${newStaffName}] thành công!`);
     setEditingStaff(null);
     setNewStaffName('');
-    setNewStaffEmail('');
     setNewStaffUsername('');
     setNewStaffPassword('');
     setNewStaffChucVu('Nhân viên bán kính');
@@ -362,15 +329,14 @@ export default function CategoryManagement({
   const handleCancelEditStaff = () => {
     setEditingStaff(null);
     setNewStaffName('');
-    setNewStaffEmail('');
     setNewStaffUsername('');
     setNewStaffPassword('');
     setNewStaffChucVu('Nhân viên bán kính');
   };
 
-  const handleDeleteStaffItem = (maNv: string) => {
-    onDeleteNhanVien(maNv);
-    setSuccessMsg(`Đã xóa nhân sự mã [${maNv}] khỏi hệ thống.`);
+  const handleDeleteStaffItem = (email: string) => {
+    onDeleteNhanVien(email);
+    setSuccessMsg(`Đã xóa nhân sự khỏi hệ thống.`);
     setTimeout(() => setSuccessMsg(''), 3000);
   };
 
@@ -387,44 +353,44 @@ export default function CategoryManagement({
       )}
 
       {/* 1. THANH MENU TAB DANH MỤC */}
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between border-b border-slate-100 pb-4 gap-4">
-        <div className="flex items-center gap-3">
+      <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+        <div className="flex items-center gap-2.5">
           <div className="p-2.5 bg-blue-50 text-blue-600 rounded-xl">
-            {onlyStaff ? <Users className="w-5.5 h-5.5" /> : <FolderTree className="w-5.5 h-5.5" />}
+            <FolderTree className="w-5.5 h-5.5" />
           </div>
           <div>
-            <h2 className="font-sans font-bold text-slate-800 text-base">
-              {onlyStaff ? 'Quản Lý Người Dùng & Phân Quyền' : 'Cấu Hình Danh Mục Hệ Thống'}
-            </h2>
-            <p className="text-xs text-slate-400 font-mono">
-              {onlyStaff 
-                ? 'Thiết lập danh sách nhân sự, cấu hình tài khoản liên kết đăng nhập và phân vai quản trị' 
-                : 'Khai báo cấu trúc dữ liệu tổng thể bao gồm Thương hiệu tròng kính và Chi nhánh cửa hàng'}
-            </p>
+            <h2 className="font-sans font-bold text-slate-800 text-base">Quản Lý Danh Mục Nền Tảng</h2>
+            <p className="text-xs text-slate-400 font-mono">Khai báo cấu trúc dữ liệu tổng thể và phân quyền nhân viên</p>
           </div>
         </div>
 
-        {/* Chuyển đổi tab - Ẩn hoàn toàn nếu onlyStaff=true, chỉ hiển thị Thương hiệu & Chi nhánh nếu onlyStaff=false */}
-        {!onlyStaff && (
-          <div className="flex bg-slate-100 p-1 rounded-xl self-start sm:self-auto">
-            <button
-              onClick={() => { setActiveSubTab('BRAND'); setErrorMsg(''); setSuccessMsg(''); handleCancelEditBrand(); }}
-              className={`flex items-center gap-1.5 py-1.5 px-3.5 text-xs font-bold rounded-lg transition-all cursor-pointer ${
-                activeSubTab === 'BRAND' ? 'bg-red-600 text-white shadow-xs' : 'text-slate-500 hover:text-slate-700'
-              }`}
-            >
-              <Tag className="w-3.5 h-3.5" /> Thương Hiệu
-            </button>
-            <button
-              onClick={() => { setActiveSubTab('BRANCH'); setErrorMsg(''); setSuccessMsg(''); handleCancelEditBranch(); }}
-              className={`flex items-center gap-1.5 py-1.5 px-3.5 text-xs font-bold rounded-lg transition-all cursor-pointer ${
-                activeSubTab === 'BRANCH' ? 'bg-red-600 text-white shadow-xs' : 'text-slate-500 hover:text-slate-700'
-              }`}
-            >
-              <MapPin className="w-3.5 h-3.5" /> Chi Nhánh
-            </button>
-          </div>
-        )}
+        {/* Chuyển đổi tab */}
+        <div className="flex bg-slate-100 p-1 rounded-xl">
+          <button
+            onClick={() => { setActiveSubTab('BRAND'); setErrorMsg(''); setSuccessMsg(''); handleCancelEditBrand(); }}
+            className={`flex items-center gap-1.5 py-1.5 px-3.5 text-xs font-bold rounded-lg transition-all cursor-pointer ${
+              activeSubTab === 'BRAND' ? 'bg-red-600 text-white shadow-xs' : 'text-slate-500 hover:text-slate-700'
+            }`}
+          >
+            <Tag className="w-3.5 h-3.5" /> Thương Hiệu
+          </button>
+          <button
+            onClick={() => { setActiveSubTab('BRANCH'); setErrorMsg(''); setSuccessMsg(''); handleCancelEditBranch(); }}
+            className={`flex items-center gap-1.5 py-1.5 px-3.5 text-xs font-bold rounded-lg transition-all cursor-pointer ${
+              activeSubTab === 'BRANCH' ? 'bg-red-600 text-white shadow-xs' : 'text-slate-500 hover:text-slate-700'
+            }`}
+          >
+            <MapPin className="w-3.5 h-3.5" /> Chi Nhánh
+          </button>
+          <button
+            onClick={() => { setActiveSubTab('STAFF'); setErrorMsg(''); setSuccessMsg(''); handleCancelEditStaff(); }}
+            className={`flex items-center gap-1.5 py-1.5 px-3.5 text-xs font-bold rounded-lg transition-all cursor-pointer ${
+              activeSubTab === 'STAFF' ? 'bg-red-600 text-white shadow-xs' : 'text-slate-500 hover:text-slate-700'
+            }`}
+          >
+            <Users className="w-3.5 h-3.5" /> Nhân Viên & Quyền
+          </button>
+        </div>
       </div>
 
       {successMsg && (
@@ -495,17 +461,6 @@ export default function CategoryManagement({
                     </div>
                   </div>
 
-                  <div className="space-y-1">
-                    <label className="text-[10px] uppercase font-bold text-slate-400">Danh sách tính năng cho phép (ngăn cách bằng dấu phẩy)</label>
-                    <input
-                      type="text"
-                      placeholder="Ví dụ: ASX, ĐM, Chống trầy..."
-                      value={newBrandFeaturesText}
-                      onChange={(e) => setNewBrandFeaturesText(e.target.value)}
-                      className="w-full text-xs font-semibold text-slate-700 bg-slate-50 border border-slate-100 rounded-lg p-2.5 focus:outline-hidden"
-                    />
-                  </div>
-
                   <div className="flex gap-2">
                     <button
                       type="submit"
@@ -541,14 +496,7 @@ export default function CategoryManagement({
                     {thuongHieus.map((b, index) => (
                       <tr key={b.THUONG_HIEU} className="hover:bg-slate-50/50 transition-colors">
                         <td className="py-3 px-4 font-mono text-slate-400">{index + 1}</td>
-                        <td className="py-3 px-4">
-                          <p className="font-bold text-slate-700">{b.THUONG_HIEU}</p>
-                          {b.TINH_NANG_LIST && b.TINH_NANG_LIST.length > 0 && (
-                            <p className="text-[10px] text-slate-400 font-semibold font-mono">
-                              {b.TINH_NANG_LIST.join(' / ')}
-                            </p>
-                          )}
-                        </td>
+                        <td className="py-3 px-4 font-bold text-slate-700">{b.THUONG_HIEU}</td>
                         <td className="py-3 px-4 text-center font-bold text-blue-600 font-mono">{b.CHIET_XUAT_MAC_DINH || '—'}</td>
                         <td className="py-3 px-4 text-center">
                           <span className="bg-slate-100 text-slate-600 font-bold py-0.5 px-2 rounded text-[10px]">
@@ -703,34 +651,22 @@ export default function CategoryManagement({
                     />
                   </div>
 
-                  <div className="space-y-1">
-                    <label className="text-[10px] uppercase font-bold text-slate-400">Email liên kết Đăng Nhập</label>
-                    <input
-                      type="email"
-                      placeholder="email@gmail.com"
-                      value={editingStaff ? '' : newStaffEmail}
-                      onChange={(e) => setNewStaffEmail(e.target.value)}
-                      className="w-full text-xs font-semibold text-slate-700 bg-slate-50 border border-slate-100 rounded-lg p-2.5 focus:outline-hidden font-mono"
-                    />
-                  </div>
-
                   <div className="grid grid-cols-2 gap-3">
                     <div className="space-y-1">
-                      <label className="text-[10px] uppercase font-bold text-slate-400">Tên đăng nhập</label>
+                      <label className="text-[10px] uppercase font-bold text-slate-400">Tên Đăng Nhập</label>
                       <input
                         type="text"
-                        placeholder="Tên đăng nhập"
+                        placeholder="Ví dụ: nva_glass..."
                         value={editingStaff ? '' : newStaffUsername}
                         onChange={(e) => setNewStaffUsername(e.target.value)}
                         className="w-full text-xs font-semibold text-slate-700 bg-slate-50 border border-slate-100 rounded-lg p-2.5 focus:outline-hidden font-mono"
                       />
                     </div>
-
                     <div className="space-y-1">
                       <label className="text-[10px] uppercase font-bold text-slate-400">Mật khẩu</label>
                       <input
-                        type="text"
-                        placeholder="Mật khẩu"
+                        type="password"
+                        placeholder="••••••••"
                         value={editingStaff ? '' : newStaffPassword}
                         onChange={(e) => setNewStaffPassword(e.target.value)}
                         className="w-full text-xs font-semibold text-slate-700 bg-slate-50 border border-slate-100 rounded-lg p-2.5 focus:outline-hidden font-mono"
@@ -815,20 +751,9 @@ export default function CategoryManagement({
                             {n.MA_NV}
                           </span>
                         </p>
-                        {n.EMAIL && (
-                          <p className="text-slate-400 font-mono text-[11px] flex items-center gap-1">
-                            <Mail className="w-3.5 h-3.5 text-slate-300" /> {n.EMAIL}
-                          </p>
-                        )}
-                        {(n.TEN_DANG_NHAP || n.USERNAME) && (
-                          <p className="text-slate-500 font-medium text-[11px] flex items-center gap-1.5 bg-slate-50 border border-slate-100 rounded-sm px-1.5 py-0.5 w-fit">
-                            <span className="text-slate-400 uppercase text-[9px] font-bold">Username:</span>
-                            <span className="font-mono text-slate-700 font-bold">{n.TEN_DANG_NHAP || n.USERNAME}</span>
-                            <span className="text-slate-300">|</span>
-                            <span className="text-slate-400 uppercase text-[9px] font-bold">Password:</span>
-                            <span className="font-mono text-slate-700 font-bold">{n.MAT_KHAU || n.PASSWORD}</span>
-                          </p>
-                        )}
+                        <p className="text-slate-600 font-mono text-[11px] flex items-center gap-1">
+                          <Users className="w-3.5 h-3.5 text-slate-400" /> Tài khoản: <span className="font-bold text-blue-600">{n.TEN_DANG_NHAP || 'Chưa thiết lập'}</span>
+                        </p>
                         <p className="text-slate-400 font-medium text-[11px] flex items-center gap-1">
                           <Briefcase className="w-3.5 h-3.5 text-slate-300" /> {n.CHUC_VU} | {n.CHI_NHANH}
                         </p>
@@ -848,7 +773,7 @@ export default function CategoryManagement({
                               <Edit className="w-3.5 h-3.5" />
                             </button>
                             <button
-                              onClick={() => handleDeleteStaffItem(n.MA_NV)}
+                              onClick={() => handleDeleteStaffItem(n.EMAIL)}
                               className="p-1 text-red-600 hover:bg-red-50 rounded-md cursor-pointer transition-colors inline-flex"
                               title="Xóa"
                             >
@@ -928,17 +853,6 @@ export default function CategoryManagement({
                       <option value="ASX">Ánh sáng xanh (ASX)</option>
                     </select>
                   </div>
-                </div>
-
-                <div className="space-y-1">
-                  <label className="text-[10px] uppercase font-bold text-slate-400">Danh sách tính năng cho phép (ngăn cách bằng dấu phẩy)</label>
-                  <input
-                    type="text"
-                    placeholder="Ví dụ: ASX, ĐM, Chống trầy..."
-                    value={newBrandFeaturesText}
-                    onChange={(e) => setNewBrandFeaturesText(e.target.value)}
-                    className="w-full text-xs font-semibold text-slate-700 bg-slate-50 border border-slate-100 rounded-lg p-2.5 focus:outline-hidden"
-                  />
                 </div>
 
                 <div className="flex gap-2.5 pt-2">
@@ -1067,34 +981,22 @@ export default function CategoryManagement({
                   />
                 </div>
 
-                <div className="space-y-1">
-                  <label className="text-[10px] uppercase font-bold text-slate-400">Email liên kết Đăng Nhập</label>
-                  <input
-                    type="email"
-                    placeholder="email@gmail.com"
-                    value={newStaffEmail}
-                    onChange={(e) => setNewStaffEmail(e.target.value)}
-                    className="w-full text-xs font-semibold text-slate-700 bg-slate-50 border border-slate-100 rounded-lg p-2.5 focus:outline-hidden font-mono"
-                  />
-                </div>
-
                 <div className="grid grid-cols-2 gap-3">
                   <div className="space-y-1">
-                    <label className="text-[10px] uppercase font-bold text-slate-400">Tên đăng nhập</label>
+                    <label className="text-[10px] uppercase font-bold text-slate-400">Tên Đăng Nhập</label>
                     <input
                       type="text"
-                      placeholder="Tên đăng nhập"
+                      placeholder="Ví dụ: nva_glass..."
                       value={newStaffUsername}
                       onChange={(e) => setNewStaffUsername(e.target.value)}
                       className="w-full text-xs font-semibold text-slate-700 bg-slate-50 border border-slate-100 rounded-lg p-2.5 focus:outline-hidden font-mono"
                     />
                   </div>
-
                   <div className="space-y-1">
-                    <label className="text-[10px] uppercase font-bold text-slate-400">Mật khẩu</label>
+                    <label className="text-[10px] uppercase font-bold text-slate-400">Mật khẩu mới</label>
                     <input
-                      type="text"
-                      placeholder="Mật khẩu"
+                      type="password"
+                      placeholder="Nhập mật khẩu mới..."
                       value={newStaffPassword}
                       onChange={(e) => setNewStaffPassword(e.target.value)}
                       className="w-full text-xs font-semibold text-slate-700 bg-slate-50 border border-slate-100 rounded-lg p-2.5 focus:outline-hidden font-mono"

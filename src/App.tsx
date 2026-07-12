@@ -20,13 +20,10 @@ import {
   Info,
   LogOut,
   Menu,
-  Home as HomeIcon,
-  ChevronLeft,
-  ChevronRight,
-  User as UserProfileIcon
+  Home,
+  CheckCircle
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import Home from './components/Home';
 
 // Import Types và Mock Data
 import { SanPham, NhapXuat, NhapXuatCT, KiemKho, UserRole, User, ThươngHieu, ChiNhanh, NhanVien } from './types';
@@ -67,7 +64,6 @@ import InventoryAudit from './components/InventoryAudit';
 import TransactionHistory from './components/TransactionHistory';
 import CategoryManagement from './components/CategoryManagement';
 import AppsScriptExporter from './components/AppsScriptExporter';
-import UserProfile from './components/UserProfile';
 
 /**
  * FILE: App.tsx
@@ -162,7 +158,8 @@ export default function App() {
         role: isOwner ? 'ADMIN' : (staffMember?.ROLE || 'NHAN_VIEN'),
         branch: isOwner ? 'Kho Trung Tâm' : (staffMember?.CHI_NHANH || 'Kho Trung Tâm'),
         writeAccess: isOwner ? true : (staffMember ? staffMember.WRITE_ACCESS : false),
-        WRITE_ACCESS: isOwner ? true : (staffMember ? staffMember.WRITE_ACCESS : false)
+        WRITE_ACCESS: isOwner ? true : (staffMember ? staffMember.WRITE_ACCESS : false),
+        id: userId
       };
       setCurrentUser(u);
       localStorage.setItem('CURRENT_USER', JSON.stringify(u));
@@ -302,41 +299,24 @@ export default function App() {
   }, []);
 
 
-  // --- 3. ĐIỀU HƯỚNG TAB CHỨC NĂNG VÀ LỊCH SỬ TAB ---
-  const [activeTab, setActiveTab] = useState<string>('HOME');
-  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState<boolean>(false);
-  const [tabHistory, setTabHistory] = useState<string[]>(['HOME']);
-  const [historyIndex, setHistoryIndex] = useState<number>(0);
+  // --- 3. ĐIỀU HƯỚNG TAB CHỨC NĂNG ---
+  const [activeTab, setActiveTab] = useState<string>('DASHBOARD');
+  const [mobileMenuOpen, setMobileMenuOpen] = useState<boolean>(false);
+  const [successToast, setSuccessToast] = useState<{ message: string } | null>(null);
 
-  const changeTab = (tabName: string) => {
-    setActiveTab(tabName);
-    setIsMobileMenuOpen(false);
-    
-    // Thêm tab mới vào lịch sử, cắt bớt phần phía sau nếu chúng ta vừa Back
-    setTabHistory(prev => {
-      const next = prev.slice(0, historyIndex + 1);
-      if (next[next.length - 1] !== tabName) {
-        next.push(tabName);
-        setHistoryIndex(next.length - 1);
-      }
-      return next;
-    });
-  };
-
-  const handleBackTab = () => {
-    if (historyIndex > 0) {
-      const newIndex = historyIndex - 1;
-      setHistoryIndex(newIndex);
-      setActiveTab(tabHistory[newIndex]);
+  // Tự động tắt Toast thành công sau 3 giây
+  useEffect(() => {
+    if (successToast) {
+      const timer = setTimeout(() => {
+        setSuccessToast(null);
+      }, 3000);
+      return () => clearTimeout(timer);
     }
-  };
+  }, [successToast]);
 
-  const handleForwardTab = () => {
-    if (historyIndex < tabHistory.length - 1) {
-      const newIndex = historyIndex + 1;
-      setHistoryIndex(newIndex);
-      setActiveTab(tabHistory[newIndex]);
-    }
+  const selectTabOnMobile = (tab: string) => {
+    setActiveTab(tab);
+    setMobileMenuOpen(false);
   };
 
   // Lưu trữ dữ liệu vào localStorage tự động mỗi khi có bất kỳ thay đổi nào để đảm bảo tính thời gian thực
@@ -382,29 +362,17 @@ export default function App() {
   }
   const [syncError, setSyncError] = useState<SyncError | null>(null);
 
-  // --- HỆ THỐNG THÔNG BÁO GLOBAL TOAST / MODAL TRUNG TÂM ---
-  const [globalToast, setGlobalToast] = useState<{
-    show: boolean;
-    title: string;
-    message: string;
-    type: 'success' | 'error' | 'info';
-  }>({
-    show: false,
-    title: '',
-    message: '',
-    type: 'success'
-  });
-
-  const showToast = (title: string, message: string, type: 'success' | 'error' | 'info' = 'success') => {
-    setGlobalToast({
-      show: true,
-      title,
-      message,
-      type
-    });
-    setTimeout(() => {
-      setGlobalToast(prev => ({ ...prev, show: false }));
-    }, 3000);
+  // Trợ lý lấy User ID bảo mật chống clock-skew (F5 & JWT issued at future)
+  const getUserId = async (): Promise<string | null> => {
+    if (currentUser?.id) return currentUser.id;
+    const { data: { session } } = await supabase.auth.getSession();
+    if (session?.user?.id) return session.user.id;
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      return user?.id || null;
+    } catch {
+      return null;
+    }
   };
 
   // --- 5. HÀM THAO TÁC NGHIỆP VỤ (VỚI COMMENT SÂU SẮC NHƯ LÃO TƯỚNG 30 NĂM TUỔI NGHỀ) ---
@@ -415,18 +383,12 @@ export default function App() {
   const handleAddProduct = async (newProduct: SanPham) => {
     setSanPhams(prev => [...prev, newProduct]);
 
-    showToast(
-      'Khai Báo Thành Công',
-      `Mã SKU [${newProduct.SKU}] đã được khởi tạo và lưu trữ thành công trên hệ thống.`,
-      'success'
-    );
-
     // Đồng bộ Supabase
     if (currentUser && currentUser.username.includes('@')) {
       try {
-        const { data: { user } } = await supabase.auth.getUser();
-        if (user) {
-          const res = await syncSanPham(newProduct, user.id);
+        const uId = await getUserId();
+        if (uId) {
+          const res = await syncSanPham(newProduct, uId);
           if (res.error) {
             setSyncError({
               table: 'b_sanpham',
@@ -444,47 +406,7 @@ export default function App() {
         });
       }
     }
-  };
-
-  /**
-   * Nghiệp vụ Chỉnh sửa Tồn tối thiểu trực tiếp của Sản phẩm
-   */
-  const handleUpdateMinStock = async (sku: string, newMinStock: number) => {
-    let updatedProduct: SanPham | null = null;
-    setSanPhams(prev => {
-      const next = prev.map(p => {
-        if (p.SKU === sku) {
-          updatedProduct = { ...p, TON_TOI_THIEU: newMinStock };
-          return updatedProduct;
-        }
-        return p;
-      });
-      return next;
-    });
-
-    // Đồng bộ lên Supabase Cloud
-    if (currentUser && currentUser.username.includes('@')) {
-      try {
-        const { data: { user } } = await supabase.auth.getUser();
-        if (user && updatedProduct) {
-          const res = await syncSanPham(updatedProduct, user.id);
-          if (res.error) {
-            setSyncError({
-              table: 'b_sanpham',
-              action: 'Cập nhật Tồn tối thiểu',
-              message: res.error.message || JSON.stringify(res.error)
-            });
-          }
-        }
-      } catch (err: any) {
-        console.error('Lỗi sync cập nhật Tồn tối thiểu:', err);
-        setSyncError({
-          table: 'b_sanpham',
-          action: 'Cập nhật Tồn tối thiểu',
-          message: err.message || JSON.stringify(err)
-        });
-      }
-    }
+    setSuccessToast({ message: `Đã thêm thành công sản phẩm tròng kính: ${newProduct.SKU}` });
   };
 
   /**
@@ -522,11 +444,9 @@ export default function App() {
     setNhapXuats(prev => [...prev, finalizedHeader]);
     setNhapXuatCTs(prev => [...prev, ...finalizedDetails]);
 
-    showToast(
-      'Lưu Phiếu Thành Công',
-      `Phiếu [${newInvoiceId}] (${header.LOAI}) đã được thiết lập và phân bổ tồn kho thành công.`,
-      'success'
-    );
+    // Kích hoạt Toast thông báo thành công chính giữa màn hình
+    const toastMsg = finalizedHeader.LOAI === 'NHẬP' ? 'Lưu phiếu nhập thành công' : 'Lưu phiếu xuất thành công';
+    setSuccessToast({ message: toastMsg });
 
     // Cập nhật số lượng nhập, xuất, và tồn cuối trực tiếp vào bảng sản phẩm ngay lập tức
     let updatedProducts: SanPham[] = [];
@@ -564,12 +484,12 @@ export default function App() {
     // Đồng bộ Supabase
     if (currentUser && currentUser.username.includes('@')) {
       try {
-        const { data: { user } } = await supabase.auth.getUser();
-        if (user) {
+        const uId = await getUserId();
+        if (uId) {
           const [res1, res2, res3] = await Promise.all([
-            syncNhapXuat(finalizedHeader, user.id),
-            syncNhapXuatCTs(finalizedDetails, user.id),
-            syncSanPhams(updatedProducts.filter(p => finalizedDetails.some(fd => fd.SKU === p.SKU)), user.id)
+            syncNhapXuat(finalizedHeader, uId),
+            syncNhapXuatCTs(finalizedDetails, uId),
+            syncSanPhams(updatedProducts.filter(p => finalizedDetails.some(fd => fd.SKU === p.SKU)), uId)
           ]);
           const error = res1.error || res2.error || res3.error;
           if (error) {
@@ -614,12 +534,6 @@ export default function App() {
 
     setKiemKhos(prev => [...prev, finalizedAudit]);
 
-    showToast(
-      'Kiểm Kho Thành Công',
-      `Phiếu kiểm kê [${newAuditId}] đã được ghi nhận và bù trừ chênh lệch tồn kho thành công.`,
-      'success'
-    );
-
     // Đồng bộ lượng chênh lệch kiểm kê bù trừ trực tiếp vào sản phẩm tương ứng (B_SANPHAM)
     let updatedProducts: SanPham[] = [];
     setSanPhams(prevProducts => {
@@ -653,11 +567,11 @@ export default function App() {
     // Đồng bộ Supabase
     if (currentUser && currentUser.username.includes('@')) {
       try {
-        const { data: { user } } = await supabase.auth.getUser();
-        if (user) {
+        const uId = await getUserId();
+        if (uId) {
           const [res1, res2] = await Promise.all([
-            syncKiemKho(finalizedAudit, user.id),
-            syncSanPhams(updatedProducts.filter(p => p.SKU === finalizedAudit.SKU), user.id)
+            syncKiemKho(finalizedAudit, uId),
+            syncSanPhams(updatedProducts.filter(p => p.SKU === finalizedAudit.SKU), uId)
           ]);
           const error = res1.error || res2.error;
           if (error) {
@@ -739,15 +653,15 @@ export default function App() {
     // Đồng bộ Supabase
     if (currentUser && currentUser.username.includes('@')) {
       try {
-        const { data: { user } } = await supabase.auth.getUser();
-        if (user) {
+        const uId = await getUserId();
+        if (uId) {
           const [res1, resDel] = await Promise.all([
-            syncNhapXuat(updatedHeader, user.id),
+            syncNhapXuat(updatedHeader, uId),
             supabase.from('b_nhapxuatct').delete().eq('HOA_DON', updatedHeader.HOA_DON),
           ]);
           const [res2, res3] = await Promise.all([
-            syncNhapXuatCTs(updatedDetails.filter(d => d.HOA_DON === updatedHeader.HOA_DON), user.id),
-            syncSanPhams(updatedProducts.filter(p => skusToRecalc.includes(p.SKU)), user.id)
+            syncNhapXuatCTs(updatedDetails.filter(d => d.HOA_DON === updatedHeader.HOA_DON), uId),
+            syncSanPhams(updatedProducts.filter(p => skusToRecalc.includes(p.SKU)), uId)
           ]);
           const error = res1.error || resDel.error || res2.error || res3.error;
           if (error) {
@@ -824,11 +738,11 @@ export default function App() {
     // Đồng bộ Supabase
     if (currentUser && currentUser.username.includes('@')) {
       try {
-        const { data: { user } } = await supabase.auth.getUser();
-        if (user) {
+        const uId = await getUserId();
+        if (uId) {
           const [resDel, resSync] = await Promise.all([
             deleteNhapXuatAndDetails(hoaDonId),
-            syncSanPhams(updatedProducts.filter(p => skusToRecalc.includes(p.SKU)), user.id)
+            syncSanPhams(updatedProducts.filter(p => skusToRecalc.includes(p.SKU)), uId)
           ]);
           const error = resDel.error || resSync.error;
           if (error) {
@@ -856,9 +770,9 @@ export default function App() {
 
     if (currentUser && currentUser.username.includes('@')) {
       try {
-        const { data: { user } } = await supabase.auth.getUser();
-        if (user) {
-          const res = await syncThuongHieu(brand, user.id);
+        const uId = await getUserId();
+        if (uId) {
+          const res = await syncThuongHieu(brand, uId);
           if (res.error) {
             setSyncError({
               table: 'b_thuonghieu',
@@ -883,9 +797,9 @@ export default function App() {
 
     if (currentUser && currentUser.username.includes('@')) {
       try {
-        const { data: { user } } = await supabase.auth.getUser();
-        if (user) {
-          const res = await syncChiNhanh(branch, user.id);
+        const uId = await getUserId();
+        if (uId) {
+          const res = await syncChiNhanh(branch, uId);
           if (res.error) {
             setSyncError({
               table: 'b_chinhanh',
@@ -910,9 +824,9 @@ export default function App() {
 
     if (currentUser && currentUser.username.includes('@')) {
       try {
-        const { data: { user } } = await supabase.auth.getUser();
-        if (user) {
-          const res = await syncNhanVien(staff, user.id);
+        const uId = await getUserId();
+        if (uId) {
+          const res = await syncNhanVien(staff, uId);
           if (res.error) {
             setSyncError({
               table: 'b_nhanvien',
@@ -942,12 +856,12 @@ export default function App() {
 
     if (currentUser && currentUser.username.includes('@')) {
       try {
-        const { data: { user } } = await supabase.auth.getUser();
-        if (user) {
+        const uId = await getUserId();
+        if (uId) {
           if (oldName !== brand.THUONG_HIEU) {
-            await deleteThuongHieu(oldName, user.id);
+            await deleteThuongHieu(oldName, uId);
           }
-          const res = await syncThuongHieu(brand, user.id);
+          const res = await syncThuongHieu(brand, uId);
           if (res.error) {
             setSyncError({
               table: 'b_thuonghieu',
@@ -972,9 +886,9 @@ export default function App() {
 
     if (currentUser && currentUser.username.includes('@')) {
       try {
-        const { data: { user } } = await supabase.auth.getUser();
-        if (user) {
-          const res = await deleteThuongHieu(brandName, user.id);
+        const uId = await getUserId();
+        if (uId) {
+          const res = await deleteThuongHieu(brandName, uId);
           if (res.error) {
             setSyncError({
               table: 'b_thuonghieu',
@@ -999,12 +913,12 @@ export default function App() {
 
     if (currentUser && currentUser.username.includes('@')) {
       try {
-        const { data: { user } } = await supabase.auth.getUser();
-        if (user) {
+        const uId = await getUserId();
+        if (uId) {
           if (oldName !== branch.CHI_NHANH) {
-            await deleteChiNhanh(oldName, user.id);
+            await deleteChiNhanh(oldName, uId);
           }
-          const res = await syncChiNhanh(branch, user.id);
+          const res = await syncChiNhanh(branch, uId);
           if (res.error) {
             setSyncError({
               table: 'b_chinhanh',
@@ -1029,9 +943,9 @@ export default function App() {
 
     if (currentUser && currentUser.username.includes('@')) {
       try {
-        const { data: { user } } = await supabase.auth.getUser();
-        if (user) {
-          const res = await deleteChiNhanh(branchName, user.id);
+        const uId = await getUserId();
+        if (uId) {
+          const res = await deleteChiNhanh(branchName, uId);
           if (res.error) {
             setSyncError({
               table: 'b_chinhanh',
@@ -1056,12 +970,12 @@ export default function App() {
 
     if (currentUser && currentUser.username.includes('@')) {
       try {
-        const { data: { user } } = await supabase.auth.getUser();
-        if (user) {
+        const uId = await getUserId();
+        if (uId) {
           if (oldEmail !== staff.EMAIL) {
-            await deleteNhanVien(oldEmail, user.id);
+            await deleteNhanVien(oldEmail, uId);
           }
-          const res = await syncNhanVien(staff, user.id);
+          const res = await syncNhanVien(staff, uId);
           if (res.error) {
             setSyncError({
               table: 'b_nhanvien',
@@ -1086,9 +1000,9 @@ export default function App() {
 
     if (currentUser && currentUser.username.includes('@')) {
       try {
-        const { data: { user } } = await supabase.auth.getUser();
-        if (user) {
-          const res = await deleteNhanVien(email, user.id);
+        const uId = await getUserId();
+        if (uId) {
+          const res = await deleteNhanVien(email, uId);
           if (res.error) {
             setSyncError({
               table: 'b_nhanvien',
@@ -1123,8 +1037,12 @@ export default function App() {
         branch: found.CHI_NHANH
       });
       
-      // Tự động chuyển tab về trang Trang Chủ mới cho mọi vai trò
-      setActiveTab('HOME');
+      // Tự động chuyển tab về trang sản phẩm/lịch sử nếu tab hiện tại bị khóa do phân quyền của vai trò mới
+      if (found.ROLE === 'NHAN_VIEN') {
+        setActiveTab('TRANSACTION_XUAT');
+      } else {
+        setActiveTab('DASHBOARD');
+      }
     }
   };
 
@@ -1148,67 +1066,51 @@ export default function App() {
           setCurrentUser(cleanUser);
           localStorage.setItem('CURRENT_USER', JSON.stringify(cleanUser));
           
-          // Tự động chuyển hướng về Trang Chủ mới sau khi đăng nhập thành công
-          setActiveTab('HOME');
+          // Tự động chuyển hướng tab phù hợp
+          if (cleanUser.role === 'NHAN_VIEN') {
+            setActiveTab('TRANSACTION_XUAT');
+          } else {
+            setActiveTab('DASHBOARD');
+          }
         }} 
       />
     );
   }
 
   return (
-    <div className="min-h-screen bg-[#f8fafc] text-slate-900 antialiased flex flex-col md:flex-row">
+    <div className="min-h-screen bg-[#f8fafc] text-slate-900 antialiased flex flex-col md:flex-row relative overflow-x-hidden">
       
-      {/* HEADER DI ĐỘNG (HAMBURGER MENU) - Chỉ hiển thị trên thiết bị di động */}
-      <header className="md:hidden bg-[#0f172a] text-white p-4 flex justify-between items-center border-b border-slate-800 z-50 sticky top-0 shrink-0">
-        <div className="flex items-center gap-3">
-          <button
-            onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
-            className="p-1 text-slate-300 hover:text-white focus:outline-hidden cursor-pointer"
-          >
-            {isMobileMenuOpen ? <X className="w-6 h-6" /> : <Menu className="w-6 h-6" />}
-          </button>
-          <div className="flex items-center gap-1.5">
-            <div className="p-1.5 bg-red-600 rounded-lg text-white">
-              <Boxes className="w-4 h-4" />
-            </div>
-            <h1 className="font-sans font-bold text-xs uppercase tracking-wider text-slate-100">
-              Glass Stock Pro
-            </h1>
-          </div>
-        </div>
-
-        {/* NÚT BACK / FORWARD LỊCH SỬ TAB TRÊN DI ĐỘNG */}
-        <div className="flex items-center gap-1 bg-slate-900/60 p-0.5 rounded-lg border border-slate-800">
+      {/* MOBILE HEADER BAR - Chỉ hiển thị trên mobile (ví dụ iPhone 14) */}
+      <div className="md:hidden bg-[#0f172a] text-white h-14 px-4 flex items-center justify-between border-b border-slate-800 shrink-0 sticky top-0 z-30">
+        <div className="flex items-center gap-2.5">
           <button 
-            onClick={handleBackTab}
-            disabled={historyIndex === 0}
-            className={`p-1 rounded-md cursor-pointer transition-all ${historyIndex === 0 ? 'text-slate-600 cursor-not-allowed opacity-40' : 'text-slate-300 hover:text-white hover:bg-slate-850'}`}
-            title="Quay lại tab trước"
+            onClick={() => setMobileMenuOpen(true)}
+            className="p-1.5 hover:bg-slate-800 rounded-lg text-slate-200 focus:outline-hidden"
           >
-            <ChevronLeft className="w-4 h-4" />
+            <Menu className="w-5 h-5" />
           </button>
-          <button 
-            onClick={handleForwardTab}
-            disabled={historyIndex === tabHistory.length - 1}
-            className={`p-1 rounded-md cursor-pointer transition-all ${historyIndex === tabHistory.length - 1 ? 'text-slate-600 cursor-not-allowed opacity-40' : 'text-slate-300 hover:text-white hover:bg-slate-850'}`}
-            title="Tiến tới tab sau"
-          >
-            <ChevronRight className="w-4 h-4" />
-          </button>
+          <span className="font-sans font-bold text-xs uppercase tracking-wider text-slate-100">
+            Glass Stock Pro
+          </span>
         </div>
-      </header>
+        <div className="flex items-center gap-2">
+          <span className="text-[10px] bg-blue-500/20 text-blue-300 font-mono py-1 px-2.5 rounded-full uppercase font-bold tracking-wider">
+            {activeTab === 'TRANSACTION_XUAT' ? 'Xuất Kho' : activeTab === 'TRANSACTION_NHAP' ? 'Nhập Kho' : activeTab === 'DASHBOARD' ? 'Báo Cáo' : activeTab === 'PRODUCT' ? 'Sản Phẩm' : activeTab === 'AUDIT' ? 'Kiểm Kho' : activeTab === 'HISTORY' ? 'Lịch Sử' : 'Danh Mục'}
+          </span>
+        </div>
+      </div>
 
-      {/* OVERLAY TỐI PHỦ KHI MENU MOBILE MỞ */}
-      {isMobileMenuOpen && (
+      {/* BACKDROP OVERLAY - Nhấp để đóng menu trên mobile */}
+      {mobileMenuOpen && (
         <div 
-          className="fixed inset-0 bg-black/50 z-30 md:hidden transition-opacity"
-          onClick={() => setIsMobileMenuOpen(false)}
+          onClick={() => setMobileMenuOpen(false)} 
+          className="fixed inset-0 bg-slate-950/60 backdrop-blur-xs z-40 md:hidden transition-opacity"
         />
       )}
 
-      {/* SIDEBAR DỌC BÊN TRÁI - Nav Tab ở bên trái theo yêu cầu của user, tự động ẩn trên mobile */}
-      <aside className={`fixed md:static inset-y-0 left-0 z-40 w-72 md:w-68 lg:w-72 bg-[#0f172a] text-white shrink-0 flex flex-col border-r border-slate-800 transform md:transform-none transition-transform duration-200 ease-in-out ${
-        isMobileMenuOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0'
+      {/* SIDEBAR DỌC BÊN TRÁI - Sliding Drawer cực mượt trên mobile & Tĩnh trên desktop */}
+      <aside className={`fixed inset-y-0 left-0 z-50 w-72 bg-[#0f172a] text-white shrink-0 flex flex-col border-r border-slate-800 transition-transform duration-300 ease-in-out md:translate-x-0 md:static md:flex ${
+        mobileMenuOpen ? 'translate-x-0' : '-translate-x-full'
       }`}>
         
         {/* LOGO & BRAND */}
@@ -1225,10 +1127,10 @@ export default function App() {
               <p className="text-[9px] text-slate-400 font-mono">Quản Lý Xuất Nhập Tồn Tròng Kính</p>
             </div>
           </div>
-          {/* Nút đóng Sidebar nhanh trên Mobile */}
+          {/* Close button chỉ hiện trên mobile */}
           <button 
-            onClick={() => setIsMobileMenuOpen(false)}
-            className="md:hidden p-1 text-slate-400 hover:text-white cursor-pointer"
+            onClick={() => setMobileMenuOpen(false)}
+            className="md:hidden p-1.5 hover:bg-slate-800 rounded-lg text-slate-400 hover:text-white focus:outline-hidden"
           >
             <X className="w-5 h-5" />
           </button>
@@ -1252,20 +1154,9 @@ export default function App() {
         {/* CÁC TABS ĐIỀU HƯỚNG DỌC (Nav Tab bên trái) */}
         <nav className="flex-1 px-3 space-y-1 overflow-y-auto">
           
-          {/* TAB 0: TRANG CHỦ */}
-          <button
-            onClick={() => changeTab('HOME')}
-            className={`w-full py-2.5 px-3.5 text-xs font-bold rounded-xl transition-all flex items-center gap-2.5 cursor-pointer ${
-              activeTab === 'HOME' ? 'bg-red-600 text-white shadow-md shadow-red-600/15' : 'text-slate-400 hover:text-white hover:bg-slate-800/40'
-            }`}
-          >
-            <HomeIcon className="w-4 h-4 shrink-0 text-slate-300" /> 
-            <span>Trang Chủ</span>
-          </button>
-
           {/* TAB 1: LẬP PHIẾU XUẤT */}
           <button
-            onClick={() => changeTab('TRANSACTION_XUAT')}
+            onClick={() => selectTabOnMobile('TRANSACTION_XUAT')}
             className={`w-full py-2.5 px-3.5 text-xs font-bold rounded-xl transition-all flex items-center gap-2.5 cursor-pointer ${
               activeTab === 'TRANSACTION_XUAT' ? 'bg-red-600 text-white shadow-md shadow-red-600/15' : 'text-slate-400 hover:text-white hover:bg-slate-800/40'
             }`}
@@ -1276,7 +1167,7 @@ export default function App() {
 
           {/* TAB 2: LẬP PHIẾU NHẬP */}
           <button
-            onClick={() => changeTab('TRANSACTION_NHAP')}
+            onClick={() => selectTabOnMobile('TRANSACTION_NHAP')}
             className={`w-full py-2.5 px-3.5 text-xs font-bold rounded-xl transition-all flex items-center gap-2.5 cursor-pointer ${
               activeTab === 'TRANSACTION_NHAP' ? 'bg-red-600 text-white shadow-md shadow-red-600/15' : 'text-slate-400 hover:text-white hover:bg-slate-800/40'
             }`}
@@ -1285,22 +1176,22 @@ export default function App() {
             <span>Lập Phiếu Nhập</span>
           </button>
 
-          {/* TAB 3: DASHBOARD */}
+          {/* TAB 3: BÁO CÁO DOANH THU */}
           {currentUser.role !== 'NHAN_VIEN' && (
             <button
-              onClick={() => changeTab('DASHBOARD')}
+              onClick={() => selectTabOnMobile('DASHBOARD')}
               className={`w-full py-2.5 px-3.5 text-xs font-bold rounded-xl transition-all flex items-center gap-2.5 cursor-pointer ${
                 activeTab === 'DASHBOARD' ? 'bg-red-600 text-white shadow-md shadow-red-600/15' : 'text-slate-400 hover:text-white hover:bg-slate-800/40'
               }`}
             >
               <TrendingUp className="w-4 h-4 shrink-0 text-blue-500" /> 
-              <span>Dashboard</span>
+              <span>Báo Cáo Doanh Thu</span>
             </button>
           )}
 
           {/* TAB 4: QUẢN LÝ SẢN PHẨM */}
           <button
-            onClick={() => changeTab('PRODUCT')}
+            onClick={() => selectTabOnMobile('PRODUCT')}
             className={`w-full py-2.5 px-3.5 text-xs font-bold rounded-xl transition-all flex items-center gap-2.5 cursor-pointer ${
               activeTab === 'PRODUCT' ? 'bg-red-600 text-white shadow-md shadow-red-600/15' : 'text-slate-400 hover:text-white hover:bg-slate-800/40'
             }`}
@@ -1312,7 +1203,7 @@ export default function App() {
           {/* TAB 5: KIỂM KHO */}
           {currentUser.role !== 'NHAN_VIEN' && (
             <button
-              onClick={() => changeTab('AUDIT')}
+              onClick={() => selectTabOnMobile('AUDIT')}
               className={`w-full py-2.5 px-3.5 text-xs font-bold rounded-xl transition-all flex items-center gap-2.5 cursor-pointer ${
                 activeTab === 'AUDIT' ? 'bg-red-600 text-white shadow-md shadow-red-600/15' : 'text-slate-400 hover:text-white hover:bg-slate-800/40'
               }`}
@@ -1324,7 +1215,7 @@ export default function App() {
 
           {/* TAB 6: LỊCH SỬ XUẤT NHẬP */}
           <button
-            onClick={() => changeTab('HISTORY')}
+            onClick={() => selectTabOnMobile('HISTORY')}
             className={`w-full py-2.5 px-3.5 text-xs font-bold rounded-xl transition-all flex items-center gap-2.5 cursor-pointer ${
               activeTab === 'HISTORY' ? 'bg-red-600 text-white shadow-md shadow-red-600/15' : 'text-slate-400 hover:text-white hover:bg-slate-800/40'
             }`}
@@ -1333,34 +1224,10 @@ export default function App() {
             <span>Lịch sử xuất nhập</span>
           </button>
 
-          {/* TAB THÔNG TIN CÁ NHÂN & BẢO MẬT */}
-          <button
-            onClick={() => changeTab('PROFILE')}
-            className={`w-full py-2.5 px-3.5 text-xs font-bold rounded-xl transition-all flex items-center gap-2.5 cursor-pointer ${
-              activeTab === 'PROFILE' ? 'bg-red-600 text-white shadow-md shadow-red-600/15' : 'text-slate-400 hover:text-white hover:bg-slate-800/40'
-            }`}
-          >
-            <UserProfileIcon className="w-4 h-4 shrink-0 text-amber-500" /> 
-            <span>Tài Khoản Của Tôi</span>
-          </button>
-
-          {/* TAB 7: QUẢN LÝ NGƯỜI DÙNG */}
+          {/* TAB 7: CÀI ĐẶT DANH MỤC */}
           {currentUser.role === 'ADMIN' && (
             <button
-              onClick={() => changeTab('USER_MGMT')}
-              className={`w-full py-2.5 px-3.5 text-xs font-bold rounded-xl transition-all flex items-center gap-2.5 cursor-pointer ${
-                activeTab === 'USER_MGMT' ? 'bg-red-600 text-white shadow-md shadow-red-600/15' : 'text-slate-400 hover:text-white hover:bg-slate-800/40'
-              }`}
-            >
-              <UserCheck className="w-4 h-4 shrink-0 text-pink-500" /> 
-              <span>Quản Lý Người Dùng</span>
-            </button>
-          )}
-
-          {/* TAB 8: CÀI ĐẶT DANH MỤC */}
-          {currentUser.role === 'ADMIN' && (
-            <button
-              onClick={() => changeTab('CATEGORY')}
+              onClick={() => selectTabOnMobile('CATEGORY')}
               className={`w-full py-2.5 px-3.5 text-xs font-bold rounded-xl transition-all flex items-center gap-2.5 cursor-pointer ${
                 activeTab === 'CATEGORY' ? 'bg-red-600 text-white shadow-md shadow-red-600/15' : 'text-slate-400 hover:text-white hover:bg-slate-800/40'
               }`}
@@ -1431,53 +1298,6 @@ export default function App() {
       {/* KHU VỰC CHÍNH BÊN PHẢI (MAIN CONTENT AREA) */}
       <div className="flex-1 flex flex-col min-w-0 h-screen overflow-hidden">
         
-        {/* HEADER DESKTOP (NAVIGATION HELPERS) - Chỉ hiển thị trên Desktop */}
-        <header className="hidden md:flex bg-white border-b border-slate-100 py-3.5 px-6 items-center justify-between shrink-0 shadow-2xs">
-          <div className="flex items-center gap-3">
-            <div className="flex items-center gap-1 bg-slate-50 p-0.5 rounded-lg border border-slate-100">
-              <button 
-                onClick={handleBackTab}
-                disabled={historyIndex === 0}
-                className={`p-1 rounded-md cursor-pointer transition-all ${historyIndex === 0 ? 'text-slate-300 cursor-not-allowed opacity-40' : 'text-slate-600 hover:text-slate-900 hover:bg-white hover:shadow-2xs'}`}
-                title="Quay lại tab trước"
-              >
-                <ChevronLeft className="w-4 h-4" />
-              </button>
-              <button 
-                onClick={handleForwardTab}
-                disabled={historyIndex === tabHistory.length - 1}
-                className={`p-1 rounded-md cursor-pointer transition-all ${historyIndex === tabHistory.length - 1 ? 'text-slate-300 cursor-not-allowed opacity-40' : 'text-slate-600 hover:text-slate-900 hover:bg-white hover:shadow-2xs'}`}
-                title="Tiến tới tab sau"
-              >
-                <ChevronRight className="w-4 h-4" />
-              </button>
-            </div>
-            <div className="h-4 w-px bg-slate-200" />
-            <span className="text-xs font-bold text-slate-400 uppercase tracking-wider font-mono">
-              Phân hệ: <span className="text-slate-800 font-sans normal-case">
-                {activeTab === 'HOME' ? 'Trang Chủ' : 
-                 activeTab === 'TRANSACTION_XUAT' ? 'Lập Phiếu Xuất Kho' : 
-                 activeTab === 'TRANSACTION_NHAP' ? 'Lập Phiếu Nhập Kho' : 
-                 activeTab === 'DASHBOARD' ? 'Dashboard Thống Kê' : 
-                 activeTab === 'PRODUCT' ? 'Quản Lý Sản Phẩm' : 
-                 activeTab === 'AUDIT' ? 'Kiểm Kê Kho' : 
-                 activeTab === 'HISTORY' ? 'Lịch Sử Xuất Nhập' : 
-                 activeTab === 'PROFILE' ? 'Tài Khoản & Bảo Mật' : 
-                 activeTab === 'USER_MGMT' ? 'Quản Lý Người Dùng & Phân Quyền' : 
-                 activeTab === 'CATEGORY' ? 'Cài Đặt Danh Mục' : activeTab}
-              </span>
-            </span>
-          </div>
-          
-          <div className="flex items-center gap-2">
-            <span className="text-[10px] bg-blue-50/80 text-blue-600 font-bold px-2.5 py-1 rounded-full uppercase border border-blue-100/50">
-              {currentUser.role === 'ADMIN' ? 'Quản trị viên' : currentUser.role === 'KHO' ? 'Thủ kho' : 'Nhân viên'}
-            </span>
-            <span className="text-xs text-slate-300 font-medium">|</span>
-            <span className="text-xs text-slate-500 font-semibold">{currentUser.branch}</span>
-          </div>
-        </header>
-
         {/* THANH THÔNG BÁO CẢNH BÁO TỒN KHO THẤP */}
         <AnimatePresence>
           {lowStockAlerts.length > 0 && showNotificationBanner && (
@@ -1485,7 +1305,7 @@ export default function App() {
               initial={{ height: 0, opacity: 0 }}
               animate={{ height: 'auto', opacity: 1 }}
               exit={{ height: 0, opacity: 0 }}
-              className="bg-red-50 border-b border-red-100 px-4 py-2 text-xs flex items-center justify-between gap-3 text-red-700 shrink-0 animate-fade-in"
+              className="bg-red-50 border-b border-red-100 px-4 py-2 text-xs flex items-center justify-between gap-3 text-red-700 shrink-0"
             >
               <div className="flex items-center gap-2 font-medium">
                 <AlertTriangle className="w-4 h-4 text-red-500 animate-bounce shrink-0" />
@@ -1556,14 +1376,6 @@ export default function App() {
               transition={{ duration: 0.15 }}
               className="h-full"
             >
-              {activeTab === 'HOME' && (
-                <Home 
-                  currentUser={currentUser}
-                  setActiveTab={changeTab}
-                  lowStockCount={lowStockAlerts.length}
-                />
-              )}
-
               {activeTab === 'DASHBOARD' && currentUser.role !== 'NHAN_VIEN' && (
                 <Dashboard 
                   sanPhams={sanPhams}
@@ -1578,8 +1390,7 @@ export default function App() {
                   currentUser={currentUser}
                   sanPhams={sanPhams}
                   onAddProduct={handleAddProduct}
-                  thuongHieus={thuongHieus}
-                  onUpdateMinStock={handleUpdateMinStock}
+                  thuongHieus={listBrandNames}
                 />
               )}
 
@@ -1588,10 +1399,10 @@ export default function App() {
                   currentUser={currentUser}
                   sanPhams={sanPhams}
                   chiNhanhs={listBranchNames}
-                  thuongHieus={thuongHieus}
+                  thuongHieus={listBrandNames}
                   loaiPhieuMacDinh="XUẤT"
                   onSaveTransaction={handleSaveTransaction}
-                  onNavigateToHistory={() => changeTab('HISTORY')}
+                  onNavigateToHistory={() => setActiveTab('HISTORY')}
                 />
               )}
 
@@ -1600,10 +1411,10 @@ export default function App() {
                   currentUser={currentUser}
                   sanPhams={sanPhams}
                   chiNhanhs={listBranchNames}
-                  thuongHieus={thuongHieus}
+                  thuongHieus={listBrandNames}
                   loaiPhieuMacDinh="NHẬP"
                   onSaveTransaction={handleSaveTransaction}
-                  onNavigateToHistory={() => changeTab('HISTORY')}
+                  onNavigateToHistory={() => setActiveTab('HISTORY')}
                 />
               )}
 
@@ -1612,7 +1423,6 @@ export default function App() {
                   currentUser={currentUser}
                   sanPhams={sanPhams}
                   kiemKhos={kiemKhos}
-                  thuongHieus={thuongHieus}
                   onSaveAudit={handleSaveAudit}
                 />
               )}
@@ -1633,34 +1443,6 @@ export default function App() {
                 />
               )}
 
-              {activeTab === 'PROFILE' && (
-                <UserProfile 
-                  currentUser={currentUser}
-                  nhanViens={nhanViens}
-                  onUpdateNhanVien={handleUpdateNhanVien}
-                  onUpdateCurrentUser={setCurrentUser}
-                />
-              )}
-
-              {activeTab === 'USER_MGMT' && currentUser.role === 'ADMIN' && (
-                <CategoryManagement 
-                  currentUser={currentUser}
-                  thuongHieus={thuongHieus}
-                  chiNhanhs={chiNhanhs}
-                  nhanViens={nhanViens}
-                  onAddThuongHieu={handleAddThuongHieu}
-                  onAddChiNhanh={handleAddChiNhanh}
-                  onAddNhanVien={handleAddNhanVien}
-                  onUpdateThuongHieu={handleUpdateThuongHieu}
-                  onDeleteThuongHieu={handleDeleteThuongHieu}
-                  onUpdateChiNhanh={handleUpdateChiNhanh}
-                  onDeleteChiNhanh={handleDeleteChiNhanh}
-                  onUpdateNhanVien={handleUpdateNhanVien}
-                  onDeleteNhanVien={handleDeleteNhanVien}
-                  onlyStaff={true}
-                />
-              )}
-
               {activeTab === 'CATEGORY' && currentUser.role === 'ADMIN' && (
                 <CategoryManagement 
                   currentUser={currentUser}
@@ -1676,7 +1458,6 @@ export default function App() {
                   onDeleteChiNhanh={handleDeleteChiNhanh}
                   onUpdateNhanVien={handleUpdateNhanVien}
                   onDeleteNhanVien={handleDeleteNhanVien}
-                  onlyStaff={false}
                 />
               )}
 
@@ -1688,7 +1469,7 @@ export default function App() {
         </main>
 
         {/* FOOTER CHUYÊN NGHIỆP */}
-        <footer className="bg-white border-t border-[#e2e8f0] py-3 text-center text-[10px] text-[#64748b] shrink-0 font-medium shadow-[0_-1px_3px_rgba(0,0,0,0.02)] mb-16 md:mb-0">
+        <footer className="bg-white border-t border-[#e2e8f0] py-3 text-center text-[10px] text-[#64748b] shrink-0 font-medium shadow-[0_-1px_3px_rgba(0,0,0,0.02)]">
           <p className="flex items-center justify-center gap-1.5">
             <span>© 2026 Glass Stock Pro. Thiết kế & vận hành bởi Nguyễn Kiến Đức.</span>
             <span className="text-slate-300">|</span>
@@ -1696,86 +1477,77 @@ export default function App() {
           </p>
         </footer>
 
-        {/* THANH ĐIỀU HƯỚNG BOTTOM CHO MOBILE (One-Hand Operation) */}
-        <div className="fixed bottom-0 left-0 right-0 bg-[#0f172a] text-white border-t border-slate-800 z-50 md:hidden flex justify-around items-center h-16 shadow-2xl px-2">
-          <button
-            onClick={() => changeTab('HOME')}
-            className={`flex flex-col items-center justify-center flex-1 py-1 h-full transition-colors ${
-              activeTab === 'HOME' ? 'text-red-500' : 'text-slate-400 hover:text-slate-200'
-            }`}
-          >
-            <HomeIcon className="w-5 h-5" />
-            <span className="text-[10px] font-bold mt-1">Trang chủ</span>
-          </button>
-          
-          <button
-            onClick={() => changeTab('TRANSACTION_XUAT')}
-            className={`flex flex-col items-center justify-center flex-1 py-1 h-full transition-colors ${
-              activeTab === 'TRANSACTION_XUAT' ? 'text-rose-500' : 'text-slate-400'
-            }`}
-          >
-            <TrendingDown className="w-5 h-5" />
-            <span className="text-[10px] font-bold mt-1">Lập Xuất</span>
-          </button>
-          
-          <button
-            onClick={() => changeTab('TRANSACTION_NHAP')}
-            className={`flex flex-col items-center justify-center flex-1 py-1 h-full transition-colors ${
-              activeTab === 'TRANSACTION_NHAP' ? 'text-emerald-500' : 'text-slate-400'
-            }`}
-          >
-            <TrendingUp className="w-5 h-5" />
-            <span className="text-[10px] font-bold mt-1">Lập Nhập</span>
-          </button>
-          
-          <button
-            onClick={() => changeTab('PRODUCT')}
-            className={`flex flex-col items-center justify-center flex-1 py-1 h-full transition-colors ${
-              activeTab === 'PRODUCT' ? 'text-amber-500' : 'text-slate-400'
-            }`}
-          >
-            <Boxes className="w-5 h-5" />
-            <span className="text-[10px] font-bold mt-1">Sản phẩm</span>
-          </button>
-          
-          <button
-            onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
-            className={`flex flex-col items-center justify-center flex-1 py-1 h-full transition-colors ${
-              isMobileMenuOpen ? 'text-blue-500' : 'text-slate-400 hover:text-slate-200'
-            }`}
-          >
-            <Menu className="w-5 h-5" />
-            <span className="text-[10px] font-bold mt-1">Menu</span>
-          </button>
+        {/* MOBILE BOTTOM NAVIGATION - Cố định ở cuối màn hình */}
+        <div className="fixed bottom-0 left-0 right-0 z-40 bg-[#0f172a] border-t border-slate-800 md:hidden flex items-center justify-around h-16 px-1 shadow-[0_-4px_12px_rgba(0,0,0,0.15)] pb-safe">
+          {[
+            {
+              tab: currentUser.role === 'NHAN_VIEN' ? 'TRANSACTION_XUAT' : 'DASHBOARD',
+              label: 'Home',
+              icon: Home
+            },
+            {
+              tab: 'PRODUCT',
+              label: 'Sản phẩm',
+              icon: Boxes
+            },
+            {
+              tab: 'TRANSACTION_NHAP',
+              label: 'Nhập Kho',
+              icon: TrendingUp,
+              hidden: currentUser.role === 'NHAN_VIEN'
+            },
+            {
+              tab: 'TRANSACTION_XUAT',
+              label: 'Xuất Kho',
+              icon: TrendingDown
+            },
+            {
+              tab: 'HISTORY',
+              label: 'Lịch sử',
+              icon: History
+            }
+          ].filter(item => !item.hidden).map((item) => {
+            const Icon = item.icon;
+            const isActive = activeTab === item.tab || (item.label === 'Home' && (activeTab === 'DASHBOARD' || (currentUser.role === 'NHAN_VIEN' && activeTab === 'TRANSACTION_XUAT')));
+            return (
+              <button
+                key={item.tab}
+                onClick={() => selectTabOnMobile(item.tab as any)}
+                className="flex-1 h-full flex flex-col items-center justify-center gap-1 cursor-pointer transition-colors"
+              >
+                <div className={`p-1.5 rounded-xl transition-all ${
+                  isActive ? 'bg-red-600 text-white shadow-md scale-110' : 'text-slate-400'
+                }`}>
+                  <Icon className="w-5 h-5 shrink-0" />
+                </div>
+                <span className={`text-[9px] font-bold ${
+                  isActive ? 'text-red-500' : 'text-slate-400'
+                }`}>
+                  {item.label}
+                </span>
+              </button>
+            );
+          })}
         </div>
 
-        {/* THÔNG BÁO THÀNH CÔNG/TOAST TRUNG TÂM (Aesthetic Toast/Modal) */}
+        {/* TOAST/MODAL THÀNH CÔNG Ở CHÍNH GIỮA MÀN HÌNH */}
         <AnimatePresence>
-          {globalToast.show && (
-            <div className="fixed inset-0 flex items-center justify-center z-50 p-4 bg-slate-900/45 backdrop-blur-xs pointer-events-none">
+          {successToast && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-xs pointer-events-none">
               <motion.div
-                initial={{ opacity: 0, scale: 0.9, y: 15 }}
-                animate={{ opacity: 1, scale: 1, y: 0 }}
-                exit={{ opacity: 0, scale: 0.95, y: -10 }}
-                transition={{ type: 'spring', damping: 25, stiffness: 380 }}
-                className="bg-white rounded-2xl p-6 shadow-2xl border border-slate-100 flex flex-col items-center text-center max-w-sm w-full pointer-events-auto"
+                initial={{ scale: 0.85, opacity: 0 }}
+                animate={{ scale: 1, opacity: 1 }}
+                exit={{ scale: 0.85, opacity: 0 }}
+                transition={{ type: 'spring', damping: 20, stiffness: 300 }}
+                className="bg-[#0f172a] text-white p-6 rounded-2xl shadow-2xl flex flex-col items-center gap-3.5 max-w-sm pointer-events-auto border border-emerald-500/30 text-center"
               >
-                <div className="w-12 h-12 bg-emerald-50 rounded-full flex items-center justify-center text-emerald-500 mb-4 border border-emerald-100">
-                  <CheckCircle className="w-6 h-6 animate-pulse" />
+                <div className="w-12 h-12 rounded-full bg-emerald-500/10 text-emerald-400 flex items-center justify-center border border-emerald-500/20">
+                  <CheckCircle className="w-7 h-7" />
                 </div>
-                <h3 className="font-sans font-extrabold text-slate-950 text-sm mb-1 uppercase tracking-wide">
-                  {globalToast.title}
-                </h3>
-                <p className="text-slate-500 text-xs leading-relaxed font-semibold">
-                  {globalToast.message}
-                </p>
-                
-                <button 
-                  onClick={() => setGlobalToast(prev => ({ ...prev, show: false }))}
-                  className="mt-4 text-[10px] font-extrabold text-slate-400 hover:text-slate-600 uppercase tracking-wider cursor-pointer"
-                >
-                  Đóng nhanh
-                </button>
+                <div>
+                  <h4 className="font-bold text-sm text-slate-100">Thao tác thành công!</h4>
+                  <p className="text-xs text-slate-400 mt-1 leading-relaxed font-medium">{successToast.message}</p>
+                </div>
               </motion.div>
             </div>
           )}

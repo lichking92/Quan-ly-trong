@@ -30,10 +30,49 @@ export interface UserDataPayload {
 /**
  * Kiểm tra xem tài khoản đã có dữ liệu chưa, nếu chưa thì tự động Onboard nạp dữ liệu mẫu
  */
+export async function tryCreateColumnsOnSupabase() {
+  try {
+    // Thử tự động thêm cột TEN_DANG_NHAP và MAT_KHAU qua rpc 'exec_sql' nếu có
+    const sql = `
+      ALTER TABLE b_nhanvien ADD COLUMN IF NOT EXISTS "TEN_DANG_NHAP" text;
+      ALTER TABLE b_nhanvien ADD COLUMN IF NOT EXISTS "MAT_KHAU" text;
+    `;
+    await supabase.rpc('exec_sql', { sql });
+    console.log("Đã kích hoạt cố gắng tạo cột TEN_DANG_NHAP, MAT_KHAU qua exec_sql");
+  } catch (err) {
+    // Không ném lỗi ra ngoài vì có thể user chưa thiết lập RPC, chúng ta vẫn log cảnh báo bình thường
+    console.warn("Cố gắng thêm cột tự động qua exec_sql không khả thi (người dùng chưa cấu hình RPC):", err);
+  }
+  try {
+    const sql = `
+      ALTER TABLE b_nhanvien ADD COLUMN IF NOT EXISTS "TEN_DANG_NHAP" text;
+      ALTER TABLE b_nhanvien ADD COLUMN IF NOT EXISTS "MAT_KHAU" text;
+    `;
+    await supabase.rpc('run_sql', { sql_string: sql });
+    console.log("Đã kích hoạt cố gắng tạo cột TEN_DANG_NHAP, MAT_KHAU qua run_sql");
+  } catch (err) {
+    console.warn("Cố gắng thêm cột tự động qua run_sql không khả thi:", err);
+  }
+}
+
 export async function ensureUserOnboarded(userId: string): Promise<UserDataPayload> {
   try {
-    // 1. Tự động kiểm tra và thêm tài khoản đăng nhập hiện tại làm Admin chính nếu chưa có trong b_nhanvien
-    const { data: { user } } = await supabase.auth.getUser();
+    // 1. Cố gắng tự động tạo cột trên Supabase (nếu chưa có)
+    await tryCreateColumnsOnSupabase();
+
+    // 2. Tự động kiểm tra và thêm tài khoản đăng nhập hiện tại làm Admin chính nếu chưa có trong b_nhanvien
+    let user = null;
+    const { data: { session } } = await supabase.auth.getSession();
+    if (session?.user) {
+      user = session.user;
+    } else {
+      try {
+        const { data: { user: authUser } } = await supabase.auth.getUser();
+        user = authUser;
+      } catch (err) {
+        console.warn('Không thể lấy thông tin user từ auth.getUser:', err);
+      }
+    }
     if (user && user.email) {
       const email = user.email;
       const { data: existingStaff } = await supabase
@@ -52,10 +91,6 @@ export async function ensureUserOnboarded(userId: string): Promise<UserDataPaylo
           "CHI_NHANH": "Kho Trung Tâm",
           "EMAIL": email,
           "ROLE": "ADMIN",
-          "TEN_DANG_NHAP": email.split('@')[0],
-          "MAT_KHAU": "123456",
-          "USERNAME": email.split('@')[0],
-          "PASSWORD": "123456",
           "PERMISSIONS": ["DASHBOARD", "PRODUCT", "TRANSACTION", "HISTORY", "AUDIT", "CATEGORY"],
           "WRITE_ACCESS": true,
           user_id: userId
@@ -101,12 +136,8 @@ export async function ensureUserOnboarded(userId: string): Promise<UserDataPaylo
             "CHUC_VU": n.CHUC_VU,
             "BO_PHAN": n.BO_PHAN,
             "CHI_NHANH": n.CHI_NHANH,
-            "EMAIL": n.EMAIL || '',
+            "EMAIL": n.EMAIL,
             "ROLE": n.ROLE,
-            "TEN_DANG_NHAP": n.TEN_DANG_NHAP || n.USERNAME || '',
-            "MAT_KHAU": n.MAT_KHAU || n.PASSWORD || '123456',
-            "USERNAME": n.TEN_DANG_NHAP || n.USERNAME || '',
-            "PASSWORD": n.MAT_KHAU || n.PASSWORD || '123456',
             "PERMISSIONS": n.PERMISSIONS,
             "WRITE_ACCESS": n.WRITE_ACCESS,
             user_id: userId
@@ -287,14 +318,12 @@ export async function fetchAllUserData(userId: string): Promise<UserDataPayload>
     CHUC_VU: item.CHUC_VU,
     BO_PHAN: item.BO_PHAN,
     CHI_NHANH: item.CHI_NHANH,
-    EMAIL: item.EMAIL || '',
+    EMAIL: item.EMAIL,
     ROLE: item.ROLE,
-    TEN_DANG_NHAP: item.TEN_DANG_NHAP || item.USERNAME || '',
-    MAT_KHAU: item.MAT_KHAU || item.PASSWORD || '',
-    USERNAME: item.TEN_DANG_NHAP || item.USERNAME || '',
-    PASSWORD: item.MAT_KHAU || item.PASSWORD || '',
     PERMISSIONS: item.PERMISSIONS || [],
-    WRITE_ACCESS: item.WRITE_ACCESS ?? false
+    WRITE_ACCESS: item.WRITE_ACCESS ?? false,
+    TEN_DANG_NHAP: item.TEN_DANG_NHAP || '',
+    MAT_KHAU: item.MAT_KHAU || ''
   }));
 
   return {
@@ -454,22 +483,58 @@ export async function syncChiNhanh(c: ChiNhanh, userId: string) {
  * Đồng bộ Nhân viên
  */
 export async function syncNhanVien(n: NhanVien, userId: string) {
-  const res = await supabase.from('b_nhanvien').upsert({
-    "MA_NV": n.MA_NV,
-    "HO_TEN": n.HO_TEN,
-    "CHUC_VU": n.CHUC_VU,
-    "BO_PHAN": n.BO_PHAN,
-    "CHI_NHANH": n.CHI_NHANH,
-    "EMAIL": n.EMAIL || '',
-    "ROLE": n.ROLE,
-    "TEN_DANG_NHAP": n.TEN_DANG_NHAP,
-    "MAT_KHAU": n.MAT_KHAU,
-    "PERMISSIONS": n.PERMISSIONS,
-    "WRITE_ACCESS": n.WRITE_ACCESS,
-    user_id: userId
-  }, { onConflict: 'MA_NV,user_id' });
-  if (res.error) console.error("Lỗi syncNhanVien:", res.error);
-  return res;
+  try {
+    const payload = {
+      "MA_NV": n.MA_NV,
+      "HO_TEN": n.HO_TEN,
+      "CHUC_VU": n.CHUC_VU,
+      "BO_PHAN": n.BO_PHAN,
+      "CHI_NHANH": n.CHI_NHANH,
+      "EMAIL": n.EMAIL || '',
+      "ROLE": n.ROLE,
+      "PERMISSIONS": n.PERMISSIONS,
+      "WRITE_ACCESS": n.WRITE_ACCESS,
+      "TEN_DANG_NHAP": n.TEN_DANG_NHAP || '',
+      "MAT_KHAU": n.MAT_KHAU || '',
+      user_id: userId
+    };
+
+    // Kiểm tra xem dòng nhân viên này đã tồn tại trong DB chưa
+    const { data: existing, error: checkError } = await supabase
+      .from('b_nhanvien')
+      .select('MA_NV')
+      .eq('MA_NV', n.MA_NV)
+      .eq('user_id', userId)
+      .maybeSingle();
+
+    if (checkError) {
+      console.warn("Lỗi kiểm tra b_nhanvien tồn tại:", checkError.message);
+    }
+
+    let res;
+    if (existing) {
+      // Đã có -> Cập nhật
+      res = await supabase
+        .from('b_nhanvien')
+        .update(payload)
+        .eq('MA_NV', n.MA_NV)
+        .eq('user_id', userId)
+        .select();
+      if (res.error) console.error("Lỗi syncNhanVien (update):", res.error);
+    } else {
+      // Chưa có -> Thêm mới
+      res = await supabase
+        .from('b_nhanvien')
+        .insert(payload)
+        .select();
+      if (res.error) console.error("Lỗi syncNhanVien (insert):", res.error);
+    }
+
+    return res;
+  } catch (err: any) {
+    console.error("Lỗi ngoài dự kiến trong syncNhanVien:", err);
+    return { error: err };
+  }
 }
 
 /**
@@ -506,8 +571,8 @@ export async function deleteChiNhanh(chiNhanh: string, userId: string) {
 /**
  * Xóa Nhân viên
  */
-export async function deleteNhanVien(maNv: string, userId: string) {
-  const res = await supabase.from('b_nhanvien').delete().eq('MA_NV', maNv).eq('user_id', userId);
+export async function deleteNhanVien(email: string, userId: string) {
+  const res = await supabase.from('b_nhanvien').delete().eq('EMAIL', email).eq('user_id', userId);
   if (res.error) console.error("Lỗi deleteNhanVien:", res.error);
   return res;
 }

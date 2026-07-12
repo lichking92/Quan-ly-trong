@@ -22,34 +22,33 @@ import {
   Info,
   CheckCircle,
   Clock,
-  Search,
-  ShoppingCart,
-  Building,
-  Tag
+  ShoppingBag,
+  ListPlus
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { SanPham, NhapXuat, NhapXuatCT, LoaiPhieu, User as UserType, ThươngHieu } from '../types';
-import { generateSKUString, formatDop } from '../data/mockData';
+import { SanPham, NhapXuat, NhapXuatCT, LoaiPhieu, User as UserType } from '../types';
+import { generateSKUString, formatDop, getVietnamDateString, getVietnamDateTimeString } from '../data/mockData';
 
 /**
  * FILE: TransactionForm.tsx
  * TÁC GIẢ: Lão làng Lập trình Hệ thống (30+ năm kinh nghiệm)
- * MÔ TẢ: Xử lý nghiệp vụ lập phiếu Nhập kho / Xuất kho bằng mô hình Wizard 3 bước chuyên nghiệp.
- *        - Bước 1: Khai báo thông tin phiếu (Ngày lập, người lập, chi nhánh, ghi chú).
- *        - Bước 2: Thiết lập chi tiết danh sách sản phẩm (Giỏ hàng, nhập số lượng, kiểm soát lỗi xuất âm kho Rule 1).
- *        - Bước 3: Xác nhận tổng hợp và Lưu phiếu.
+ * MÔ TẢ: Xử lý nghiệp vụ lập phiếu Nhập kho / Xuất kho.
+ *        Tự động tính toán SKU, truy vấn tồn hiện tại trong kho theo thời gian thực,
+ *        kiểm soát lỗi xuất âm kho cực kỳ nghiêm ngặt (Rule 1), và đồng bộ giỏ hàng chờ xác nhận.
  */
 
 interface TransactionFormProps {
   currentUser: UserType;
   sanPhams: SanPham[];
   chiNhanhs: string[];
-  thuongHieus: ThươngHieu[];
+  thuongHieus: string[];
   loaiPhieuMacDinh: 'NHẬP' | 'XUẤT';
   onSaveTransaction: (header: NhapXuat, details: NhapXuatCT[]) => void;
   onNavigateToHistory: () => void;
+  onTriggerToast?: (message: string) => void;
 }
 
+// Kiểu dữ liệu tạm thời cho dòng sản phẩm trong giỏ hàng chờ xác nhận
 interface CartItem {
   id: string;
   sku: string;
@@ -71,28 +70,36 @@ export default function TransactionForm({
   thuongHieus,
   loaiPhieuMacDinh,
   onSaveTransaction,
-  onNavigateToHistory
+  onNavigateToHistory,
+  onTriggerToast
 }: TransactionFormProps) {
   
-  // --- 1. TRẠNG THÁI WIZARD ---
-  const [currentStep, setCurrentStep] = useState<number>(1);
-  const [errorMsg, setErrorMsg] = useState<string>('');
-  const [successMsg, setSuccessMsg] = useState<string>('');
-
-  // --- 2. THÔNG TIN CHỨNG TỪ (BƯỚC 1) ---
+  // --- 1. THÔNG TIN CHỨNG TỪ (BẢNG 1) ---
   const [loaiPhieu, setLoaiPhieu] = useState<LoaiPhieu>(loaiPhieuMacDinh);
-  const [selectedBranch, setSelectedBranch] = useState<string>(currentUser.branch || chiNhanhs[0] || 'Kho Trung Tâm');
-  const [ngayLap, setNgayLap] = useState<string>(new Date().toISOString().split('T')[0]);
+  const [selectedBranch, setSelectedBranch] = useState<string>('');
+  const [ngayLap, setNgayLap] = useState<string>(getVietnamDateString());
   const [ghiChuPhieu, setGhiChuPhieu] = useState<string>('');
+
+  // Trạng thái đáp ứng Mobile Onboarding Step-by-Step
+  const [isMobile, setIsMobile] = useState<boolean>(false);
+  const [currentStep, setCurrentStep] = useState<number>(1);
+  const [toastPending, setToastPending] = useState<{ message: string } | null>(null);
+
+  useEffect(() => {
+    const checkMobile = () => {
+      setIsMobile(window.innerWidth < 768);
+    };
+    checkMobile();
+    window.addEventListener('resize', checkMobile);
+    return () => window.removeEventListener('resize', checkMobile);
+  }, []);
 
   // Đồng bộ loại phiếu khi props thay đổi
   useEffect(() => {
     setLoaiPhieu(loaiPhieuMacDinh);
-    setCurrentStep(1); // Trở về bước 1 khi chuyển tab nhập/xuất để người dùng khai báo lại
-    setCart([]);
   }, [loaiPhieuMacDinh]);
 
-  // --- 3. THÔNG TIN CHỌN SẢN PHẨM (BƯỚC 2) ---
+  // --- 2. THÔNG TIN CHỌN SẢN PHẨM (BẢNG 2) ---
   const [selectBrand, setSelectBrand] = useState<string>('Blick');
   const [selectChietXuat, setSelectChietXuat] = useState<string>('1.56');
   const [selectTinhNang, setSelectTinhNang] = useState<string>('ĐM');
@@ -107,40 +114,18 @@ export default function TransactionForm({
   const [isBarcodeMode, setIsBarcodeMode] = useState<boolean>(false);
   const [barcodeInput, setBarcodeInput] = useState<string>('');
   
-  // Giỏ hàng chờ xác nhận
+  // Trạng thái báo lỗi và giỏ hàng chờ xác nhận (Bảng 3)
+  const [errorMsg, setErrorMsg] = useState<string>('');
+  const [successMsg, setSuccessMsg] = useState<string>('');
   const [cart, setCart] = useState<CartItem[]>([]);
 
-  // --- 3.5 DYNAMIC AVAILABLE FEATURES MEMO ---
-  const activeBrandObj = useMemo(() => {
-    return thuongHieus.find(t => t.THUONG_HIEU === selectBrand);
-  }, [thuongHieus, selectBrand]);
-
-  const availableFeatures = useMemo(() => {
-    if (activeBrandObj?.TINH_NANG_LIST && activeBrandObj.TINH_NANG_LIST.length > 0) {
-      return activeBrandObj.TINH_NANG_LIST;
-    }
-    return [activeBrandObj?.TINH_NANG_MAC_DINH || 'ASX'];
-  }, [activeBrandObj]);
-
-  // --- 4. QUY TẮC NGHIỆP VỤ - ĐỒNG BỘ CHIẾT XUẤT VÀ TÍNH NĂNG THEO THƯƠNG HIỆU ---
+  // --- 3. QUY TẮC NGHIỆP VỤ - ĐỒNG BỘ CHIẾT XUẤT VÀ TÍNH NĂNG THEO THƯƠNG HIỆU ---
   const handleBrandChange = (brand: string) => {
     setSelectBrand(brand);
     
-    // Tìm đối tượng thương hiệu tương ứng
-    const brandObj = thuongHieus.find(t => t.THUONG_HIEU === brand);
-    
-    // Rule 1: Nếu Thương hiệu có danh sách tính năng riêng biệt, chọn tính năng đầu tiên hoặc mặc định, ngược lại dùng fallback
-    let newTinhNang = 'ASX';
-    if (brandObj) {
-      if (brandObj.TINH_NANG_LIST && brandObj.TINH_NANG_LIST.length > 0) {
-        newTinhNang = brandObj.TINH_NANG_LIST[0];
-      } else {
-        newTinhNang = brandObj.TINH_NANG_MAC_DINH || 'ASX';
-      }
-    } else {
-      const isDM = ['Blick', 'Element', 'Nikki'].includes(brand);
-      newTinhNang = isDM ? 'ĐM' : 'ASX';
-    }
+    // Rule 1: Nếu Thương hiệu là Blick, Element, Nikki thì TÍNH NĂNG sẽ là ĐM. Còn lại sẽ là ASX.
+    const isDM = ['Blick', 'Element', 'Nikki'].includes(brand);
+    const newTinhNang = isDM ? 'ĐM' : 'ASX';
     setSelectTinhNang(newTinhNang);
 
     // Rule 2: Nếu Thương hiệu là Blick, Zeiss Clear, Essilor Pre, Essilor Rock thì Chiết suất là 1.56.
@@ -150,7 +135,7 @@ export default function TransactionForm({
     } else if (brand === 'Zeiss Blue') {
       setSelectChietXuat('1.60');
     } else {
-      setSelectChietXuat(brandObj?.CHIET_XUAT_MAC_DINH || '1.61');
+      setSelectChietXuat('1.61');
     }
   };
 
@@ -186,9 +171,10 @@ export default function TransactionForm({
     return opts;
   }, []);
 
-  // --- 5. TÍNH SKU VÀ TRUY VẤN TỒN KHO THỜI GIAN THỰC ---
+  // --- 4. TÍNH SKU VÀ TRUY VẤN TỒN KHO THỜI GIAN THỰC ---
   const calculatedSKU = useMemo(() => {
     if (isBarcodeMode) {
+      // Ở chế độ barcode, chúng ta dùng trực tiếp barcode input làm SKU
       return barcodeInput.trim().toUpperCase();
     }
     return generateSKUString(selectBrand, selectChietXuat, selectTinhNang, selectDoSph, selectDoCyl);
@@ -204,18 +190,19 @@ export default function TransactionForm({
   const calculatedProductName = useMemo(() => {
     if (matchedProductInDB) return matchedProductInDB.TEN_SAN_PHAM;
     
+    // Nếu chưa tồn tại trong DB, dựng tên tự động
     const labelTinhNang = selectTinhNang === 'ĐM' ? 'Đổi màu' : 'Lọc ánh sáng xanh';
     const labelDo = selectDoSphType === 'CẬN' ? `Cận ${formatDop(selectDoSph)}` : `Viễn ${formatDop(selectDoSph)}`;
     const labelCyl = selectDoCyl !== 0 ? ` Loạn ${formatDop(selectDoCyl)}` : '';
     return `Tròng kính ${labelTinhNang} ${selectBrand} ${selectChietXuat} ${labelDo}${labelCyl}`;
   }, [matchedProductInDB, selectBrand, selectChietXuat, selectTinhNang, selectDoSph, selectDoCyl, selectDoSphType]);
 
-  // --- 6. TÍNH TỔNG SỐ LƯỢNG GIỎ HÀNG ---
+  // --- 5. TÍNH TỔNG SỐ LƯỢNG GIỎ HÀNG (BẢNG 3) ---
   const totalCartQty = useMemo(() => {
     return cart.reduce((sum, item) => sum + item.soLuong, 0);
   }, [cart]);
 
-  // --- 7. XỬ LÝ QUÉT MÃ BARCODE GIẢ LẬP NHANH ---
+  // --- 6. XỬ LÝ QUÉT MÃ BARCODE GIẢ LẬP NHANH ---
   const handleApplyBarcode = () => {
     if (!barcodeInput.trim()) return;
     const skuToFind = barcodeInput.trim().toUpperCase();
@@ -229,7 +216,7 @@ export default function TransactionForm({
       setSelectDoCyl(found.LOAN);
       setSelectDoSphType(found.CAN <= 0 ? 'CẬN' : 'VIỄN');
       setSelectDvt(found.DVT);
-      setSuccessMsg(`Quét thành công! Đã khớp: ${found.TEN_SAN_PHAM}`);
+      setSuccessMsg(`Quét thành công! Tìm thấy sản phẩm: ${found.TEN_SAN_PHAM}`);
       setTimeout(() => setSuccessMsg(''), 3000);
     } else {
       setErrorMsg(`Không tìm thấy SKU [${skuToFind}] trong kho sản phẩm. Vui lòng tạo sản phẩm trước.`);
@@ -237,21 +224,22 @@ export default function TransactionForm({
     }
   };
 
-  // --- 8. NGHIỆP VỤ: THÊM SẢN PHẨM VÀO GIỎ CHỜ XÁC NHẬN ---
+  // --- 7. NGHIỆP VỤ: THÊM SẢN PHẨM VÀO GIỎ CHỜ XÁC NHẬN ---
   const handleAddToBasket = () => {
     setErrorMsg('');
 
     // Rule 2: SKU phải tồn tại trong kho trước khi làm phiếu nhập/xuất
     if (!matchedProductInDB) {
-      setErrorMsg(`Lỗi nghiệp vụ (Rule 2): SKU [${calculatedSKU}] chưa tồn tại trong kho sản phẩm. Vui lòng tạo sản phẩm này trước khi giao dịch.`);
+      setErrorMsg(`Lỗi nghiệp vụ (Rule 2): SKU [${calculatedSKU}] chưa tồn tại trong kho sản phẩm. Vui lòng tạo sản phẩm này trong tab "Sản Phẩm" trước khi thực hiện giao dịch.`);
       return;
     }
 
     if (selectSoLuong <= 0) {
-      setErrorMsg('Số lượng sản phẩm thêm vào phiếu phải lớn hơn 0.');
+      setErrorMsg('Lỗi: Số lượng sản phẩm thêm vào phiếu phải lớn hơn 0.');
       return;
     }
 
+    // Tính lượng đã có sẵn trong giỏ của SKU này để kiểm tra tồn dồn tích
     const existingQtyInCart = cart
       .filter(item => item.sku.toUpperCase() === calculatedSKU.toUpperCase())
       .reduce((sum, item) => sum + item.soLuong, 0);
@@ -262,11 +250,12 @@ export default function TransactionForm({
     if (loaiPhieu === 'XUẤT') {
       const currentStock = matchedProductInDB.TON_CUOI;
       if (totalRequestedQty > currentStock) {
-        setErrorMsg(`Lỗi nghiêm trọng (Rule 1 - Xuất âm kho): SKU [${calculatedSKU}] hiện tại chỉ còn tồn ${currentStock} ${matchedProductInDB.DVT}. Bạn yêu cầu xuất tổng cộng ${totalRequestedQty} ${matchedProductInDB.DVT}. Hệ thống từ chối giao dịch.`);
+        setErrorMsg(`Lỗi nghiêm trọng (Rule 1 - Xuất âm kho): SKU [${calculatedSKU}] hiện tại chỉ còn tồn ${currentStock} ${matchedProductInDB.DVT}. Bạn yêu cầu xuất tổng cộng ${totalRequestedQty} ${matchedProductInDB.DVT} (bao gồm cả hàng đã có trong giỏ). Hệ thống từ chối giao dịch.`);
         return;
       }
     }
 
+    // Đủ điều kiện => Thêm vào giỏ
     const newCartItem: CartItem = {
       id: `CART_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`,
       sku: calculatedSKU,
@@ -285,49 +274,54 @@ export default function TransactionForm({
     setSelectGhiChuDong('');
     setBarcodeInput('');
     
-    setSuccessMsg(`Đã thêm thành công SKU ${calculatedSKU} vào danh sách.`);
-    setTimeout(() => setSuccessMsg(''), 3000);
+    const msg = `Đã thêm thành công dòng SKU ${calculatedSKU} vào danh sách chờ.`;
+    setToastPending({ message: msg });
+    
+    if (onTriggerToast) {
+      onTriggerToast(msg);
+    }
+    
+    setTimeout(() => {
+      setToastPending(null);
+    }, 2500);
   };
 
+  // Xóa một dòng sản phẩm khỏi giỏ hàng chờ (Bảng 3)
   const handleRemoveCartItem = (id: string) => {
     setCart(prev => prev.filter(item => item.id !== id));
   };
 
-  // --- 9. WIZARD NAVIGATION HELPERS ---
-  const handleNextToStep2 = () => {
-    if (!selectedBranch) {
-      setErrorMsg('Vui lòng chọn chi nhánh lập phiếu.');
-      return;
-    }
-    setErrorMsg('');
-    setCurrentStep(2);
-  };
-
-  const handleNextToStep3 = () => {
-    if (cart.length === 0) {
-      setErrorMsg('Vui lòng thêm ít nhất 1 sản phẩm vào phiếu trước khi tiếp tục.');
-      return;
-    }
-    setErrorMsg('');
-    setCurrentStep(3);
-  };
-
-  // --- 10. LƯU TOÀN BỘ PHIẾU GIAO DỊCH (BƯỚC 3) ---
+  // --- 8. NGHIỆP VỤ LƯU TOÀN BỘ PHIẾU GIAO DỊCH (HOÀN THÀNH & LƯU) ---
   const handleCompleteTransaction = () => {
     setErrorMsg('');
 
-    if (cart.length === 0) {
-      setErrorMsg('Giỏ hàng rỗng.');
+    if (!selectedBranch) {
+      setErrorMsg('Lỗi: Bạn bắt buộc phải tự chọn chi nhánh thực hiện giao dịch trước khi lưu phiếu.');
+      // Cuộn lên đầu để xem lỗi hoặc chuyển step 1 nếu đang ở mobile
+      if (isMobile) {
+        setCurrentStep(1);
+      }
       return;
     }
 
-    // Giả lập khóa LockService
+    if (cart.length === 0) {
+      setErrorMsg('Lỗi: Bạn chưa chọn bất kỳ sản phẩm nào để tạo phiếu.');
+      return;
+    }
+
+    // Giả lập khóa LockService bằng Code xử lý bất đồng bộ
+    // LockService tránh tranh chấp ghi đồng thời dữ liệu lên sheet database
     setErrorMsg('Đang kích hoạt LockService ngăn ngừa tranh chấp ghi đè dữ liệu...');
 
     setTimeout(() => {
       setErrorMsg('');
 
+      // 1. Tạo số phiếu tự tăng (Sẽ được quản lý tự tăng ở State App chính)
+      // Mã phiếu định dạng: PN000001, PX000001 dựa vào LoaiPhieu
       const headerPrefix = loaiPhieu === 'NHẬP' ? 'PN' : 'PX';
+      
+      // 2. Tạo Header phiếu Nhập Xuất (B_NHAPXUAT)
+      // HOA_DON sẽ được gán số phiếu cụ thể ở tầng cha App, ở đây ta để tạm hoặc tạo chuỗi ngẫu nhiên độc bản để App thay thế
       const tempHoaDonId = `${headerPrefix}_TEMP_${Date.now()}`;
 
       const newHeader: NhapXuat = {
@@ -338,10 +332,11 @@ export default function TransactionForm({
         TONG_SL: totalCartQty,
         NGUOI_TAO: currentUser.username,
         TEN_NGUOI_TAO: currentUser.fullName,
-        TG_TAO: new Date().toISOString().replace('T', ' ').substring(0, 19),
+        TG_TAO: getVietnamDateTimeString(),
         GHI_CHU: ghiChuPhieu || `Lập phiếu ${loaiPhieu.toLowerCase()} kho tại ${selectedBranch}`
       };
 
+      // 3. Tạo Danh sách Chi tiết dòng (B_NHAPXUATCT)
       const detailRows: NhapXuatCT[] = cart.map((item, idx) => ({
         ID: `CT_${Date.now()}_${idx}`,
         HOA_DON: tempHoaDonId,
@@ -359,577 +354,1098 @@ export default function TransactionForm({
         NGAY: ngayLap
       }));
 
+      // Gọi callback truyền ra App.tsx để đồng bộ hóa và lưu trữ thời gian thực
       onSaveTransaction(newHeader, detailRows);
 
+      // Reset giỏ hàng và form
       setCart([]);
       setGhiChuPhieu('');
-      setSuccessMsg(`Lưu phiếu thành công! Hệ thống đã tự động cập nhật cân bằng kho.`);
       
+      // Chuyển tab sang Lịch sử để xem lại chứng từ vừa lưu sau khi Toast hiển thị
       setTimeout(() => {
-        setSuccessMsg('');
         onNavigateToHistory();
       }, 1500);
 
-    }, 800);
+    }, 600);
   };
 
-  return (
-    <div className="space-y-6">
+  const renderMobileOnboarding = () => {
+    const steps = [
+      { id: 1, title: 'Chứng từ', icon: FileText },
+      { id: 2, title: 'Sản phẩm', icon: Layers },
+      { id: 3, title: 'Phiếu chờ', icon: Clock },
+      { id: 4, title: 'Xác nhận', icon: CheckCircle },
+    ];
+
+    const handleNextStep = () => {
+      setErrorMsg('');
+      if (currentStep === 1) {
+        if (!selectedBranch) {
+          setErrorMsg('Lỗi: Bạn bắt buộc phải tự chọn chi nhánh thực hiện giao dịch trước khi tiếp tục.');
+          return;
+        }
+      }
+      if (currentStep < 4) {
+        setCurrentStep(prev => prev + 1);
+      }
+    };
+
+    const handlePrevStep = () => {
+      setErrorMsg('');
+      if (currentStep > 1) {
+        setCurrentStep(prev => prev - 1);
+      }
+    };
+
+    return (
+      <div className="space-y-4 px-1 pb-16">
+        {/* THANH TIẾN TRÌNH PROGRESS STEPPER */}
+        <div className="bg-[#0f172a]/5 p-3 rounded-2xl border border-slate-100 flex items-center justify-between gap-1 shadow-2xs">
+          {steps.map((s, idx) => {
+            const Icon = s.icon;
+            const isActive = currentStep === s.id;
+            const isCompleted = currentStep > s.id;
+            return (
+              <div key={s.id} className="flex items-center flex-1 last:flex-initial">
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (s.id === 1 || selectedBranch) {
+                      setCurrentStep(s.id);
+                    } else {
+                      setErrorMsg('Vui lòng chọn chi nhánh ở Bước 1 trước.');
+                    }
+                  }}
+                  className="flex flex-col items-center gap-1 focus:outline-hidden cursor-pointer flex-1"
+                >
+                  <div className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold transition-all ${
+                    isActive 
+                      ? 'bg-blue-600 text-white ring-4 ring-blue-100 scale-105 shadow-sm' 
+                      : isCompleted
+                        ? 'bg-emerald-500 text-white shadow-xs'
+                        : 'bg-white text-slate-400 border border-slate-200'
+                  }`}>
+                    {isCompleted ? <CheckCircle className="w-4 h-4" /> : s.id}
+                  </div>
+                  <span className={`text-[9px] font-bold ${isActive ? 'text-blue-600 font-extrabold' : 'text-slate-400'}`}>
+                    {s.title}
+                  </span>
+                </button>
+                {idx < steps.length - 1 && (
+                  <div className={`h-0.5 flex-1 mx-1.5 max-w-[24px] transition-all ${currentStep > s.id ? 'bg-emerald-400' : 'bg-slate-200'}`} />
+                )}
+              </div>
+            );
+          })}
+        </div>
+
+        {/* THÔNG BÁO LỖI */}
+        {errorMsg && (
+          <div className="p-3 bg-red-50 border border-red-100 text-red-700 rounded-xl text-xs flex items-center gap-2 animate-shake">
+            <AlertCircle className="w-4.5 h-4.5 shrink-0 text-red-500" />
+            <span className="font-semibold leading-tight">{errorMsg}</span>
+          </div>
+        )}
+
+        {/* NỘI DUNG TỪNG BƯỚC */}
+        <AnimatePresence mode="wait">
+          <motion.div
+            key={currentStep}
+            initial={{ opacity: 0, y: 8 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -8 }}
+            transition={{ duration: 0.15 }}
+            className="bento-card !p-4 space-y-4"
+          >
+            {/* BƯỚC 1: THÔNG TIN CHỨNG TỪ */}
+            {currentStep === 1 && (
+              <div className="space-y-3.5">
+                <div className="flex items-center gap-1.5 border-b border-slate-50 pb-2">
+                  <FileText className="w-4.5 h-4.5 text-blue-500" />
+                  <span className="text-xs font-bold text-slate-700 uppercase">Bước 1: Thông tin chứng từ</span>
+                </div>
+
+                {/* Loại phiếu */}
+                <div className="space-y-1.5">
+                  <label className="text-[10px] uppercase font-bold text-slate-400">Loại phiếu</label>
+                  <div className="grid grid-cols-2 gap-2">
+                    <button
+                      type="button"
+                      onClick={() => { setLoaiPhieu('NHẬP'); setCart([]); setErrorMsg(''); }}
+                      className={`py-3 px-4 text-xs font-bold rounded-xl transition-all text-center cursor-pointer border ${
+                        loaiPhieu === 'NHẬP' 
+                          ? 'bg-emerald-500 text-white border-emerald-500 shadow-xs' 
+                          : 'bg-white text-slate-500 border-slate-200 hover:bg-slate-50'
+                      }`}
+                    >
+                      Phiếu Nhập Kho
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => { setLoaiPhieu('XUẤT'); setCart([]); setErrorMsg(''); }}
+                      className={`py-3 px-4 text-xs font-bold rounded-xl transition-all text-center cursor-pointer border ${
+                        loaiPhieu === 'XUẤT' 
+                          ? 'bg-rose-500 text-white border-rose-500 shadow-xs' 
+                          : 'bg-white text-slate-500 border-slate-200 hover:bg-slate-50'
+                      }`}
+                    >
+                      Phiếu Xuất Kho
+                    </button>
+                  </div>
+                </div>
+
+                {/* Chi nhánh */}
+                <div className="space-y-1.5">
+                  <label className="text-[10px] uppercase font-bold text-slate-400 flex items-center gap-1">
+                    <MapPin className="w-3.5 h-3.5" /> Chi nhánh thực hiện <span className="text-rose-500">*</span>
+                  </label>
+                  <select
+                    value={selectedBranch}
+                    onChange={(e) => {
+                      setSelectedBranch(e.target.value);
+                      setErrorMsg('');
+                    }}
+                    className="w-full text-sm font-semibold text-slate-700 bg-slate-50 border border-slate-200 rounded-xl p-3 focus:ring-2 focus:ring-blue-100 focus:outline-hidden"
+                  >
+                    <option value="">-- Chọn chi nhánh --</option>
+                    {chiNhanhs.map(branch => (
+                      <option key={branch} value={branch}>{branch}</option>
+                    ))}
+                  </select>
+                </div>
+
+                {/* Ngày lập */}
+                <div className="space-y-1.5">
+                  <label className="text-[10px] uppercase font-bold text-slate-400 flex items-center gap-1">
+                    <Calendar className="w-3.5 h-3.5" /> Ngày lập phiếu
+                  </label>
+                  <input
+                    type="date"
+                    value={ngayLap}
+                    onChange={(e) => setNgayLap(e.target.value)}
+                    className="w-full text-sm font-semibold text-slate-700 bg-slate-50 border border-slate-200 rounded-xl p-3 focus:ring-2 focus:ring-blue-100 focus:outline-hidden"
+                  />
+                </div>
+
+                {/* Ghi chú */}
+                <div className="space-y-1.5">
+                  <label className="text-[10px] uppercase font-bold text-slate-400">Ghi chú chung</label>
+                  <textarea
+                    rows={2}
+                    placeholder="Nhập ghi chú chung của phiếu..."
+                    value={ghiChuPhieu}
+                    onChange={(e) => setGhiChuPhieu(e.target.value)}
+                    className="w-full text-sm font-semibold text-slate-700 bg-slate-50 border border-slate-200 rounded-xl p-3 focus:ring-2 focus:ring-blue-100 focus:outline-hidden"
+                  />
+                </div>
+              </div>
+            )}
+
+            {/* BƯỚC 2: CHỌN CẤU HÌNH SẢN PHẨM */}
+            {currentStep === 2 && (
+              <div className="space-y-3.5">
+                <div className="flex items-center justify-between border-b border-slate-50 pb-2">
+                  <div className="flex items-center gap-1.5">
+                    <Layers className="w-4.5 h-4.5 text-blue-500" />
+                    <span className="text-xs font-bold text-slate-700 uppercase">Bước 2: Chọn sản phẩm</span>
+                  </div>
+                  
+                  <button
+                    type="button"
+                    onClick={() => { setIsBarcodeMode(!isBarcodeMode); setErrorMsg(''); }}
+                    className={`flex items-center gap-1 px-2.5 py-1 rounded-lg text-[10px] font-bold cursor-pointer border ${
+                      isBarcodeMode ? 'bg-blue-50 text-blue-600 border-blue-100' : 'bg-slate-50 text-slate-400 border-slate-100'
+                    }`}
+                  >
+                    <Barcode className="w-3.5 h-3.5" />
+                    {isBarcodeMode ? 'Quét: BẬT' : 'Quét: TẮT'}
+                  </button>
+                </div>
+
+                {isBarcodeMode ? (
+                  <div className="bg-blue-50/20 p-3 rounded-xl border border-blue-100/50 space-y-2">
+                    <p className="text-[10px] text-slate-500 font-medium">
+                      Nhập mã hoặc quét barcode để tự động tra cứu nhanh sản phẩm.
+                    </p>
+                    <div className="flex gap-2">
+                      <input
+                        type="text"
+                        placeholder="Ví dụ: BLICK 1.56..."
+                        value={barcodeInput}
+                        onChange={(e) => setBarcodeInput(e.target.value)}
+                        onKeyDown={(e) => { if (e.key === 'Enter') handleApplyBarcode(); }}
+                        className="flex-1 bg-white border border-slate-200 rounded-xl py-2 px-3 text-xs font-bold font-mono text-slate-700 uppercase tracking-wider focus:outline-hidden focus:border-blue-400"
+                      />
+                      <button
+                        type="button"
+                        onClick={handleApplyBarcode}
+                        className="bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs px-3.5 py-2 rounded-xl"
+                      >
+                        Áp Dụng
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    {/* Hãng */}
+                    <div className="space-y-1">
+                      <label className="text-[10px] font-bold text-slate-400 uppercase">Thương hiệu / Hãng</label>
+                      <select
+                        value={selectBrand}
+                        onChange={(e) => handleBrandChange(e.target.value)}
+                        className="w-full text-sm font-semibold text-slate-700 bg-slate-50 border border-slate-200 p-2.5 rounded-xl focus:outline-hidden"
+                      >
+                        {thuongHieus.map(b => (
+                          <option key={b} value={b}>{b}</option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-2">
+                      {/* Chiết suất */}
+                      <div className="space-y-1">
+                        <label className="text-[10px] font-bold text-slate-400 uppercase">Chiết suất</label>
+                        <select
+                          value={selectChietXuat}
+                          onChange={(e) => setSelectChietXuat(e.target.value)}
+                          className="w-full text-sm font-semibold text-slate-700 bg-slate-50 border border-slate-200 p-2.5 rounded-xl focus:outline-hidden"
+                        >
+                          <option value="1.56">1.56</option>
+                          <option value="1.60">1.60</option>
+                          <option value="1.61">1.61</option>
+                          <option value="1.67">1.67</option>
+                          <option value="1.74">1.74</option>
+                        </select>
+                      </div>
+
+                      {/* Tính năng */}
+                      <div className="space-y-1">
+                        <label className="text-[10px] font-bold text-slate-400 uppercase">Tính năng</label>
+                        <select
+                          value={selectTinhNang}
+                          onChange={(e) => setSelectTinhNang(e.target.value)}
+                          className="w-full text-sm font-semibold text-slate-700 bg-slate-50 border border-slate-200 p-2.5 rounded-xl focus:outline-hidden"
+                        >
+                          <option value="ĐM">Đổi màu (ĐM)</option>
+                          <option value="ASX">Ánh sáng xanh (ASX)</option>
+                        </select>
+                      </div>
+                    </div>
+
+                    <div className="space-y-1">
+                      <label className="text-[10px] font-bold text-slate-400 uppercase">Loại độ</label>
+                      <div className="grid grid-cols-2 gap-2">
+                        <button
+                          type="button"
+                          onClick={() => setSelectDoSphType('CẬN')}
+                          className={`py-2 text-xs font-bold rounded-xl text-center border cursor-pointer transition-all ${
+                            selectDoSphType === 'CẬN' ? 'bg-blue-50 text-blue-600 border-blue-100' : 'bg-white text-slate-400 border-slate-200'
+                          }`}
+                        >
+                          Cận (-)
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setSelectDoSphType('VIỄN')}
+                          className={`py-2 text-xs font-bold rounded-xl text-center border cursor-pointer transition-all ${
+                            selectDoSphType === 'VIỄN' ? 'bg-amber-50 text-amber-600 border-amber-100' : 'bg-white text-slate-400 border-slate-200'
+                          }`}
+                        >
+                          Viễn (+)
+                        </button>
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-2">
+                      {/* SPH */}
+                      <div className="space-y-1">
+                        <label className="text-[10px] font-bold text-slate-400 uppercase">Cầu (SPH)</label>
+                        <select
+                          value={selectDoSph}
+                          onChange={(e) => setSelectDoSph(Number(e.target.value))}
+                          className="w-full text-sm font-semibold text-slate-700 bg-slate-50 border border-slate-200 p-2.5 rounded-xl font-mono focus:outline-hidden"
+                        >
+                          {sphOptions.map(opt => (
+                            <option key={opt} value={opt}>{formatDop(opt)}</option>
+                          ))}
+                        </select>
+                      </div>
+
+                      {/* CYL */}
+                      <div className="space-y-1">
+                        <label className="text-[10px] font-bold text-slate-400 uppercase">Loạn (CYL)</label>
+                        <select
+                          value={selectDoCyl}
+                          onChange={(e) => setSelectDoCyl(Number(e.target.value))}
+                          className="w-full text-sm font-semibold text-slate-700 bg-slate-50 border border-slate-200 p-2.5 rounded-xl font-mono focus:outline-hidden"
+                        >
+                          {cylOptions.map(opt => (
+                            <option key={opt} value={opt}>{formatDop(opt)}</option>
+                          ))}
+                        </select>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* SỐ LƯỢNG & GHI CHÚ */}
+                <div className="grid grid-cols-3 gap-2 pt-1.5">
+                  <div className="col-span-2 space-y-1">
+                    <label className="text-[10px] font-bold text-slate-400 uppercase">Số lượng</label>
+                    <div className="flex items-center gap-1 bg-slate-50 border border-slate-200 rounded-xl p-1.5">
+                      <button
+                        type="button"
+                        onClick={() => setSelectSoLuong(prev => Math.max(1, prev - 1))}
+                        className="w-8 h-8 flex items-center justify-center bg-white text-slate-600 rounded-lg font-bold border border-slate-200"
+                      >
+                        -
+                      </button>
+                      <input
+                        type="number"
+                        min={1}
+                        value={selectSoLuong}
+                        onChange={(e) => setSelectSoLuong(Math.max(1, parseInt(e.target.value) || 1))}
+                        className="flex-1 text-center text-sm font-extrabold text-slate-700 bg-transparent font-mono focus:outline-hidden"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setSelectSoLuong(prev => prev + 1)}
+                        className="w-8 h-8 flex items-center justify-center bg-white text-slate-600 rounded-lg font-bold border border-slate-200"
+                      >
+                        +
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="col-span-1 space-y-1">
+                    <label className="text-[10px] font-bold text-slate-400 uppercase">ĐVT</label>
+                    <input
+                      type="text"
+                      value="miếng"
+                      disabled
+                      className="w-full text-sm font-bold text-slate-400 bg-slate-100 border border-slate-200 p-3 rounded-xl text-center"
+                    />
+                  </div>
+                </div>
+
+                <div className="space-y-1">
+                  <label className="text-[10px] font-bold text-slate-400 uppercase">Ghi chú dòng sản phẩm</label>
+                  <input
+                    type="text"
+                    placeholder="Nhập ghi chú dòng nếu cần..."
+                    value={selectGhiChuDong}
+                    onChange={(e) => setSelectGhiChuDong(e.target.value)}
+                    className="w-full text-sm font-semibold text-slate-700 bg-slate-50 border border-slate-200 p-2.5 rounded-xl"
+                  />
+                </div>
+
+                {/* THÔNG TIN TỒN KHO THỰC TẾ TRONG HỆ THỐNG */}
+                <div className="bg-slate-50 p-3 rounded-xl border border-slate-200 space-y-1">
+                  <div className="flex items-center justify-between text-[11px] text-slate-500 font-mono">
+                    <span className="font-bold">SKU:</span>
+                    <span className="text-slate-800 font-extrabold">{calculatedSKU}</span>
+                  </div>
+                  <div className="flex items-center justify-between text-[11px] text-slate-500 font-mono">
+                    <span>Tồn kho:</span>
+                    {matchedProductInDB ? (
+                      <span className="font-extrabold text-blue-600">{matchedProductInDB.TON_CUOI} miếng</span>
+                    ) : (
+                      <span className="font-bold text-red-500">⚠️ Chưa khai báo SKU</span>
+                    )}
+                  </div>
+                </div>
+
+                {/* NÚT THÊM VÀO GIỎ */}
+                {currentUser.writeAccess !== false && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      handleAddToBasket();
+                    }}
+                    className="w-full flex items-center justify-center gap-1.5 bg-red-600 hover:bg-red-700 text-white font-bold py-3.5 px-4 rounded-xl cursor-pointer transition-all shadow-xs"
+                  >
+                    <Plus className="w-5 h-5" /> Thêm Vào Phiếu Chờ
+                  </button>
+                )}
+              </div>
+            )}
+
+            {/* BƯỚC 3: DANH SÁCH CHỜ (GIỎ HÀNG) */}
+            {currentStep === 3 && (
+              <div className="space-y-3.5">
+                <div className="flex items-center justify-between border-b border-slate-50 pb-2">
+                  <div className="flex items-center gap-1.5">
+                    <Clock className="w-4.5 h-4.5 text-blue-500" />
+                    <span className="text-xs font-bold text-slate-700 uppercase">Bước 3: Phiếu chờ</span>
+                  </div>
+                  <span className="text-xs font-bold text-blue-600 font-mono">
+                    {cart.length} dòng
+                  </span>
+                </div>
+
+                <div className="space-y-2 max-h-[300px] overflow-y-auto pr-1">
+                  {cart.length > 0 ? (
+                    cart.map((item, idx) => (
+                      <div key={item.id} className="p-3 bg-slate-50 border border-slate-100 rounded-xl flex items-center justify-between gap-2.5 shadow-3xs">
+                        <div className="space-y-0.5 min-w-0 flex-1">
+                          <p className="text-[9px] font-mono font-bold text-slate-400">{idx + 1}. {item.sku}</p>
+                          <p className="text-xs font-bold text-slate-700 truncate">{item.tenSp}</p>
+                          <p className="text-[10px] text-slate-400 italic">Ghi chú: {item.ghiChu}</p>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <div className="flex items-center gap-1 bg-white border border-slate-200 rounded-lg p-1 scale-90">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setCart(prev => prev.map(c => c.id === item.id ? { ...c, soLuong: Math.max(1, c.soLuong - 1) } : c));
+                              }}
+                              className="w-5 h-5 flex items-center justify-center text-xs font-bold text-slate-500"
+                            >
+                              -
+                            </button>
+                            <span className="text-xs font-bold font-mono text-slate-700 px-1.5">{item.soLuong}</span>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setCart(prev => prev.map(c => c.id === item.id ? { ...c, soLuong: c.soLuong + 1 } : c));
+                              }}
+                              className="w-5 h-5 flex items-center justify-center text-xs font-bold text-slate-500"
+                            >
+                              +
+                            </button>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => handleRemoveCartItem(item.id)}
+                            className="text-rose-500 p-1 hover:bg-rose-50 rounded-lg"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </div>
+                      </div>
+                    ))
+                  ) : (
+                    <div className="py-12 text-center text-xs text-slate-400 leading-relaxed font-mono">
+                      Phiếu chờ rỗng.<br />Vui lòng quay lại Bước 2 để thêm sản phẩm.
+                    </div>
+                  )}
+                </div>
+
+                {cart.length > 0 && (
+                  <div className="bg-blue-50/40 p-3 rounded-xl border border-blue-100/50 flex items-center justify-between text-xs">
+                    <span className="text-slate-500 font-bold">Tổng sản lượng:</span>
+                    <span className="font-extrabold text-blue-600 text-sm font-mono">{totalCartQty} miếng</span>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* BƯỚC 4: XÁC NHẬN & HOÀN THÀNH */}
+            {currentStep === 4 && (
+              <div className="space-y-4">
+                <div className="flex items-center gap-1.5 border-b border-slate-50 pb-2">
+                  <CheckCircle className="w-4.5 h-4.5 text-blue-500" />
+                  <span className="text-xs font-bold text-slate-700 uppercase">Bước 4: Xác nhận phiếu</span>
+                </div>
+
+                <div className="space-y-3 bg-slate-50/60 p-4 rounded-xl border border-slate-100 text-xs">
+                  <div className="flex justify-between border-b border-slate-100 pb-1.5">
+                    <span className="text-slate-400 font-semibold">Loại phiếu:</span>
+                    <span className={`font-bold ${loaiPhieu === 'NHẬP' ? 'text-emerald-600' : 'text-rose-600'}`}>
+                      PHIẾU {loaiPhieu} KHO
+                    </span>
+                  </div>
+                  <div className="flex justify-between border-b border-slate-100 pb-1.5">
+                    <span className="text-slate-400 font-semibold">Chi nhánh:</span>
+                    <span className="font-bold text-slate-700">{selectedBranch}</span>
+                  </div>
+                  <div className="flex justify-between border-b border-slate-100 pb-1.5">
+                    <span className="text-slate-400 font-semibold">Ngày chứng từ:</span>
+                    <span className="font-bold text-slate-700 font-mono">{ngayLap}</span>
+                  </div>
+                  <div className="flex justify-between border-b border-slate-100 pb-1.5">
+                    <span className="text-slate-400 font-semibold">Ghi chú chung:</span>
+                    <span className="font-bold text-slate-700 max-w-[160px] truncate">{ghiChuPhieu || 'Không ghi chú'}</span>
+                  </div>
+                  <div className="flex justify-between border-b border-slate-100 pb-1.5">
+                    <span className="text-slate-400 font-semibold">Số loại tròng kính:</span>
+                    <span className="font-bold text-slate-700">{cart.length} dòng SKU</span>
+                  </div>
+                  <div className="flex justify-between items-center pt-1">
+                    <span className="text-slate-500 font-bold">Tổng sản lượng phiếu:</span>
+                    <span className="font-extrabold text-blue-600 text-base font-mono">{totalCartQty} miếng</span>
+                  </div>
+                </div>
+
+                {currentUser.writeAccess !== false ? (
+                  <button
+                    type="button"
+                    onClick={handleCompleteTransaction}
+                    className="w-full flex items-center justify-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-sm py-4 px-4 rounded-xl cursor-pointer transition-all shadow-md shadow-emerald-100"
+                  >
+                    <Save className="w-5 h-5" /> Hoàn Thành & Lưu Phiếu
+                  </button>
+                ) : (
+                  <div className="p-3 bg-amber-50 text-amber-800 text-center rounded-xl text-[11px] font-semibold">
+                    Quyền Chỉ Xem - Không thể lưu phiếu.
+                  </div>
+                )}
+              </div>
+            )}
+          </motion.div>
+        </AnimatePresence>
+
+        {/* CÁC NÚT ĐIỀU HƯỚNG BOTTOM (NEXT / BACK) */}
+        <div className="flex gap-3 pt-2">
+          {currentStep > 1 && (
+            <button
+              type="button"
+              onClick={handlePrevStep}
+              className="flex-1 flex items-center justify-center gap-1 bg-white border border-slate-200 text-slate-600 font-bold py-3 px-4 rounded-xl transition-all cursor-pointer hover:bg-slate-50"
+            >
+              <ChevronLeft className="w-4.5 h-4.5" /> Quay lại
+            </button>
+          )}
+          {currentStep < 4 && (
+            <button
+              type="button"
+              onClick={handleNextStep}
+              className="flex-1 flex items-center justify-center gap-1 bg-blue-600 text-white font-bold py-3 px-4 rounded-xl transition-all cursor-pointer hover:bg-blue-700 shadow-sm shadow-blue-100"
+            >
+              Tiếp tục <ChevronRight className="w-4.5 h-4.5" />
+            </button>
+          )}
+        </div>
+      </div>
+    );
+  };
+
+  const renderDesktopLayout = () => {
+    return (
+      <>
       
       {/* KHU VỰC THÔNG TIN TIÊU ĐỀ PHIẾU */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between border-b border-slate-100 pb-3 gap-3">
+      <div className="flex items-center justify-between border-b border-slate-100 pb-3">
         <div className="flex items-center gap-2.5">
           <div className={`p-2.5 rounded-xl ${loaiPhieu === 'NHẬP' ? 'bg-emerald-50 text-emerald-600' : 'bg-rose-50 text-rose-600'}`}>
             {loaiPhieu === 'NHẬP' ? <TrendingUp className="w-5.5 h-5.5" /> : <TrendingDown className="w-5.5 h-5.5" />}
           </div>
           <div>
-            <h2 className="font-sans font-bold text-slate-800 text-base">Lập Phiếu {loaiPhieu} Kho</h2>
-            <p className="text-xs text-slate-400 font-mono">Quy trình lập chứng từ xuất nhập kho chặt chẽ, an toàn kho dữ liệu</p>
+            <h2 className="font-sans font-bold text-slate-800 text-base">Lập Phiếu {loaiPhieu} Kho Tròng Kính</h2>
+            <p className="text-xs text-slate-400 font-mono">Quy trình nhập xuất tuân thủ kiểm soát tồn kho chặt chẽ</p>
           </div>
         </div>
 
-        {/* TIẾN TRÌNH WIZARD */}
-        <div className="flex items-center gap-2 bg-slate-100 p-1 rounded-xl self-start sm:self-auto">
-          <span className={`px-3 py-1 rounded-lg text-xs font-bold transition-all ${
-            currentStep === 1 ? 'bg-red-600 text-white shadow-xs' : 'text-slate-400'
-          }`}>1. Khai báo phiếu</span>
-          <ChevronRight className="w-3 h-3 text-slate-300" />
-          <span className={`px-3 py-1 rounded-lg text-xs font-bold transition-all ${
-            currentStep === 2 ? 'bg-red-600 text-white shadow-xs' : 'text-slate-400'
-          }`}>2. Thêm sản phẩm</span>
-          <ChevronRight className="w-3 h-3 text-slate-300" />
-          <span className={`px-3 py-1 rounded-lg text-xs font-bold transition-all ${
-            currentStep === 3 ? 'bg-red-600 text-white shadow-xs' : 'text-slate-400'
-          }`}>3. Hoàn tất phiếu</span>
+        {/* Nút chuyển đổi loại phiếu nhanh */}
+        <div className="flex bg-slate-100 p-1 rounded-xl">
+          <button
+            onClick={() => { setLoaiPhieu('NHẬP'); setCart([]); setErrorMsg(''); }}
+            className={`py-1.5 px-3.5 text-xs font-bold rounded-lg transition-all cursor-pointer ${
+              loaiPhieu === 'NHẬP' ? 'bg-emerald-500 text-white shadow-xs' : 'text-slate-400 hover:text-slate-600'
+            }`}
+          >
+            Phiếu Nhập
+          </button>
+          <button
+            onClick={() => { setLoaiPhieu('XUẤT'); setCart([]); setErrorMsg(''); }}
+            className={`py-1.5 px-3.5 text-xs font-bold rounded-lg transition-all cursor-pointer ${
+              loaiPhieu === 'XUẤT' ? 'bg-rose-500 text-white shadow-xs' : 'text-slate-400 hover:text-slate-600'
+            }`}
+          >
+            Phiếu Xuất
+          </button>
         </div>
       </div>
 
-      {successMsg && (
-        <div className="p-4 bg-emerald-50 border border-emerald-100 text-emerald-700 rounded-xl text-xs flex items-center gap-2.5 shadow-2xs">
-          <CheckCircle className="w-5 h-5 text-emerald-500 shrink-0" />
-          <span className="font-bold">{successMsg}</span>
+      {currentUser.writeAccess === false && (
+        <div className="p-4 bg-amber-50 border border-amber-100 text-amber-800 rounded-xl text-xs flex items-center gap-3 shadow-2xs">
+          <AlertCircle className="w-5 h-5 shrink-0 text-amber-500" />
+          <span className="font-semibold">
+            Tài khoản của bạn <strong>({currentUser.fullName} - {currentUser.role})</strong> được phân quyền <strong>Chỉ Xem</strong>. Mọi tác vụ Thêm vào phiếu chờ và Lưu phiếu giao dịch đã bị khóa.
+          </span>
         </div>
       )}
 
       {errorMsg && (
-        <div className="p-4 bg-red-50 border border-red-100 text-red-700 rounded-xl text-xs flex items-center gap-2.5 shadow-2xs">
-          <AlertCircle className="w-5 h-5 text-red-500 shrink-0" />
-          <span className="font-semibold">{errorMsg}</span>
+        <div className="p-4 bg-red-50 border border-red-100 text-red-700 rounded-xl text-xs flex items-center gap-3 shadow-xs animate-shake">
+          <AlertCircle className="w-5 h-5 shrink-0 text-red-500" />
+          <span className="font-medium">{errorMsg}</span>
         </div>
       )}
 
-      {/* CHIA MÀN HÌNH WIZARD */}
-      <div className="grid grid-cols-1 lg:grid-cols-5 gap-6">
-        
-        {/* PANEL TRÁI: FORM ĐIỀU HƯỚNG WIZARD (3/5 Cột) */}
-        <div className="lg:col-span-3 space-y-4">
-          
-          <AnimatePresence mode="wait">
-            
-            {/* BƯỚC 1: KHAI BÁO PHIẾU */}
-            {currentStep === 1 && (
-              <motion.div
-                initial={{ opacity: 0, x: -15 }}
-                animate={{ opacity: 1, x: 0 }}
-                exit={{ opacity: 0, x: 15 }}
-                transition={{ duration: 0.15 }}
-                className="bento-card !p-5 space-y-4"
-              >
-                <div className="border-b border-slate-50 pb-2">
-                  <h3 className="font-sans font-bold text-slate-800 text-xs uppercase flex items-center gap-1.5">
-                    <FileText className="w-4 h-4 text-blue-500" /> Bước 1: Khai báo thông tin phiếu {loaiPhieu.toLowerCase()} kho
-                  </h3>
-                </div>
+      {successMsg && (
+        <div className="p-4 bg-emerald-50 border border-emerald-100 text-emerald-700 rounded-xl text-xs flex items-center gap-3 shadow-xs">
+          <CheckCircle className="w-5 h-5 shrink-0 text-emerald-500" />
+          <span className="font-bold">{successMsg}</span>
+        </div>
+      )}
 
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  <div className="space-y-1.5">
-                    <label className="text-[10px] uppercase font-bold text-slate-400 block">
-                      Chi nhánh áp dụng
-                    </label>
+      {/* HAI PHÂN VÙNG: BẢNG 1 & BẢNG 2 TRÊN GIAO DIỆN */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        
+        {/* BẢNG 1: THÔNG TIN CHỨNG TỪ (1/3 Cột) */}
+        <div className="bento-card !p-3 sm:!p-5 space-y-2.5 sm:space-y-4">
+          <div className="flex items-center gap-2 border-b border-slate-50 pb-1.5 sm:pb-2">
+            <FileText className="w-4 h-4 text-slate-400" />
+            <span className="text-xs font-bold text-slate-700 uppercase">Thông Tin Chứng Từ</span>
+          </div>
+
+          {/* Chi nhánh thực hiện */}
+          <div className="flex flex-col sm:space-y-1 sm:block grid grid-cols-3 items-center gap-2 py-0.5 sm:py-0">
+            <label className="col-span-1 text-[10px] uppercase font-bold text-slate-400 flex items-center gap-1">
+              <MapPin className="w-3 h-3" /> Chi nhánh
+            </label>
+            <div className="col-span-2">
+              <select
+                value={selectedBranch}
+                onChange={(e) => setSelectedBranch(e.target.value)}
+                className="w-full text-base md:text-xs font-semibold text-slate-700 bg-slate-50 border border-slate-100 rounded-lg p-1.5 sm:p-2.5 focus:outline-hidden"
+              >
+                <option value="">-- Chọn chi nhánh --</option>
+                {chiNhanhs.map(branch => (
+                  <option key={branch} value={branch}>{branch}</option>
+                ))}
+              </select>
+            </div>
+          </div>
+
+          {/* Ngày lập phiếu */}
+          <div className="flex flex-col sm:space-y-1 sm:block grid grid-cols-3 items-center gap-2 py-0.5 sm:py-0">
+            <label className="col-span-1 text-[10px] uppercase font-bold text-slate-400 flex items-center gap-1">
+              <Calendar className="w-3 h-3" /> Ngày lập
+            </label>
+            <div className="col-span-2">
+              <input
+                type="date"
+                value={ngayLap}
+                onChange={(e) => setNgayLap(e.target.value)}
+                className="w-full text-base md:text-xs font-semibold text-slate-700 bg-slate-50 border border-slate-100 rounded-lg p-1.5 sm:p-2 focus:outline-hidden"
+              />
+            </div>
+          </div>
+
+          {/* Người lập (Tự lấy tài khoản đăng nhập) */}
+          <div className="flex flex-col sm:space-y-1 sm:block grid grid-cols-3 items-center gap-2 py-0.5 sm:py-0">
+            <label className="col-span-1 text-[10px] uppercase font-bold text-slate-400 flex items-center gap-1">
+              <User className="w-3 h-3" /> Người lập
+            </label>
+            <div className="col-span-2 text-base md:text-xs font-bold text-slate-500 bg-slate-100 border border-slate-100 rounded-lg p-1.5 sm:p-2.5 font-mono truncate">
+              {currentUser.fullName}
+            </div>
+          </div>
+
+          {/* Ghi chú chung của phiếu */}
+          <div className="flex flex-col sm:space-y-1 sm:block grid grid-cols-3 items-center gap-2 py-0.5 sm:py-0">
+            <label className="col-span-1 text-[10px] uppercase font-bold text-slate-400">Ghi chú</label>
+            <div className="col-span-2">
+              <textarea
+                rows={1}
+                placeholder="Nhập ghi chú chung..."
+                value={ghiChuPhieu}
+                onChange={(e) => setGhiChuPhieu(e.target.value)}
+                className="w-full text-base md:text-xs font-semibold text-slate-700 bg-slate-50 border border-slate-100 rounded-lg p-1.5 sm:p-2.5 focus:outline-hidden"
+              />
+            </div>
+          </div>
+
+          {/* Thống kê giỏ hàng */}
+          <div className="bg-slate-50 p-3 sm:p-4 rounded-xl border border-slate-100 space-y-1.5 sm:space-y-2">
+            <div className="flex justify-between items-center text-xs">
+              <span className="text-slate-400 font-medium">Số loại tròng kính:</span>
+              <span className="font-bold text-slate-700">{cart.length} dòng SKU</span>
+            </div>
+            <div className="flex justify-between items-center text-xs">
+              <span className="text-slate-400 font-medium">Tổng sản lượng phiếu:</span>
+              <span className="font-extrabold text-blue-600 text-sm font-mono">{totalCartQty} {selectDvt}</span>
+            </div>
+          </div>
+
+          {/* Nút lưu nhanh ngay tại Bảng 1 (Tận dụng không gian Desktop, tránh cuộn) */}
+          {cart.length > 0 && currentUser.writeAccess !== false && (
+            <div className="space-y-2 pt-1">
+              <button
+                type="button"
+                onClick={handleCompleteTransaction}
+                className="w-full flex items-center justify-center gap-1.5 bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 text-white font-extrabold text-xs py-2.5 px-4 rounded-xl cursor-pointer transition-all shadow-md"
+              >
+                <Save className="w-4 h-4" /> Lưu Phiếu Giao Dịch
+              </button>
+              <button
+                type="button"
+                onClick={() => { setCart([]); setErrorMsg(''); }}
+                className="w-full text-[11px] font-bold text-slate-500 hover:text-slate-700 cursor-pointer bg-white border border-slate-200 py-1.5 rounded-lg text-center"
+              >
+                Xóa giỏ hàng chờ
+              </button>
+            </div>
+          )}
+        </div>
+
+        {/* BẢNG 2: CHỌN SẢN PHẨM & QUY TẮC SKU (2/3 Cột) */}
+        <div className="bento-card !p-5 space-y-4 lg:col-span-2">
+          
+          <div className="flex items-center justify-between border-b border-slate-50 pb-2">
+            <div className="flex items-center gap-2">
+              <Layers className="w-4 h-4 text-slate-400" />
+              <span className="text-xs font-bold text-slate-700 uppercase">Cấu Hình Sản Phẩm Tròng Kính</span>
+            </div>
+            
+            {/* Chuyển đổi quét barcode hoặc chọn thủ công */}
+            <button
+              type="button"
+              onClick={() => { setIsBarcodeMode(!isBarcodeMode); setErrorMsg(''); }}
+              className={`flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[10px] font-bold cursor-pointer transition-all ${
+                isBarcodeMode ? 'bg-blue-50 text-blue-600 border border-blue-100' : 'bg-slate-50 text-slate-400 border border-slate-100'
+              }`}
+            >
+              <Barcode className="w-3.5 h-3.5" />
+              {isBarcodeMode ? 'Chế Độ Quét: BẬT' : 'Chế Độ Quét: TẮT'}
+            </button>
+          </div>
+
+          {/* CHẾ ĐỘ 1: QUÉT BARCODE HOẶC GÕ SKU NHANH */}
+          {isBarcodeMode ? (
+            <div className="bg-blue-50/20 p-4 rounded-xl border border-blue-100/50 space-y-3">
+              <p className="text-[11px] text-slate-500 font-medium leading-relaxed">
+                Nhập hoặc dán mã SKU tròng kính (Ví dụ: `BLICK 1.56 ĐM -2.00 -0.50`) hoặc kết nối đầu đọc quét mã vạch để chọn nhanh sản phẩm trong tích tắc.
+              </p>
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  placeholder="Quét mã vạch hoặc nhập SKU..."
+                  value={barcodeInput}
+                  onChange={(e) => setBarcodeInput(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === 'Enter') handleApplyBarcode(); }}
+                  className="flex-1 bg-white border border-slate-200 rounded-lg py-2 px-3 text-xs font-bold font-mono text-slate-700 uppercase tracking-wider"
+                />
+                <button
+                  type="button"
+                  onClick={handleApplyBarcode}
+                  className="bg-red-600 hover:bg-red-700 text-white font-bold text-xs px-4 py-2 rounded-lg cursor-pointer transition-all"
+                >
+                  Áp Dụng
+                </button>
+              </div>
+            </div>
+          ) : (
+            /* CHẾ ĐỘ 2: LỰA CHỌN THUỘC TÍNH SẢN PHẨM (TRẢI NGHIỆM KHÁCH HÀNG THÂN THIỆN) */
+            <div className="space-y-2 sm:space-y-4">
+              <div className="space-y-2 sm:space-y-0 sm:grid sm:grid-cols-3 sm:gap-4">
+                {/* Thương hiệu */}
+                <div className="flex flex-col sm:space-y-1 sm:block grid grid-cols-3 items-center gap-2 py-0.5 sm:py-0">
+                  <label className="col-span-1 text-[10px] font-bold text-slate-400 uppercase">Hãng</label>
+                  <div className="col-span-2">
                     <select
-                      value={selectedBranch}
-                      onChange={(e) => setSelectedBranch(e.target.value)}
-                      className="w-full text-xs font-bold text-slate-700 bg-slate-50 border border-slate-100 p-2.5 rounded-lg focus:outline-hidden cursor-pointer"
+                      value={selectBrand}
+                      onChange={(e) => handleBrandChange(e.target.value)}
+                      className="w-full text-base md:text-xs font-semibold text-slate-700 bg-slate-50 border border-slate-100 p-1.5 sm:p-2 rounded-lg focus:outline-hidden"
                     >
-                      {chiNhanhs.map(branch => (
-                        <option key={branch} value={branch}>{branch}</option>
+                      {thuongHieus.map(b => (
+                        <option key={b} value={b}>{b}</option>
                       ))}
                     </select>
                   </div>
+                </div>
 
-                  <div className="space-y-1.5">
-                    <label className="text-[10px] uppercase font-bold text-slate-400 block">
-                      Ngày lập phiếu
-                    </label>
-                    <input
-                      type="date"
-                      value={ngayLap}
-                      onChange={(e) => setNgayLap(e.target.value)}
-                      className="w-full text-xs font-bold text-slate-700 bg-slate-50 border border-slate-100 p-2.5 rounded-lg focus:outline-hidden"
-                    />
-                  </div>
-
-                  <div className="space-y-1.5">
-                    <label className="text-[10px] uppercase font-bold text-slate-400 block">
-                      Người tạo phiếu
-                    </label>
-                    <input
-                      type="text"
-                      disabled
-                      value={currentUser.fullName}
-                      className="w-full text-xs font-bold text-slate-400 bg-slate-100/60 border border-slate-100 p-2.5 rounded-lg focus:outline-hidden cursor-not-allowed"
-                    />
-                  </div>
-
-                  <div className="space-y-1.5">
-                    <label className="text-[10px] uppercase font-bold text-slate-400 block">
-                      Số hóa đơn tự động
-                    </label>
-                    <input
-                      type="text"
-                      disabled
-                      value={`${loaiPhieu === 'NHẬP' ? 'PNxxxxxx' : 'PXxxxxxx'} (Tự động tăng)`}
-                      className="w-full text-xs font-bold text-slate-400 bg-slate-100/60 border border-slate-100 p-2.5 rounded-lg focus:outline-hidden cursor-not-allowed italic font-mono"
-                    />
-                  </div>
-
-                  <div className="space-y-1.5 sm:col-span-2">
-                    <label className="text-[10px] uppercase font-bold text-slate-400 block">
-                      Ghi chú phiếu
-                    </label>
-                    <textarea
-                      placeholder={`Ví dụ: ${loaiPhieu === 'NHẬP' ? 'Nhập hàng từ nhà cung cấp Blick' : 'Xuất kho trả hàng hoặc bán lẻ cho khách hàng'}...`}
-                      value={ghiChuPhieu}
-                      onChange={(e) => setGhiChuPhieu(e.target.value)}
-                      rows={3}
-                      className="w-full text-xs font-medium text-slate-700 bg-slate-50 border border-slate-100 p-2.5 rounded-lg focus:outline-hidden"
-                    />
+                {/* Chiết suất (Luôn cho phép lựa chọn linh hoạt theo yêu cầu người dùng) */}
+                <div className="flex flex-col sm:space-y-1 sm:block grid grid-cols-3 items-center gap-2 py-0.5 sm:py-0">
+                  <label className="col-span-1 text-[10px] font-bold text-slate-400 uppercase">Chiết suất</label>
+                  <div className="col-span-2">
+                    <select
+                      value={selectChietXuat}
+                      onChange={(e) => setSelectChietXuat(e.target.value)}
+                      className="w-full text-base md:text-xs font-semibold text-slate-700 bg-slate-50 border border-slate-100 p-1.5 sm:p-2 rounded-lg focus:outline-hidden"
+                    >
+                      <option value="1.56">1.56</option>
+                      <option value="1.60">1.60</option>
+                      <option value="1.61">1.61</option>
+                      <option value="1.67">1.67</option>
+                      <option value="1.74">1.74</option>
+                    </select>
                   </div>
                 </div>
 
-                <div className="flex justify-end pt-2 border-t border-slate-50">
-                  <button
-                    onClick={handleNextToStep2}
-                    className="flex items-center gap-1.5 bg-red-600 hover:bg-red-700 text-white font-bold text-xs py-2.5 px-6 rounded-xl cursor-pointer transition-all shadow-xs"
-                  >
-                    <span>Thêm sản phẩm</span>
-                    <ChevronRight className="w-4 h-4" />
-                  </button>
-                </div>
-              </motion.div>
-            )}
-
-            {/* BƯỚC 2: THIẾT LẬP CHI TIẾT SẢN PHẨM */}
-            {currentStep === 2 && (
-              <motion.div
-                initial={{ opacity: 0, x: -15 }}
-                animate={{ opacity: 1, x: 0 }}
-                exit={{ opacity: 0, x: 15 }}
-                transition={{ duration: 0.15 }}
-                className="bento-card !p-5 space-y-4"
-              >
-                <div className="border-b border-slate-50 pb-2 flex items-center justify-between">
-                  <h3 className="font-sans font-bold text-slate-800 text-xs uppercase flex items-center gap-1.5">
-                    <ShoppingCart className="w-4 h-4 text-blue-500" /> Bước 2: Thiết lập chi tiết danh sách sản phẩm
-                  </h3>
-                  
-                  {/* Toggle chế độ Barcode / Thường */}
-                  <button
-                    onClick={() => { setIsBarcodeMode(!isBarcodeMode); setErrorMsg(''); }}
-                    className="text-[10px] font-bold uppercase bg-slate-100 hover:bg-slate-200 border border-slate-200 px-3 py-1.5 rounded-lg flex items-center gap-1.5 text-slate-600 cursor-pointer transition-all"
-                  >
-                    <Barcode className="w-3.5 h-3.5" />
-                    {isBarcodeMode ? 'Nhập thủ công' : 'Quét mã SKU'}
-                  </button>
-                </div>
-
-                {isBarcodeMode ? (
-                  /* GIAO DIỆN QUÉT BARCODE */
-                  <div className="p-4 bg-slate-50 border border-slate-100 rounded-xl space-y-3">
-                    <div className="space-y-1.5">
-                      <label className="text-[10px] uppercase font-bold text-slate-400 block">
-                        Nhập hoặc Quét mã SKU của Tròng Kính
-                      </label>
-                      <div className="flex gap-2">
-                        <input
-                          type="text"
-                          placeholder="Ví dụ: BL-156-DM-C2.00-L0.00"
-                          value={barcodeInput}
-                          onChange={(e) => setBarcodeInput(e.target.value)}
-                          onKeyDown={(e) => e.key === 'Enter' && handleApplyBarcode()}
-                          className="flex-1 text-xs font-mono font-bold text-slate-700 bg-white border border-slate-200 p-2.5 rounded-lg focus:outline-hidden"
-                        />
-                        <button
-                          type="button"
-                          onClick={handleApplyBarcode}
-                          className="bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs px-4 rounded-lg cursor-pointer transition-colors"
-                        >
-                          Khớp mã
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                ) : (
-                  /* GIAO DIỆN LẬP THỦ CÔNG (FORM CO ĐỌC CHẶT CHẼ) */
-                  <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2.5 p-3 bg-slate-50/80 border border-slate-100 rounded-xl">
-                    
-                    {/* Thương hiệu */}
-                    <div className="space-y-1">
-                      <label className="text-[9px] uppercase font-bold text-slate-400">Thương hiệu</label>
-                      <select
-                        value={selectBrand}
-                        onChange={(e) => handleBrandChange(e.target.value)}
-                        className="w-full text-xs font-semibold text-slate-700 bg-white border border-slate-200 py-1.5 px-2 rounded-lg focus:outline-hidden cursor-pointer"
-                      >
-                        {thuongHieus.map(b => (
-                          <option key={b.THUONG_HIEU} value={b.THUONG_HIEU}>{b.THUONG_HIEU}</option>
-                        ))}
-                      </select>
-                    </div>
-
-                    {/* Chiết suất */}
-                    <div className="space-y-1">
-                      <label className="text-[9px] uppercase font-bold text-slate-400">Chiết suất</label>
-                      {['Blick', 'Zeiss Clear', 'Essilor Pre', 'Essilor Rock', 'Zeiss Blue'].includes(selectBrand) ? (
-                        <input
-                          type="text"
-                          disabled
-                          value={selectChietXuat}
-                          className="w-full text-xs font-bold text-slate-400 bg-slate-100 border border-slate-200 py-1.5 px-2 rounded-lg focus:outline-hidden cursor-not-allowed"
-                        />
-                      ) : (
-                        <select
-                          value={selectChietXuat}
-                          onChange={(e) => setSelectChietXuat(e.target.value)}
-                          className="w-full text-xs font-semibold text-slate-700 bg-white border border-slate-200 py-1.5 px-2 rounded-lg focus:outline-hidden cursor-pointer"
-                        >
-                          <option value="1.56">1.56</option>
-                          <option value="1.61">1.61</option>
-                          <option value="1.67">1.67</option>
-                          <option value="1.74">1.74</option>
-                        </select>
-                      )}
-                    </div>
-
-                    {/* Tính năng (Dropdown theo thương hiệu) */}
-                    <div className="space-y-1">
-                      <label className="text-[9px] uppercase font-bold text-slate-400">Tính năng</label>
-                      <select
-                        value={selectTinhNang}
-                        onChange={(e) => setSelectTinhNang(e.target.value)}
-                        className="w-full text-xs font-semibold text-slate-700 bg-white border border-slate-200 py-1.5 px-2 rounded-lg focus:outline-hidden cursor-pointer font-mono"
-                      >
-                        {availableFeatures.map(f => (
-                          <option key={f} value={f}>{f}</option>
-                        ))}
-                      </select>
-                    </div>
-
-                    {/* Loại Độ */}
-                    <div className="space-y-1">
-                      <label className="text-[9px] uppercase font-bold text-slate-400">Loại độ</label>
-                      <select
-                        value={selectDoSphType}
-                        onChange={(e) => setSelectDoSphType(e.target.value as 'CẬN' | 'VIỄN')}
-                        className="w-full text-xs font-semibold text-slate-700 bg-white border border-slate-200 py-1.5 px-2 rounded-lg focus:outline-hidden cursor-pointer"
-                      >
-                        <option value="CẬN">Cận thị</option>
-                        <option value="VIỄN">Viễn thị</option>
-                      </select>
-                    </div>
-
-                    {/* Độ SPH */}
-                    <div className="space-y-1">
-                      <label className="text-[9px] uppercase font-bold text-slate-400">Độ cầu (SPH)</label>
-                      <select
-                        value={selectDoSph}
-                        onChange={(e) => setSelectDoSph(Number(e.target.value))}
-                        className="w-full text-xs font-semibold text-slate-700 bg-white border border-slate-200 py-1.5 px-2 rounded-lg focus:outline-hidden cursor-pointer font-mono"
-                      >
-                        {sphOptions.map(val => (
-                          <option key={val} value={val}>{formatDop(val)}</option>
-                        ))}
-                      </select>
-                    </div>
-
-                    {/* Độ CYL */}
-                    <div className="space-y-1">
-                      <label className="text-[9px] uppercase font-bold text-slate-400">Độ loạn (CYL)</label>
-                      <select
-                        value={selectDoCyl}
-                        onChange={(e) => setSelectDoCyl(Number(e.target.value))}
-                        className="w-full text-xs font-semibold text-slate-700 bg-white border border-slate-200 py-1.5 px-2 rounded-lg focus:outline-hidden cursor-pointer font-mono"
-                      >
-                        {cylOptions.map(val => (
-                          <option key={val} value={val}>{formatDop(val)}</option>
-                        ))}
-                      </select>
-                    </div>
-
-                  </div>
-                )}
-
-                {/* THÔNG TIN KHỚP SKU THỜI GIAN THỰC */}
-                <div className="p-3.5 rounded-xl border border-dashed border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-slate-50/40">
-                  <div className="space-y-1">
-                    <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider block">SKU tính toán tự động:</span>
-                    <span className="text-xs font-mono font-extrabold text-blue-600 bg-blue-50 px-2 py-0.5 rounded border border-blue-100">
-                      {calculatedSKU}
-                    </span>
-                    <span className="text-xs font-bold text-slate-700 block mt-1">{calculatedProductName}</span>
-                  </div>
-
-                  <div className="sm:text-right flex flex-col justify-center">
-                    <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider block">Tồn kho hiện tại:</span>
-                    {matchedProductInDB ? (
-                      <span className={`text-xl font-extrabold font-mono ${matchedProductInDB.TON_CUOI <= 0 ? 'text-red-600' : 'text-slate-800'}`}>
-                        {matchedProductInDB.TON_CUOI} <span className="text-xs font-semibold text-slate-400">{matchedProductInDB.DVT}</span>
-                      </span>
-                    ) : (
-                      <span className="text-xs font-bold text-red-500 bg-red-50 px-2 py-0.5 rounded mt-0.5">
-                        Chưa khai báo SKU
-                      </span>
-                    )}
+                {/* Tính năng (Chỉ có 2 lựa chọn ĐM hoặc ASX) */}
+                <div className="flex flex-col sm:space-y-1 sm:block grid grid-cols-3 items-center gap-2 py-0.5 sm:py-0">
+                  <label className="col-span-1 text-[10px] font-bold text-slate-400 uppercase">Tính năng</label>
+                  <div className="col-span-2">
+                    <select
+                      value={selectTinhNang}
+                      onChange={(e) => setSelectTinhNang(e.target.value)}
+                      className="w-full text-base md:text-xs font-semibold text-slate-700 bg-slate-50 border border-slate-100 p-1.5 sm:p-2 rounded-lg focus:outline-hidden"
+                    >
+                      <option value="ĐM">Đổi màu (ĐM)</option>
+                      <option value="ASX">Ánh sáng xanh (ASX)</option>
+                    </select>
                   </div>
                 </div>
+              </div>
 
-                {/* NHẬP SỐ LƯỢNG VÀ THÊM VÀO GIỎ */}
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-1">
-                  <div className="space-y-1">
-                    <label className="text-[9px] uppercase font-bold text-slate-400">Số lượng lập phiếu</label>
-                    <div className="flex gap-2">
-                      <div className="flex items-center bg-slate-50 border border-slate-250 rounded-lg overflow-hidden shrink-0 h-9">
-                        <button
-                          type="button"
-                          onClick={() => setSelectSoLuong(prev => Math.max(1, prev - 1))}
-                          className="w-10 h-full font-extrabold text-slate-600 hover:bg-slate-200 active:bg-slate-300 transition-colors flex items-center justify-center cursor-pointer text-base select-none"
-                        >
-                          -
-                        </button>
-                        <input
-                          type="number"
-                          min={1}
-                          value={selectSoLuong}
-                          onChange={(e) => setSelectSoLuong(Math.max(1, parseInt(e.target.value) || 1))}
-                          className="w-11 h-full text-xs font-bold text-slate-750 bg-transparent text-center focus:outline-hidden font-mono border-x border-slate-200"
-                        />
-                        <button
-                          type="button"
-                          onClick={() => setSelectSoLuong(prev => prev + 1)}
-                          className="w-10 h-full font-extrabold text-slate-600 hover:bg-slate-200 active:bg-slate-300 transition-colors flex items-center justify-center cursor-pointer text-base select-none"
-                        >
-                          +
-                        </button>
-                      </div>
-                      <input
-                        type="text"
-                        placeholder="Ghi chú dòng sản phẩm..."
-                        value={selectGhiChuDong}
-                        onChange={(e) => setSelectGhiChuDong(e.target.value)}
-                        className="flex-1 text-xs font-semibold text-slate-750 bg-slate-50 border border-slate-250 p-2 rounded-lg focus:outline-hidden h-9"
-                      />
-                    </div>
-                  </div>
-
-                  <div className="flex items-end">
+              <div className="space-y-2 sm:space-y-0 sm:grid sm:grid-cols-3 sm:gap-4 mt-2 sm:mt-4">
+                {/* Phân loại độ */}
+                <div className="flex flex-col sm:space-y-1 sm:block grid grid-cols-3 items-center gap-2 py-0.5 sm:py-0">
+                  <label className="col-span-1 text-[10px] font-bold text-slate-400 uppercase">Loại độ</label>
+                  <div className="col-span-2 grid grid-cols-2 gap-1.5">
                     <button
                       type="button"
-                      onClick={handleAddToBasket}
-                      className="w-full bg-slate-900 hover:bg-black text-white font-bold text-xs py-2.5 rounded-lg cursor-pointer transition-colors flex items-center justify-center gap-1.5 shadow-sm"
+                      onClick={() => setSelectDoSphType('CẬN')}
+                      className={`py-1 px-1.5 text-xs font-bold rounded-lg cursor-pointer text-center transition-all ${
+                        selectDoSphType === 'CẬN' ? 'bg-blue-50 text-blue-600 border border-blue-100' : 'bg-slate-50 text-slate-400 border border-slate-100'
+                      }`}
                     >
-                      <Plus className="w-4 h-4" /> Thêm vào danh sách phiếu
+                      Cận (-)
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setSelectDoSphType('VIỄN')}
+                      className={`py-1 px-1.5 text-xs font-bold rounded-lg cursor-pointer text-center transition-all ${
+                        selectDoSphType === 'VIỄN' ? 'bg-amber-50 text-amber-600 border border-amber-100' : 'bg-slate-50 text-slate-400 border border-slate-100'
+                      }`}
+                    >
+                      Viễn (+)
                     </button>
                   </div>
                 </div>
 
-                {/* ĐIỀU HƯỚNG BƯỚC 2 */}
-                <div className="flex justify-between items-center pt-3 border-t border-slate-50">
-                  <button
-                    onClick={() => setCurrentStep(1)}
-                    className="flex items-center gap-1.5 text-slate-500 hover:text-slate-800 font-bold text-xs py-2.5 px-4 rounded-xl cursor-pointer transition-all"
-                  >
-                    <ChevronLeft className="w-4 h-4" />
-                    <span>Quay lại</span>
-                  </button>
-                  <button
-                    onClick={handleNextToStep3}
-                    className="flex items-center gap-1.5 bg-red-600 hover:bg-red-700 text-white font-bold text-xs py-2.5 px-6 rounded-xl cursor-pointer transition-all shadow-xs"
-                  >
-                    <span>Tiếp tục xác nhận</span>
-                    <ChevronRight className="w-4 h-4" />
-                  </button>
-                </div>
-              </motion.div>
-            )}
-
-            {/* BƯỚC 3: XÁC NHẬN TỔNG HỢP & LƯU */}
-            {currentStep === 3 && (
-              <motion.div
-                initial={{ opacity: 0, x: -15 }}
-                animate={{ opacity: 1, x: 0 }}
-                exit={{ opacity: 0, x: 15 }}
-                transition={{ duration: 0.15 }}
-                className="bento-card !p-5 space-y-4"
-              >
-                <div className="border-b border-slate-50 pb-2">
-                  <h3 className="font-sans font-bold text-slate-800 text-xs uppercase flex items-center gap-1.5">
-                    <CheckCircle className="w-4.5 h-4.5 text-emerald-500" /> Bước 3: Xác nhận tổng hợp và Lưu phiếu {loaiPhieu.toLowerCase()} kho
-                  </h3>
-                </div>
-
-                {/* TÓM TẮT METADATA PHIẾU */}
-                <div className="bg-slate-50 p-4 rounded-xl border border-slate-100 text-xs space-y-2">
-                  <h4 className="font-bold text-slate-700 border-b border-slate-200 pb-1 flex items-center gap-1">
-                    <Info className="w-3.5 h-3.5 text-blue-500" /> Tóm tắt thông tin chứng từ
-                  </h4>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-y-2 gap-x-4">
-                    <p><span className="text-slate-400">Loại phiếu:</span> <span className={`font-bold py-0.5 px-2 rounded-sm text-[10px] ${loaiPhieu === 'NHẬP' ? 'bg-emerald-100 text-emerald-800' : 'bg-red-100 text-red-800'}`}>{loaiPhieu} KHO</span></p>
-                    <p><span className="text-slate-400">Ngày lập:</span> <strong className="text-slate-700 font-mono">{ngayLap}</strong></p>
-                    <p><span className="text-slate-400">Chi nhánh:</span> <strong className="text-slate-700">{selectedBranch}</strong></p>
-                    <p><span className="text-slate-400">Người lập:</span> <strong className="text-slate-700">{currentUser.fullName}</strong></p>
-                    <p className="sm:col-span-2"><span className="text-slate-400">Ghi chú phiếu:</span> <span className="text-slate-600 italic font-medium">{ghiChuPhieu || '(Không có ghi chú)'}</span></p>
+                {/* Độ SPH */}
+                <div className="flex flex-col sm:space-y-1 sm:block grid grid-cols-3 items-center gap-2 py-0.5 sm:py-0">
+                  <label className="col-span-1 text-[10px] font-bold text-slate-400 uppercase">Cầu (SPH)</label>
+                  <div className="col-span-2">
+                    <select
+                      value={selectDoSph}
+                      onChange={(e) => setSelectDoSph(Number(e.target.value))}
+                      className="w-full text-base md:text-xs font-semibold text-slate-700 bg-slate-50 border border-slate-100 p-1.5 sm:p-2 rounded-lg font-mono"
+                    >
+                      {sphOptions.map(opt => (
+                        <option key={opt} value={opt}>{formatDop(opt)}</option>
+                      ))}
+                    </select>
                   </div>
                 </div>
 
-                {/* BẢNG TỔNG HỢP DANH SÁCH SẢN PHẨM */}
-                <div className="space-y-2">
-                  <span className="text-[10px] uppercase font-bold text-slate-400 block">
-                    Danh sách chi tiết dòng sản phẩm ({cart.length} dòng)
-                  </span>
-
-                  {/* Dạng bảng cho máy tính */}
-                  <div className="hidden sm:block border border-slate-100 rounded-xl overflow-hidden shadow-2xs max-h-48 overflow-y-auto bg-white">
-                    <table className="w-full text-left text-xs">
-                      <thead className="bg-slate-50 text-[10px] uppercase font-bold text-slate-400 border-b border-slate-100">
-                        <tr>
-                          <th className="p-2.5">SKU</th>
-                          <th className="p-2.5">Tên Sản Phẩm</th>
-                          <th className="p-2.5 text-right">Số lượng</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-slate-50 font-semibold text-slate-700">
-                        {cart.map((item) => (
-                          <tr key={item.id}>
-                            <td className="p-2.5 font-mono text-[11px] text-blue-600">{item.sku}</td>
-                            <td className="p-2.5 text-slate-600 truncate max-w-[200px]">{item.tenSp}</td>
-                            <td className="p-2.5 font-mono text-right">{item.soLuong} {item.dvt}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
+                {/* Độ CYL (loạn) */}
+                <div className="flex flex-col sm:space-y-1 sm:block grid grid-cols-3 items-center gap-2 py-0.5 sm:py-0">
+                  <label className="col-span-1 text-[10px] font-bold text-slate-400 uppercase">Loạn (CYL)</label>
+                  <div className="col-span-2">
+                    <select
+                      value={selectDoCyl}
+                      onChange={(e) => setSelectDoCyl(Number(e.target.value))}
+                      className="w-full text-base md:text-xs font-semibold text-slate-700 bg-slate-50 border border-slate-100 p-1.5 sm:p-2 rounded-lg font-mono"
+                    >
+                      {cylOptions.map(opt => (
+                        <option key={opt} value={opt}>{formatDop(opt)}</option>
+                      ))}
+                    </select>
                   </div>
-
-                  {/* Dạng thẻ cho thiết bị di động */}
-                  <div className="block sm:hidden space-y-2 max-h-56 overflow-y-auto pr-1">
-                    {cart.map((item) => (
-                      <div key={item.id} className="p-3 bg-white border border-slate-100 rounded-xl shadow-3xs flex items-center justify-between gap-3">
-                        <div className="space-y-0.5">
-                          <span className="text-[9px] font-mono font-bold text-blue-600 bg-blue-50 px-1.5 py-0.5 rounded border border-blue-100/50">
-                            {item.sku}
-                          </span>
-                          <p className="text-[11px] font-bold text-slate-700 leading-tight line-clamp-2 mt-1">{item.tenSp}</p>
-                        </div>
-                        <div className="text-right shrink-0 font-mono font-extrabold text-slate-800">
-                          {item.soLuong} <span className="text-[9px] font-sans font-medium text-slate-400 block">{item.dvt}</span>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-
-                {/* ĐIỀU HƯỚNG BƯỚC 3 */}
-                <div className="flex justify-between items-center pt-3 border-t border-slate-50">
-                  <button
-                    onClick={() => setCurrentStep(2)}
-                    className="flex items-center gap-1.5 text-slate-500 hover:text-slate-800 font-bold text-xs py-2.5 px-4 rounded-xl cursor-pointer transition-all"
-                  >
-                    <ChevronLeft className="w-4 h-4" />
-                    <span>Quay lại</span>
-                  </button>
-                  <button
-                    onClick={handleCompleteTransaction}
-                    className="flex items-center gap-1.5 bg-red-600 hover:bg-red-700 text-white font-extrabold text-xs py-2.5 px-6 rounded-xl cursor-pointer transition-all shadow-md shadow-red-600/15 animate-pulse"
-                  >
-                    <Save className="w-4 h-4" />
-                    <span>Xác Nhận & Lưu Phiếu</span>
-                  </button>
-                </div>
-              </motion.div>
-            )}
-
-          </AnimatePresence>
-        </div>
-
-        {/* PANEL PHẢI: GIỎ HÀNG CHỜ / TÓM TẮT SỐ LIỆU (2/5 Cột) */}
-        <div className="lg:col-span-2 space-y-4">
-          
-          {/* CARD TÓM TẮT THÔNG SỐ */}
-          {cart.length > 0 && (
-            <div className={`bento-card !p-4 text-white space-y-3.5 ${loaiPhieu === 'NHẬP' ? 'bg-emerald-950/95 border-emerald-900' : 'bg-rose-950/95 border-rose-900'}`}>
-              <h4 className="font-sans font-bold text-[10px] uppercase text-slate-300 tracking-wider">
-                Thống kê tóm tắt phiếu
-              </h4>
-              <div className="grid grid-cols-2 gap-3 text-center text-xs">
-                <div className="bg-slate-900/40 p-2.5 rounded-lg border border-slate-800">
-                  <span className="text-[10px] text-slate-300 block font-bold uppercase">Tổng số dòng</span>
-                  <span className="text-lg font-extrabold font-mono text-slate-100">{cart.length}</span>
-                </div>
-                <div className="bg-slate-900/40 p-2.5 rounded-lg border border-slate-800">
-                  <span className="text-[10px] text-slate-300 block font-bold uppercase">Tổng số lượng</span>
-                  <span className="text-lg font-extrabold font-mono text-slate-100">{totalCartQty}</span>
                 </div>
               </div>
             </div>
           )}
 
-          {/* GIỎ HÀNG CHI TIẾT */}
-          <div className="bento-card !p-4 flex flex-col max-h-[280px]">
-            <h3 className="font-sans font-bold text-slate-800 text-xs uppercase border-b border-slate-50 pb-2 mb-3 flex items-center gap-1.5">
-              <ShoppingCart className="w-4 h-4 text-slate-400" /> Chi tiết dòng sản phẩm ({cart.length})
-            </h3>
+          {/* DÒNG SỐ LƯỢNG, ĐVT & GHI CHÚ SẢN PHẨM */}
+          <div className="space-y-2 sm:space-y-0 sm:grid sm:grid-cols-3 sm:gap-3">
+            <div className="flex flex-col sm:space-y-1 sm:block grid grid-cols-3 items-center gap-2 py-0.5 sm:py-0">
+              <label className="col-span-1 text-[10px] font-bold text-slate-400 uppercase">S.lượng</label>
+              <div className="col-span-2 flex items-center gap-1.5">
+                <button
+                  type="button"
+                  onClick={() => setSelectSoLuong(prev => Math.max(1, prev - 1))}
+                  className="w-8 h-8 flex items-center justify-center bg-slate-100 active:bg-slate-200 text-slate-600 rounded-lg hover:bg-slate-200 font-bold text-sm cursor-pointer shrink-0 transition-colors"
+                >
+                  -
+                </button>
+                <input
+                  type="number"
+                  min={1}
+                  value={selectSoLuong}
+                  onChange={(e) => setSelectSoLuong(Math.max(1, parseInt(e.target.value) || 1))}
+                  className="w-full text-center text-base md:text-xs font-bold text-slate-700 bg-slate-50 border border-slate-100 p-1.5 sm:p-2 rounded-lg font-mono"
+                />
+                <button
+                  type="button"
+                  onClick={() => setSelectSoLuong(prev => prev + 1)}
+                  className="w-8 h-8 flex items-center justify-center bg-slate-100 active:bg-slate-200 text-slate-600 rounded-lg hover:bg-slate-200 font-bold text-sm cursor-pointer shrink-0 transition-colors"
+                >
+                  +
+                </button>
+              </div>
+            </div>
+            <div className="flex flex-col sm:space-y-1 sm:block grid grid-cols-3 items-center gap-2 py-0.5 sm:py-0">
+              <label className="col-span-1 text-[10px] font-bold text-slate-400 uppercase">ĐVT</label>
+              <div className="col-span-2">
+                <input
+                  type="text"
+                  value="miếng"
+                  disabled
+                  className="w-full text-base md:text-xs font-bold text-slate-500 bg-slate-100 border border-slate-100 p-1.5 sm:p-2 rounded-lg"
+                />
+              </div>
+            </div>
+            <div className="flex flex-col sm:space-y-1 sm:block grid grid-cols-3 items-center gap-2 py-0.5 sm:py-0">
+              <label className="col-span-1 text-[10px] font-bold text-slate-400 uppercase">Ghi chú dòng</label>
+              <div className="col-span-2">
+                <input
+                  type="text"
+                  placeholder="Trả hàng, gấp..."
+                  value={selectGhiChuDong}
+                  onChange={(e) => setSelectGhiChuDong(e.target.value)}
+                  className="w-full text-base md:text-xs font-semibold text-slate-700 bg-slate-50 border border-slate-100 p-1.5 sm:p-2 rounded-lg"
+                />
+              </div>
+            </div>
+          </div>
 
-            <div className="flex-1 overflow-y-auto divide-y divide-slate-50 pr-1 space-y-2.5">
-              {cart.length > 0 ? (
-                cart.map((item) => (
-                  <div key={item.id} className="pt-2 pb-3.5 space-y-1 text-xs">
-                    <div className="flex items-start justify-between gap-2">
-                      <div>
-                        <span className="text-[9px] font-mono font-bold text-blue-600 bg-blue-50 px-1.5 py-0.5 rounded">
-                          {item.sku}
-                        </span>
-                        <p className="font-bold text-slate-800 mt-1 truncate max-w-[170px]" title={item.tenSp}>
-                          {item.tenSp}
-                        </p>
-                      </div>
-                      <button
-                        onClick={() => handleRemoveCartItem(item.id)}
-                        className="text-slate-400 hover:text-red-600 p-1 rounded-lg transition-colors cursor-pointer shrink-0"
-                        title="Xóa dòng"
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </button>
-                    </div>
-
-                    <div className="flex items-center justify-between text-[10px] font-mono text-slate-400 font-bold pt-1">
-                      <span>Số lượng: <strong className="text-slate-700">{item.soLuong} {item.dvt}</strong></span>
-                      <span className="text-[10px] font-sans font-medium text-slate-500 italic max-w-[130px] truncate">
-                        {item.ghiChu}
-                      </span>
-                    </div>
-                  </div>
-                ))
+          {/* TRẠNG THÁI SKU PHÁT HIỆN TỒN KHO THỰC TẾ TRONG HỆ THỐNG */}
+          <div className="bg-slate-50 p-4 rounded-xl border border-slate-100 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div className="space-y-1">
+              <span className="text-[10px] uppercase font-bold text-slate-400">SKU xác định:</span>
+              <p className="text-xs font-bold font-mono text-slate-800 tracking-tight">{calculatedSKU}</p>
+              <p className="text-[11px] text-slate-400 truncate max-w-sm font-medium">{calculatedProductName}</p>
+            </div>
+            
+            <div className="text-left sm:text-right shrink-0">
+              <span className="text-[10px] uppercase font-bold text-slate-400">Trạng thái tồn kho:</span>
+              {matchedProductInDB ? (
+                <p className="text-xs font-extrabold text-slate-700 flex items-center sm:justify-end gap-1 font-mono">
+                  Sẵn có: <span className="text-blue-600 text-sm">{matchedProductInDB.TON_CUOI}</span> {matchedProductInDB.DVT}
+                </p>
               ) : (
-                <div className="py-24 text-center text-xs text-slate-400 font-mono italic leading-relaxed">
-                  Chưa có sản phẩm nào được thêm vào danh sách chứng từ lập phiếu.
-                </div>
+                <p className="text-xs font-extrabold text-red-600 flex items-center sm:justify-end gap-1">
+                  ⚠️ Chưa tồn tại trong kho
+                </p>
               )}
             </div>
           </div>
+
+          {/* NÚT THÊM VÀO GIỎ CHỜ XÁC NHẬN */}
+          {currentUser.writeAccess !== false && (
+            <div className="flex justify-end pt-2">
+              <button
+                type="button"
+                onClick={handleAddToBasket}
+                className="flex items-center gap-1.5 bg-red-600 hover:bg-red-700 text-white font-bold text-xs py-2.5 px-6 rounded-xl cursor-pointer transition-all shadow-xs"
+              >
+                <Plus className="w-4 h-4" /> Thêm Vào Phiếu Chờ
+              </button>
+            </div>
+          )}
 
         </div>
 
       </div>
 
+      {/* BẢNG 3: DANH SÁCH CHỜ XÁC NHẬN (DANH SÁCH CHI TIẾT) */}
+      <div className="bento-card !p-0 overflow-hidden">
+        
+        <div className="bg-slate-50/75 px-5 py-3 border-b border-slate-100 flex items-center justify-between">
+          <span className="text-xs font-bold text-slate-700 uppercase flex items-center gap-1.5">
+            <Clock className="w-4 h-4 text-slate-400" /> Danh Sách Hàng Chờ Xác Nhận ({cart.length} sản phẩm)
+          </span>
+          <span className="text-xs font-mono font-bold text-blue-600">
+            Tổng sản lượng: {totalCartQty} {selectDvt}
+          </span>
+        </div>
+
+        <div className="overflow-x-auto">
+          <table className="w-full text-left border-collapse">
+            <thead>
+              <tr className="bg-slate-50/25 border-b border-slate-100">
+                <th className="py-3 px-4 text-[10px] font-bold text-slate-400 uppercase tracking-wider font-mono">STT</th>
+                <th className="py-3 px-4 text-[10px] font-bold text-slate-400 uppercase tracking-wider">Mã SKU</th>
+                <th className="py-3 px-4 text-[10px] font-bold text-slate-400 uppercase tracking-wider">Mô Tả Tròng Kính</th>
+                <th className="py-3 px-4 text-[10px] font-bold text-slate-400 uppercase tracking-wider text-center">Số Lượng</th>
+                <th className="py-3 px-4 text-[10px] font-bold text-slate-400 uppercase tracking-wider">Ghi Chú Dòng</th>
+                <th className="py-3 px-4 text-[10px] font-bold text-slate-400 uppercase tracking-wider text-center">Xóa</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-50">
+              {cart.length > 0 ? (
+                cart.map((item, index) => (
+                  <tr key={item.id} className="hover:bg-slate-50/50 transition-colors">
+                    <td className="py-3 px-4 text-xs font-mono text-slate-400">{index + 1}</td>
+                    <td className="py-3 px-4">
+                      <span className="text-xs font-bold font-mono text-slate-700 bg-slate-100 py-0.5 px-2 rounded">
+                        {item.sku}
+                      </span>
+                    </td>
+                    <td className="py-3 px-4 text-xs font-semibold text-slate-800">{item.tenSp}</td>
+                    <td className="py-3 px-4 text-center font-bold text-xs text-blue-600 font-mono">
+                      {item.soLuong} {item.dvt}
+                    </td>
+                    <td className="py-3 px-4 text-xs text-slate-500 font-medium italic">{item.ghiChu}</td>
+                    <td className="py-3 px-4 text-center">
+                      <button
+                        type="button"
+                        onClick={() => handleRemoveCartItem(item.id)}
+                        className="text-rose-500 hover:text-rose-700 transition-colors cursor-pointer"
+                        title="Xóa dòng này"
+                      >
+                        <Trash2 className="w-4.5 h-4.5" />
+                      </button>
+                    </td>
+                  </tr>
+                ))
+              ) : (
+                <tr>
+                  <td colSpan={6} className="py-12 text-center text-xs text-slate-400 font-mono leading-relaxed">
+                    Phiếu rỗng. Hãy chọn tròng kính mắt và cấu hình thông số ở bảng trên,<br />sau đó nhấn nút "Thêm Vào Phiếu Chờ".
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+
+        {/* Nút lưu chứng từ giao dịch */}
+        {cart.length > 0 && currentUser.writeAccess !== false && (
+          <div className="bg-slate-50 px-5 py-4 border-t border-slate-100 flex justify-end gap-3">
+            <button
+              type="button"
+              onClick={() => { setCart([]); setErrorMsg(''); }}
+              className="px-4 py-2 text-xs font-bold text-slate-500 hover:text-slate-700 cursor-pointer bg-white border border-slate-200 rounded-xl"
+            >
+              Xóa Toàn Bộ
+            </button>
+            <button
+              type="button"
+              onClick={handleCompleteTransaction}
+              className="flex items-center gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-xs py-2 px-6 rounded-xl cursor-pointer transition-all shadow-xs"
+            >
+              <Save className="w-4.5 h-4.5" /> Hoàn Thành & Lưu Chứng Từ
+            </button>
+          </div>
+        )}
+
+      </div>
+      </>
+    );
+  };
+
+  return (
+    <div className="space-y-6">
+      {isMobile ? renderMobileOnboarding() : renderDesktopLayout()}
+
+      {/* RENDER TOAST KHẨN CẤP / CHÍNH GIỮA MÀN HÌNH KHI THÊM PHIẾU CHỜ THÀNH CÔNG */}
+      <AnimatePresence>
+        {toastPending && (
+          <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-xs pointer-events-none">
+            <motion.div
+              initial={{ scale: 0.85, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.85, opacity: 0 }}
+              className="bg-[#0f172a] text-white p-6 rounded-2xl shadow-2xl flex flex-col items-center gap-3.5 max-w-sm pointer-events-auto border border-emerald-500/30 text-center"
+            >
+              <div className="w-12 h-12 rounded-full bg-emerald-500/10 text-emerald-400 flex items-center justify-center border border-emerald-500/20">
+                <CheckCircle className="w-7 h-7" />
+              </div>
+              <div>
+                <h4 className="font-bold text-sm text-slate-100">Thao tác thành công!</h4>
+                <p className="text-xs text-slate-400 mt-1 leading-relaxed font-medium">{toastPending.message}</p>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }

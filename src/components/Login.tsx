@@ -36,46 +36,95 @@ export default function Login({ onLoginSuccess }: LoginProps) {
     setSuccessMsg('');
     setLoading(true);
 
-    const emailInput = username.trim();
+    const inputUser = username.trim();
     const cleanPass = password.trim();
 
-    if (!emailInput || !cleanPass) {
-      setErrorMsg('Vui lòng nhập đầy đủ Email và Mật khẩu.');
+    if (!inputUser || !cleanPass) {
+      setErrorMsg('Vui lòng nhập đầy đủ Tên đăng nhập và Mật khẩu.');
       setLoading(false);
       return;
     }
 
-    const lowerUser = emailInput.toLowerCase();
+    const lowerUser = inputUser.toLowerCase();
 
-    // 1. Kiểm tra tài khoản trong danh sách nhân viên local trước (Bao gồm cả admin, kho, nhanvien và tài khoản do Admin tạo mới)
-    const savedNhanViens = localStorage.getItem('B_NHANVIEN');
-    const listNhanVien: NhanVien[] = savedNhanViens ? JSON.parse(savedNhanViens) : [];
-    const matchedStaff = listNhanVien.find(
-      n => (n.TEN_DANG_NHAP?.toLowerCase() === lowerUser || n.USERNAME?.toLowerCase() === lowerUser || n.EMAIL?.toLowerCase() === lowerUser) && (n.MAT_KHAU === cleanPass || n.PASSWORD === cleanPass)
-    );
+    // 1. Kiểm tra tài khoản trong danh sách B_NHANVIEN được lưu ở localStorage / database trước
+    try {
+      const savedNhanViens = localStorage.getItem('B_NHANVIEN');
+      const listNhanVien: NhanVien[] = savedNhanViens ? JSON.parse(savedNhanViens) : [];
+      
+      const staffMember = listNhanVien.find(n => 
+        (n.TEN_DANG_NHAP && n.TEN_DANG_NHAP.toLowerCase() === lowerUser)
+      );
 
-    if (matchedStaff) {
-      setLoading(false);
-      const isOwner = matchedStaff.EMAIL?.toLowerCase() === 'nguyenkienduc.digital@gmail.com';
-      onLoginSuccess({
-        username: matchedStaff.EMAIL || matchedStaff.TEN_DANG_NHAP || matchedStaff.USERNAME || 'staff',
-        fullName: matchedStaff.HO_TEN,
-        role: matchedStaff.ROLE,
-        branch: matchedStaff.CHI_NHANH,
-        writeAccess: isOwner ? true : (matchedStaff.WRITE_ACCESS ?? false),
-        WRITE_ACCESS: isOwner ? true : (matchedStaff.WRITE_ACCESS ?? false)
-      });
-      return;
+      if (staffMember) {
+        // Kiểm tra mật khẩu (hỗ trợ cả cột MAT_KHAU mới và PASSWORD cũ để tương thích ngược)
+        const matchedPassword = staffMember.MAT_KHAU || staffMember.PASSWORD;
+        if (matchedPassword === cleanPass) {
+          setLoading(false);
+          onLoginSuccess({
+            username: staffMember.EMAIL || staffMember.TEN_DANG_NHAP || staffMember.HO_TEN,
+            fullName: staffMember.HO_TEN,
+            role: staffMember.ROLE,
+            branch: staffMember.CHI_NHANH,
+            writeAccess: staffMember.WRITE_ACCESS !== false,
+            WRITE_ACCESS: staffMember.WRITE_ACCESS !== false,
+            id: staffMember.MA_NV
+          });
+          return;
+        } else {
+          setErrorMsg('Mật khẩu không chính xác. Vui lòng kiểm tra lại.');
+          setLoading(false);
+          return;
+        }
+      }
+    } catch (err) {
+      console.error('Lỗi khi đối chiếu thông tin nhân viên:', err);
     }
 
-    // 2. Nếu không khớp tài khoản local và không chứa ký tự '@' (không phải email)
+    // 2. Nếu là tài khoản test nhanh cục bộ không chứa ký tự '@'
     if (!lowerUser.includes('@')) {
       setLoading(false);
-      setErrorMsg('Tài khoản hoặc mật khẩu không chính xác. Vui lòng thử lại hoặc liên hệ Admin.');
+      // Kiểm tra tài khoản Admin mặc định hoặc gõ "admin"
+      if (lowerUser === 'admin' && cleanPass === '12345') {
+        onLoginSuccess({
+          username: 'nguyenkienduc.digital@gmail.com',
+          fullName: 'Nguyễn Kiến Đức',
+          role: 'ADMIN',
+          branch: 'Kho Trung Tâm',
+          writeAccess: true
+        });
+        return;
+      }
+
+      // Kiểm tra tài khoản Thù Kho mặc định hoặc gõ "kho"
+      if (lowerUser === 'kho' && cleanPass === '12345') {
+        onLoginSuccess({
+          username: 'kho@gmail.com',
+          fullName: 'Trần Văn Kho',
+          role: 'KHO',
+          branch: 'Kho Trung Tâm',
+          writeAccess: true
+        });
+        return;
+      }
+
+      // Kiểm tra tài khoản Nhân viên bán hàng mặc định hoặc gõ "nhanvien"
+      if (lowerUser === 'nhanvien' && cleanPass === '12345') {
+        onLoginSuccess({
+          username: 'nhanvien@gmail.com',
+          fullName: 'Lê Thị Bán Hàng',
+          role: 'NHAN_VIEN',
+          branch: 'Chi nhánh Quận 1',
+          writeAccess: false
+        });
+        return;
+      }
+
+      setErrorMsg('Tên đăng nhập không tồn tại. Vui lòng kiểm tra lại.');
       return;
     }
 
-    // 3. Xử lý qua Supabase Auth nếu là Email và chưa khớp mật khẩu local
+    // 3. Xử lý qua Supabase Auth (dành cho các tài khoản email trực tuyến)
     try {
       if (isSignUp) {
         const { data, error } = await supabase.auth.signUp({
@@ -103,7 +152,8 @@ export default function Login({ onLoginSuccess }: LoginProps) {
               role: isOwner ? 'ADMIN' : (staffMember?.ROLE || 'NHAN_VIEN'),
               branch: isOwner ? 'Kho Trung Tâm' : (staffMember?.CHI_NHANH || 'Kho Trung Tâm'),
               writeAccess: isOwner ? true : (staffMember ? staffMember.WRITE_ACCESS : false),
-              WRITE_ACCESS: isOwner ? true : (staffMember ? staffMember.WRITE_ACCESS : false)
+              WRITE_ACCESS: isOwner ? true : (staffMember ? staffMember.WRITE_ACCESS : false),
+              id: data.user.id
             });
           } else {
             setSuccessMsg('Đăng ký thành công! Hãy xác nhận email của bạn hoặc tiến hành Đăng nhập.');
@@ -134,7 +184,8 @@ export default function Login({ onLoginSuccess }: LoginProps) {
             role: isOwner ? 'ADMIN' : (staffMember?.ROLE || 'NHAN_VIEN'),
             branch: isOwner ? 'Kho Trung Tâm' : (staffMember?.CHI_NHANH || 'Kho Trung Tâm'),
             writeAccess: isOwner ? true : (staffMember ? staffMember.WRITE_ACCESS : false),
-            WRITE_ACCESS: isOwner ? true : (staffMember ? staffMember.WRITE_ACCESS : false)
+            WRITE_ACCESS: isOwner ? true : (staffMember ? staffMember.WRITE_ACCESS : false),
+            id: data.user.id
           });
         }
       }
@@ -211,17 +262,17 @@ export default function Login({ onLoginSuccess }: LoginProps) {
         {/* FORM ĐĂNG NHẬP / ĐĂNG KÝ */}
         <form onSubmit={handleSubmit} className="space-y-5">
           <div className="space-y-1.5">
-            <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Tên Đăng Nhập hoặc Email</label>
+            <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Tên Đăng Nhập</label>
             <div className="relative">
               <span className="absolute inset-y-0 left-0 flex items-center pl-3.5 text-slate-500">
                 <UserIcon className="w-4 h-4" />
               </span>
               <input
                 type="text"
-                placeholder={isSignUp ? "Nhập địa chỉ email đăng ký" : "Nhập tên đăng nhập hoặc email tài khoản"}
+                placeholder={isSignUp ? "Đăng ký email (cho Supabase)" : "Nhập tên đăng nhập hoặc email..."}
                 value={username}
                 onChange={(e) => setUsername(e.target.value)}
-                className="w-full text-xs font-semibold text-white bg-slate-800/60 border border-slate-750 rounded-xl py-3 pl-10 pr-4 focus:outline-hidden focus:border-blue-500 focus:ring-2 focus:ring-blue-500/10 transition-all font-mono"
+                className="w-full text-base md:text-xs font-semibold text-white bg-slate-800/60 border border-slate-750 rounded-xl py-3 pl-10 pr-4 focus:outline-hidden focus:border-blue-500 focus:ring-2 focus:ring-blue-500/10 transition-all font-mono"
               />
             </div>
           </div>
@@ -234,10 +285,10 @@ export default function Login({ onLoginSuccess }: LoginProps) {
               </span>
               <input
                 type={showPassword ? 'text' : 'password'}
-                placeholder="Nhập mật khẩu (Tối thiểu 6 ký tự)"
+                placeholder="Nhập mật khẩu"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
-                className="w-full text-xs font-semibold text-white bg-slate-800/60 border border-slate-750 rounded-xl py-3 pl-10 pr-10 focus:outline-hidden focus:border-blue-500 focus:ring-2 focus:ring-blue-500/10 transition-all font-mono"
+                className="w-full text-base md:text-xs font-semibold text-white bg-slate-800/60 border border-slate-750 rounded-xl py-3 pl-10 pr-10 focus:outline-hidden focus:border-blue-500 focus:ring-2 focus:ring-blue-500/10 transition-all font-mono"
               />
               <button
                 type="button"
