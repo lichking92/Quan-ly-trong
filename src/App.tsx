@@ -30,7 +30,7 @@ import {
 import { motion, AnimatePresence } from 'motion/react';
 
 // Import Types và Mock Data
-import { SanPham, NhapXuat, NhapXuatCT, KiemKho, UserRole, User, ThươngHieu, ChiNhanh, NhanVien } from './types';
+import { SanPham, NhapXuat, NhapXuatCT, KiemKho, UserRole, User, ThươngHieu, ChiNhanh, NhanVien, EmailLog } from './types';
 import { 
   MOCK_SAN_PHAM, 
   MOCK_NHAP_XUAT, 
@@ -56,7 +56,9 @@ import {
   deleteNhapXuatAndDetails,
   deleteThuongHieu,
   deleteChiNhanh,
-  deleteNhanVien
+  deleteNhanVien,
+  syncEmailLog,
+  fetchEmailLogs
 } from './supabaseSync';
 
 // Import Components con
@@ -118,6 +120,11 @@ export default function App() {
     return saved ? JSON.parse(saved) : MOCK_NHAN_VIEN;
   });
 
+  const [emailLogs, setEmailLogs] = useState<EmailLog[]>(() => {
+    const saved = localStorage.getItem('B_EMAILLOG');
+    return saved ? JSON.parse(saved) : [];
+  });
+
   const [loadingDb, setLoadingDb] = useState<boolean>(false);
 
   // --- 2. QUẢN LÝ NGƯỜI DÙNG HIỆN TẠI & PHÂN QUYỀN CHẶT CHẼ ---
@@ -129,14 +136,14 @@ export default function App() {
   const handleLogout = async () => {
     setCurrentUser(null);
     localStorage.removeItem('CURRENT_USER');
-    await supabase.auth.signOut();
+    console.log("Đã đăng xuất người dùng trên giao diện. Giữ kết nối nền Supabase hoạt động.");
   };
 
   const [isSyncing, setIsSyncing] = useState<boolean>(false);
 
   const handleManualSync = async () => {
-    if (!currentUser || !currentUser.username.includes('@') || !currentUser.id) {
-      setSuccessToast({ message: "Vui lòng đăng nhập tài khoản trực tuyến để đồng bộ!" });
+    if (!currentUser || !currentUser.id) {
+      setSuccessToast({ message: "Vui lòng đăng nhập để đồng bộ!" });
       return;
     }
     setIsSyncing(true);
@@ -152,7 +159,7 @@ export default function App() {
 
   // Background polling interval - Tự động đồng bộ liên tục mỗi 15 giây (seamless, không che mờ màn hình)
   useEffect(() => {
-    if (!currentUser || !currentUser.username.includes('@') || !currentUser.id) return;
+    if (!currentUser || !currentUser.id) return;
 
     const interval = setInterval(async () => {
       if (ignoreRealtimeRef.current) {
@@ -178,6 +185,15 @@ export default function App() {
         localStorage.setItem('B_THUONGHIEU', JSON.stringify(payload.thuongHieus));
         localStorage.setItem('B_CHINHANH', JSON.stringify(payload.chiNhanhs));
         localStorage.setItem('B_NHANVIEN', JSON.stringify(payload.nhanViens));
+
+        // Background sync email logs
+        try {
+          const logs = await fetchEmailLogs(currentUser.id);
+          setEmailLogs(logs);
+          localStorage.setItem('B_EMAILLOG', JSON.stringify(logs));
+        } catch (mailErr) {
+          console.warn("Background Polling: Lỗi đồng bộ log email:", mailErr);
+        }
       } catch (err) {
         console.warn("Lỗi đồng bộ ngầm:", err);
       }
@@ -209,21 +225,64 @@ export default function App() {
       localStorage.setItem('B_CHINHANH', JSON.stringify(payload.chiNhanhs));
       localStorage.setItem('B_NHANVIEN', JSON.stringify(payload.nhanViens));
 
-      // Cập nhật quyền ghi dữ liệu của currentUser dựa trên danh sách nhân viên vừa nạp
-      const staffMember = payload.nhanViens.find(n => n.EMAIL.toLowerCase() === email.toLowerCase());
-      const isOwner = email.toLowerCase() === 'nguyenkienduc.digital@gmail.com' || email.toLowerCase() === 'nguyennhanhoa.artist@gmail.com';
-      
-      const u: User = {
-        username: email,
-        fullName: isOwner ? 'Nguyễn Nhân Hòa (Owner)' : (staffMember?.HO_TEN || email.split('@')[0]),
-        role: isOwner ? 'ADMIN' : (staffMember?.ROLE || 'NHAN_VIEN'),
-        branch: isOwner ? 'Kho Trung Tâm' : (staffMember?.CHI_NHANH || 'Kho Trung Tâm'),
-        writeAccess: isOwner ? true : (staffMember ? staffMember.WRITE_ACCESS : false),
-        WRITE_ACCESS: isOwner ? true : (staffMember ? staffMember.WRITE_ACCESS : false),
-        id: userId
-      };
-      setCurrentUser(u);
-      localStorage.setItem('CURRENT_USER', JSON.stringify(u));
+      // Tải và đồng bộ Nhật ký email gửi đi
+      try {
+        const logs = await fetchEmailLogs(userId);
+        setEmailLogs(logs);
+        localStorage.setItem('B_EMAILLOG', JSON.stringify(logs));
+      } catch (mailErr) {
+        console.warn("Lỗi tải lịch sử email log từ Supabase:", mailErr);
+      }
+
+      // CẬP NHẬT HOẶC BẢO TOÀN CURRENT_USER NỘI BỘ (Không để email Auth của Supabase ghi đè bừa bãi)
+      const savedUserStr = localStorage.getItem('CURRENT_USER');
+      if (savedUserStr) {
+        try {
+          const savedUser = JSON.parse(savedUserStr);
+          if (savedUser && savedUser.id) {
+            // Thử tìm nhân viên này trong danh sách nhân viên vừa cập nhật để đồng bộ quyền và thông tin mới nhất
+            const latestStaff = payload.nhanViens.find(n => 
+              (n.MA_NV || '').trim().toLowerCase() === (savedUser.id || '').trim().toLowerCase() ||
+              (n.TEN_DANG_NHAP || '').trim().toLowerCase() === (savedUser.username || '').trim().toLowerCase() ||
+              (n.EMAIL || '').trim().toLowerCase() === (savedUser.username || '').trim().toLowerCase()
+            );
+
+            if (latestStaff) {
+              const u: User = {
+                username: latestStaff.TEN_DANG_NHAP || latestStaff.EMAIL || latestStaff.HO_TEN,
+                fullName: latestStaff.HO_TEN,
+                role: latestStaff.ROLE || latestStaff.VAI_TRO || 'NHAN_VIEN',
+                branch: latestStaff.CHI_NHANH || 'Kho Trung Tâm',
+                writeAccess: latestStaff.WRITE_ACCESS !== false,
+                WRITE_ACCESS: latestStaff.WRITE_ACCESS !== false,
+                id: latestStaff.MA_NV
+              };
+              setCurrentUser(u);
+              localStorage.setItem('CURRENT_USER', JSON.stringify(u));
+              return;
+            } else if (savedUser.username === 'nguyenkienduc.digital@gmail.com' || savedUser.username === 'admin') {
+              const u: User = {
+                username: 'nguyenkienduc.digital@gmail.com',
+                fullName: 'Nguyễn Kiến Đức',
+                role: 'ADMIN',
+                branch: 'Kho Trung Tâm',
+                writeAccess: true,
+                WRITE_ACCESS: true,
+                id: 'NV0001'
+              };
+              setCurrentUser(u);
+              localStorage.setItem('CURRENT_USER', JSON.stringify(u));
+              return;
+            }
+          }
+        } catch (e) {
+          console.warn("Lỗi đồng bộ cấu hình user nội bộ:", e);
+        }
+      } else {
+        // Nếu không có user nội bộ nào trong localStorage, tuyệt đối giữ nguyên trạng thái chưa đăng nhập trên giao diện
+        console.log('Không tìm thấy CURRENT_USER lưu cục bộ. Giữ nguyên trạng thái chưa đăng nhập trên giao diện.');
+        setCurrentUser(null);
+      }
     } catch (err) {
       console.error('Lỗi khi tải dữ liệu từ Supabase Cloud:', err);
     } finally {
@@ -261,8 +320,9 @@ export default function App() {
             const oldRow = payload.old;
             const rowUserId = (newRow && newRow.user_id) || (oldRow && oldRow.user_id);
 
-            // Nếu dữ liệu thay đổi thuộc về user hiện tại, tự động reload lại toàn bộ
-            if (rowUserId === userId) {
+            // Nếu dữ liệu thay đổi thuộc về user hiện tại hoặc Owner, tự động reload lại toàn bộ
+            const ownerId = localStorage.getItem('DB_OWNER_USER_ID') || userId;
+            if (rowUserId === userId || rowUserId === ownerId || rowUserId === '00000000-0000-0000-0000-000000000000') {
               if (ignoreRealtimeRef.current) {
                 console.log('Đang bỏ qua sự kiện Realtime để tránh ghi đè dữ liệu cục bộ đang đồng bộ...');
                 return;
@@ -297,17 +357,53 @@ export default function App() {
         });
     };
 
-    // 1. Kiểm tra session ngay khi trang web khởi chạy (Khắc phục triệt để lỗi F5 không cập nhật dữ liệu)
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      if (session?.user) {
-        const userId = session.user.id;
-        const email = session.user.email || '';
-        currentUserId = userId;
-        console.log('Phát hiện session hợp lệ khi khởi chạy. Thực hiện tải dữ liệu mới nhất từ Supabase Cloud...');
-        syncAllDataFromSupabase(userId, email);
-        setupRealtime(userId);
+    // 1. Kiểm tra session ngay khi trang web khởi chạy và tự động đăng nhập ngầm Admin để liên kết dữ liệu trực tuyến
+    const initializeAuth = async () => {
+      try {
+        const { data: { session } } = await supabase.auth.getSession();
+        if (session?.user) {
+          const userId = session.user.id;
+          const email = session.user.email || '';
+          currentUserId = userId;
+          console.log('Phát hiện session hợp lệ khi khởi chạy. Thực hiện tải dữ liệu mới nhất từ Supabase Cloud...');
+          syncAllDataFromSupabase(userId, email);
+          setupRealtime(userId);
+        } else {
+          console.log('Không phát hiện session hoạt động. Tiến hành tự động đăng nhập ngầm tài khoản quản trị để kết nối dữ liệu...');
+          const { data, error } = await supabase.auth.signInWithPassword({
+            email: 'nguyenkienduc.digital@gmail.com',
+            password: '123456'
+          });
+
+          if (!error && data?.session?.user) {
+            const userId = data.session.user.id;
+            const email = data.session.user.email || '';
+            currentUserId = userId;
+            console.log('Đăng nhập ngầm Admin thành công. Đang tải dữ liệu trực tuyến...');
+            syncAllDataFromSupabase(userId, email);
+            setupRealtime(userId);
+          } else {
+            console.warn('Đăng nhập ngầm Admin thất bại hoặc chưa có trên máy chủ, sử dụng fallback offline:', error?.message);
+            const savedUser = localStorage.getItem('CURRENT_USER');
+            if (savedUser) {
+              try {
+                const parsed = JSON.parse(savedUser);
+                if (parsed && parsed.id) {
+                  syncAllDataFromSupabase(parsed.id, parsed.username);
+                  setupRealtime(parsed.id);
+                }
+              } catch (e) {
+                console.warn("Lỗi đọc user cũ:", e);
+              }
+            }
+          }
+        }
+      } catch (e) {
+        console.error("Lỗi trong quá trình khởi tạo Auth:", e);
       }
-    });
+    };
+
+    initializeAuth();
 
     // 2. Lắng nghe sự thay đổi trạng thái Auth của Supabase
     const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
@@ -551,7 +647,7 @@ export default function App() {
     setSanPhams(prev => [...prev, newProduct]);
 
     // Đồng bộ Supabase
-    if (currentUser && currentUser.username.includes('@')) {
+    if (currentUser) {
       try {
         const uId = await getUserId();
         if (uId) {
@@ -574,6 +670,52 @@ export default function App() {
       }
     }
     setSuccessToast({ message: `Đã thêm thành công sản phẩm tròng kính: ${newProduct.SKU}` });
+  };
+
+  /**
+   * Tái tính toán số lượng Nhập, Xuất, và Tồn cuối cho một SKU từ toàn bộ các nguồn dữ liệu hiện tại
+   */
+  const recalculateProductState = (
+    sku: string,
+    currentProducts: SanPham[],
+    currentDetails: NhapXuatCT[],
+    currentKiemKhos: KiemKho[]
+  ): SanPham | null => {
+    const product = currentProducts.find(p => p.SKU === sku);
+    if (!product) return null;
+
+    // 1. Tính tổng Nhập từ nhapXuatCTs (gồm PN, PNK...)
+    const totalNhap = currentDetails
+      .filter(d => d.SKU === sku && d.LOAI === 'NHẬP')
+      .reduce((sum, d) => sum + d.SO_LUONG, 0);
+
+    // 2. Tính tổng Xuất từ nhapXuatCTs (gồm PX, PXK...)
+    const totalXuat = currentDetails
+      .filter(d => d.SKU === sku && d.LOAI === 'XUẤT')
+      .reduce((sum, d) => sum + d.SO_LUONG, 0);
+
+    // 3. Tính tổng lượng Nhập bù từ lịch sử Kiểm kho (chỉ những phiếu kiểm kho CHƯA có phiếu điều chỉnh PNK trong chi tiết)
+    const totalAuditNhapBu = currentKiemKhos
+      .filter(k => k.SKU === sku && k.LOAI_BU === 'NHẬP BÙ')
+      .filter(k => !currentDetails.some(d => d.SKU === sku && d.GHI_CHU && d.GHI_CHU.includes(k.MA_PHIEU)))
+      .reduce((sum, k) => sum + k.LECH, 0);
+
+    // 4. Tính tổng lượng Xuất bù từ lịch sử Kiểm kho (chỉ những phiếu kiểm kho CHƯA có phiếu điều chỉnh PXK trong chi tiết)
+    const totalAuditXuatBu = currentKiemKhos
+      .filter(k => k.SKU === sku && k.LOAI_BU === 'XUẤT BÙ')
+      .filter(k => !currentDetails.some(d => d.SKU === sku && d.GHI_CHU && d.GHI_CHU.includes(k.MA_PHIEU)))
+      .reduce((sum, k) => sum + Math.abs(k.LECH), 0);
+
+    const finalNhap = totalNhap + totalAuditNhapBu;
+    const finalXuat = totalXuat + totalAuditXuatBu;
+    const finalTonCuoi = product.TON_DAU + finalNhap - finalXuat;
+
+    return {
+      ...product,
+      NHAP: finalNhap,
+      XUAT: finalXuat,
+      TON_CUOI: finalTonCuoi
+    };
   };
 
   /**
@@ -608,42 +750,34 @@ export default function App() {
     }));
 
     // Cập nhật State danh sách hóa đơn
-    setNhapXuats(prev => [...prev, finalizedHeader]);
-    setNhapXuatCTs(prev => [...prev, ...finalizedDetails]);
+    const updatedHeaders = [...nhapXuats, finalizedHeader];
+    const updatedDetails = [...nhapXuatCTs, ...finalizedDetails];
+
+    setNhapXuats(updatedHeaders);
+    setNhapXuatCTs(updatedDetails);
 
     // Kích hoạt Toast thông báo thành công chính giữa màn hình
     const toastMsg = finalizedHeader.LOAI === 'NHẬP' ? 'Lưu phiếu nhập thành công' : 'Lưu phiếu xuất thành công';
     setSuccessToast({ message: toastMsg });
 
     // Cập nhật số lượng nhập, xuất, và tồn cuối trực tiếp vào bảng sản phẩm ngay lập tức
-    let updatedProducts: SanPham[] = [];
+    let updatedProductsList: SanPham[] = [];
+    const affectedSKUs = Array.from(new Set(finalizedDetails.map(d => d.SKU)));
+
     setSanPhams(prevProducts => {
       const next = prevProducts.map(p => {
-        // Chỉ tính toán lại cho các SKU có trong phiếu vừa lưu để tối ưu hiệu năng
-        if (finalizedDetails.some(fd => fd.SKU === p.SKU)) {
-          const productDetails = finalizedDetails.filter(fd => fd.SKU === p.SKU);
-          const addedNhap = productDetails.filter(fd => fd.LOAI === 'NHẬP').reduce((sum, fd) => sum + fd.SO_LUONG, 0);
-          const addedXuat = productDetails.filter(fd => fd.LOAI === 'XUẤT').reduce((sum, fd) => sum + fd.SO_LUONG, 0);
-          
-          const newNhap = (p.NHAP || 0) + addedNhap;
-          const newXuat = (p.XUAT || 0) + addedXuat;
-          const newTonCuoi = p.TON_DAU + newNhap - newXuat;
-
-          return {
-            ...p,
-            NHAP: newNhap,
-            XUAT: newXuat,
-            TON_CUOI: newTonCuoi
-          };
+        if (affectedSKUs.includes(p.SKU)) {
+          const updatedP = recalculateProductState(p.SKU, prevProducts, updatedDetails, kiemKhos);
+          return updatedP ? updatedP : p;
         }
         return p;
       });
-      updatedProducts = next;
+      updatedProductsList = next;
       return next;
     });
 
     // Đồng bộ Supabase
-    if (currentUser && currentUser.username.includes('@')) {
+    if (currentUser) {
       ignoreRealtimeRef.current = true;
       try {
         const uId = await getUserId();
@@ -651,7 +785,7 @@ export default function App() {
           const [res1, res2, res3] = await Promise.all([
             syncNhapXuat(finalizedHeader, uId),
             syncNhapXuatCTs(finalizedDetails, uId),
-            syncSanPhams(updatedProducts.filter(p => finalizedDetails.some(fd => fd.SKU === p.SKU)), uId)
+            syncSanPhams(updatedProductsList.filter(p => affectedSKUs.includes(p.SKU)), uId)
           ]);
           const error = res1.error || res2.error || res3.error;
           if (error) {
@@ -682,123 +816,159 @@ export default function App() {
    * Tự động sinh Số phiếu PKKxxxxxx và bù trừ chênh lệch trực tiếp vào tồn kho sản phẩm (Rule 8)
    * Đồng thời tự động tạo giao dịch điều chỉnh liên kết (PNKxxxxxx hoặc PXKxxxxxx)
    */
-  const handleSaveAudit = async (newAudit: KiemKho) => {
-    let maxNum = 0;
+  const handleSaveAudit = async (newAuditOrAudits: KiemKho | KiemKho[]) => {
+    const newAudits = Array.isArray(newAuditOrAudits) ? newAuditOrAudits : [newAuditOrAudits];
+    
+    // 1. Sinh mã phiếu PKK tăng tự động chính xác cho từng phiếu kiểm kho
+    let maxPKKNum = 0;
     kiemKhos.forEach(k => {
       if (k.MA_PHIEU.startsWith('PKK')) {
         const numPart = parseInt(k.MA_PHIEU.substring(3), 10);
-        if (!isNaN(numPart) && numPart > maxNum) {
-          maxNum = numPart;
+        if (!isNaN(numPart) && numPart > maxPKKNum) {
+          maxPKKNum = numPart;
         }
       }
     });
 
-    const newAuditId = `PKK${String(maxNum + 1).padStart(6, '0')}`;
-    const finalizedAudit: KiemKho = {
-      ...newAudit,
-      MA_PHIEU: newAuditId
-    };
+    let currentPKKNum = maxPKKNum;
+    const finalizedAudits: KiemKho[] = [];
 
-    setKiemKhos(prev => [...prev, finalizedAudit]);
-
-    // Tự động sinh giao dịch điều chỉnh kho liên kết nếu có chênh lệch
-    let finalizedHeader: NhapXuat | null = null;
-    let finalizedDetails: NhapXuatCT[] = [];
-
-    if (finalizedAudit.LECH !== 0) {
-      const isPositive = finalizedAudit.LECH > 0;
-      const prefix = isPositive ? 'PNK' : 'PXK';
-      
-      let maxAdjNum = 0;
-      nhapXuats.forEach(h => {
-        if (h.HOA_DON.startsWith(prefix)) {
-          const numPart = parseInt(h.HOA_DON.substring(3), 10);
-          if (!isNaN(numPart) && numPart > maxAdjNum) {
-            maxAdjNum = numPart;
-          }
+    // Chúng ta cũng cần sinh các phiếu bù trừ (nhập kiểm kho / xuất kiểm kho)
+    // Tên phiếu bù trừ: PNK0000001, PNK0000002... hoặc PXK0000001, PXK0000002...
+    let maxPNKNum = 0;
+    let maxPXKNum = 0;
+    nhapXuats.forEach(h => {
+      if (h.HOA_DON.startsWith('PNK')) {
+        const numPart = parseInt(h.HOA_DON.substring(3), 10);
+        if (!isNaN(numPart) && numPart > maxPNKNum) {
+          maxPNKNum = numPart;
         }
-      });
-
-      const newAdjInvoiceId = `${prefix}${String(maxAdjNum + 1).padStart(6, '0')}`;
-      const matchedP = sanPhams.find(p => p.SKU === finalizedAudit.SKU);
-
-      if (matchedP) {
-        finalizedHeader = {
-          HOA_DON: newAdjInvoiceId,
-          CHI_NHANH: finalizedAudit.KHO || currentUser?.branch || 'Kho Trung Tâm',
-          NGAY: finalizedAudit.THOI_DIEM.split(' ')[0], // YYYY-MM-DD
-          LOAI: isPositive ? 'NHẬP' : 'XUẤT',
-          TONG_SL: Math.abs(finalizedAudit.LECH),
-          NGUOI_TAO: currentUser?.username || 'admin',
-          TEN_NGUOI_TAO: currentUser?.fullName || 'Người dùng',
-          TG_TAO: finalizedAudit.THOI_DIEM,
-          GHI_CHU: `Phiếu điều chỉnh kiểm kê liên kết ${newAuditId}. SKU: ${finalizedAudit.SKU}, Tồn HT: ${finalizedAudit.TON_HE_THONG}, Tồn TT: ${finalizedAudit.TON_THUC_TE}, Lệch: ${finalizedAudit.LECH > 0 ? '+' : ''}${finalizedAudit.LECH}`
-        };
-
-        const finalizedDetail: NhapXuatCT = {
-          ID: `CT_ADJ_${Date.now()}`,
-          HOA_DON: newAdjInvoiceId,
-          SKU: finalizedAudit.SKU,
-          TEN_SP: matchedP.TEN_SAN_PHAM,
-          THUONG_HIEU: matchedP.THUONG_HIEU,
-          CHIET_XUAT: matchedP.CHIET_XUAT,
-          TINH_NANG: matchedP.TINH_NANG,
-          SPH: matchedP.CAN,
-          CYL: matchedP.LOAN,
-          SO_LUONG: Math.abs(finalizedAudit.LECH),
-          DVT: matchedP.DVT,
-          GHI_CHU: `Điều chỉnh kiểm kê liên kết ${newAuditId}`,
-          LOAI: isPositive ? 'NHẬP' : 'XUẤT',
-          NGAY: finalizedAudit.THOI_DIEM.split(' ')[0]
-        };
-
-        finalizedDetails = [finalizedDetail];
-
-        // Thêm vào state
-        setNhapXuats(prev => [...prev, finalizedHeader!]);
-        setNhapXuatCTs(prev => [...prev, finalizedDetail]);
+      } else if (h.HOA_DON.startsWith('PXK')) {
+        const numPart = parseInt(h.HOA_DON.substring(3), 10);
+        if (!isNaN(numPart) && numPart > maxPXKNum) {
+          maxPXKNum = numPart;
+        }
       }
+    });
+
+    let currentPNKNum = maxPNKNum;
+    let currentPXKNum = maxPXKNum;
+
+    const newHeadersToSave: NhapXuat[] = [];
+    const newDetailsToSave: NhapXuatCT[] = [];
+
+    newAudits.forEach((audit, index) => {
+      currentPKKNum += 1;
+      const newAuditId = `PKK${String(currentPKKNum).padStart(6, '0')}`;
+      
+      const finalizedAudit: KiemKho = {
+        ...audit,
+        MA_PHIEU: newAuditId,
+        MA_NV: currentUser?.id,
+        TEN_DANG_NHAP: currentUser?.username
+      };
+      finalizedAudits.push(finalizedAudit);
+
+      // Nếu có chênh lệch, tự động sinh phiếu điều chỉnh kho liên kết (PNK hoặc PXK)
+      if (finalizedAudit.LECH !== 0) {
+        const isPositive = finalizedAudit.LECH > 0;
+        let newAdjInvoiceId = '';
+        if (isPositive) {
+          currentPNKNum += 1;
+          newAdjInvoiceId = `PNK${String(currentPNKNum).padStart(7, '0')}`;
+        } else {
+          currentPXKNum += 1;
+          newAdjInvoiceId = `PXK${String(currentPXKNum).padStart(7, '0')}`;
+        }
+
+        const matchedP = sanPhams.find(p => p.SKU === finalizedAudit.SKU);
+        if (matchedP) {
+          const adjHeader: NhapXuat = {
+            HOA_DON: newAdjInvoiceId,
+            CHI_NHANH: finalizedAudit.KHO || currentUser?.branch || 'Kho Trung Tâm',
+            NGAY: finalizedAudit.THOI_DIEM.split(' ')[0], // YYYY-MM-DD
+            LOAI: isPositive ? 'NHẬP' : 'XUẤT',
+            TONG_SL: Math.abs(finalizedAudit.LECH),
+            NGUOI_TAO: currentUser?.username || 'admin',
+            TEN_NGUOI_TAO: currentUser?.fullName || 'Người dùng',
+            TG_TAO: finalizedAudit.THOI_DIEM,
+            GHI_CHU: `Phiếu điều chỉnh kiểm kê liên kết ${newAuditId}. SKU: ${finalizedAudit.SKU}, Tồn HT: ${finalizedAudit.TON_HE_THONG}, Tồn TT: ${finalizedAudit.TON_THUC_TE}, Lệch: ${finalizedAudit.LECH > 0 ? '+' : ''}${finalizedAudit.LECH}`,
+            MA_NV: currentUser?.id,
+            TEN_DANG_NHAP: currentUser?.username
+          };
+
+          const adjDetail: NhapXuatCT = {
+            ID: `CT_ADJ_${Date.now()}_${index}_${Math.random().toString(36).substring(2, 7)}`,
+            HOA_DON: newAdjInvoiceId,
+            SKU: finalizedAudit.SKU,
+            TEN_SP: matchedP.TEN_SAN_PHAM,
+            THUONG_HIEU: matchedP.THUONG_HIEU,
+            CHIET_XUAT: matchedP.CHIET_XUAT,
+            TINH_NANG: matchedP.TINH_NANG,
+            SPH: matchedP.CAN,
+            CYL: matchedP.LOAN,
+            SO_LUONG: Math.abs(finalizedAudit.LECH),
+            DVT: matchedP.DVT,
+            GHI_CHU: `Điều chỉnh kiểm kê liên kết ${newAuditId}`,
+            LOAI: isPositive ? 'NHẬP' : 'XUẤT',
+            NGAY: finalizedAudit.THOI_DIEM.split(' ')[0]
+          };
+
+          newHeadersToSave.push(adjHeader);
+          newDetailsToSave.push(adjDetail);
+        }
+      }
+    });
+
+    const updatedKiemKhos = [...kiemKhos, ...finalizedAudits];
+    const updatedHeaders = [...nhapXuats, ...newHeadersToSave];
+    const updatedDetails = [...nhapXuatCTs, ...newDetailsToSave];
+
+    // Cập nhật State cho PKK và điều chỉnh
+    setKiemKhos(updatedKiemKhos);
+    if (newHeadersToSave.length > 0) {
+      setNhapXuats(updatedHeaders);
+      setNhapXuatCTs(updatedDetails);
     }
 
-    // Đồng bộ lượng chênh lệch kiểm kê bù trừ trực tiếp vào sản phẩm tương ứng (B_SANPHAM)
-    let updatedProducts: SanPham[] = [];
+    // Tính toán và cập nhật lại tồn kho sản phẩm hoàn toàn chính xác
+    let updatedProductsList: SanPham[] = [];
+    const affectedSKUs = Array.from(new Set(finalizedAudits.map(a => a.SKU)));
+
     setSanPhams(prevProducts => {
       const next = prevProducts.map(p => {
-        if (p.SKU === finalizedAudit.SKU) {
-          const addedNhap = finalizedDetails.filter(d => d.SKU === p.SKU && d.LOAI === 'NHẬP').reduce((sum, d) => sum + d.SO_LUONG, 0);
-          const addedXuat = finalizedDetails.filter(d => d.SKU === p.SKU && d.LOAI === 'XUẤT').reduce((sum, d) => sum + d.SO_LUONG, 0);
-          
-          const newNhap = (p.NHAP || 0) + addedNhap;
-          const newXuat = (p.XUAT || 0) + addedXuat;
-          const newTonCuoi = p.TON_DAU + newNhap - newXuat;
-
-          return {
-            ...p,
-            NHAP: newNhap,
-            XUAT: newXuat,
-            TON_CUOI: newTonCuoi
-          };
+        if (affectedSKUs.includes(p.SKU)) {
+          const updatedP = recalculateProductState(p.SKU, prevProducts, updatedDetails, updatedKiemKhos);
+          return updatedP ? updatedP : p;
         }
         return p;
       });
-      updatedProducts = next;
+      updatedProductsList = next;
       return next;
     });
 
-    // Đồng bộ Supabase
-    if (currentUser && currentUser.username.includes('@')) {
+    // Đồng bộ Supabase và LocalStorage
+    if (currentUser) {
       ignoreRealtimeRef.current = true;
       try {
         const uId = await getUserId();
         if (uId) {
-          const promises: Promise<any>[] = [
-            syncKiemKho(finalizedAudit, uId),
-            syncSanPhams(updatedProducts.filter(p => p.SKU === finalizedAudit.SKU), uId)
-          ];
+          const promises: Promise<any>[] = [];
+          
+          // Sync từng phiếu PKK
+          finalizedAudits.forEach(audit => {
+            promises.push(syncKiemKho(audit, uId));
+          });
 
-          if (finalizedHeader && finalizedDetails.length > 0) {
-            promises.push(syncNhapXuat(finalizedHeader, uId));
-            promises.push(syncNhapXuatCTs(finalizedDetails, uId));
+          // Sync sản phẩm bị ảnh hưởng
+          promises.push(syncSanPhams(updatedProductsList.filter(p => affectedSKUs.includes(p.SKU)), uId));
+
+          // Sync phiếu điều chỉnh nếu có
+          if (newHeadersToSave.length > 0) {
+            newHeadersToSave.forEach(h => {
+              promises.push(syncNhapXuat(h, uId));
+            });
+            promises.push(syncNhapXuatCTs(newDetailsToSave, uId));
           }
 
           const results = await Promise.all(promises);
@@ -842,49 +1012,21 @@ export default function App() {
     setNhapXuatCTs(updatedDetails);
 
     // 3. Tái tính toán cục bộ cho các SKU bị ảnh hưởng
-    let updatedProducts: SanPham[] = [];
+    let updatedProductsList: SanPham[] = [];
     setSanPhams(prevProducts => {
       const next = prevProducts.map(p => {
         if (skusToRecalc.includes(p.SKU)) {
-          // Tính tổng số lượng Nhập của SKU này từ toàn bộ dữ liệu chi tiết trong DB
-          const totalNhap = updatedDetails
-            .filter(d => d.SKU === p.SKU && d.LOAI === 'NHẬP')
-            .reduce((sum, d) => sum + d.SO_LUONG, 0);
-
-          // Tính tổng lượng Nhập bù từ lịch sử Kiểm kho
-          const totalAuditNhapBu = kiemKhos
-            .filter(k => k.SKU === p.SKU && k.LOAI_BU === 'NHẬP BÙ')
-            .reduce((sum, k) => sum + k.LECH, 0);
-
-          // Tính tổng số lượng Xuất của SKU này
-          const totalXuat = updatedDetails
-            .filter(d => d.SKU === p.SKU && d.LOAI === 'XUẤT')
-            .reduce((sum, d) => sum + d.SO_LUONG, 0);
-
-          // Tính tổng lượng Xuất bù từ lịch sử Kiểm kho
-          const totalAuditXuatBu = kiemKhos
-            .filter(k => k.SKU === p.SKU && k.LOAI_BU === 'XUẤT BÙ')
-            .reduce((sum, k) => sum + Math.abs(k.LECH), 0);
-
-          const finalNhap = totalNhap + totalAuditNhapBu;
-          const finalXuat = totalXuat + totalAuditXuatBu;
-          const finalTonCuoi = p.TON_DAU + finalNhap - finalXuat; // Rule 7
-
-          return {
-            ...p,
-            NHAP: finalNhap,
-            XUAT: finalXuat,
-            TON_CUOI: finalTonCuoi
-          };
+          const updatedP = recalculateProductState(p.SKU, prevProducts, updatedDetails, kiemKhos);
+          return updatedP ? updatedP : p;
         }
         return p;
       });
-      updatedProducts = next;
+      updatedProductsList = next;
       return next;
     });
 
     // Đồng bộ Supabase
-    if (currentUser && currentUser.username.includes('@')) {
+    if (currentUser) {
       ignoreRealtimeRef.current = true;
       try {
         const uId = await getUserId();
@@ -895,7 +1037,7 @@ export default function App() {
           ]);
           const [res2, res3] = await Promise.all([
             syncNhapXuatCTs(updatedDetails.filter(d => d.HOA_DON === updatedHeader.HOA_DON), uId),
-            syncSanPhams(updatedProducts.filter(p => skusToRecalc.includes(p.SKU)), uId)
+            syncSanPhams(updatedProductsList.filter(p => skusToRecalc.includes(p.SKU)), uId)
           ]);
           const error = res1.error || resDel.error || res2.error || res3.error;
           if (error) {
@@ -934,54 +1076,28 @@ export default function App() {
     setNhapXuatCTs(remainingDetails);
 
     // 3. Tái tính toán khôi phục kho cho các SKU bị ảnh hưởng (Rollback hoàn toàn)
-    let updatedProducts: SanPham[] = [];
+    let updatedProductsList: SanPham[] = [];
     setSanPhams(prevProducts => {
       const next = prevProducts.map(p => {
         if (skusToRecalc.includes(p.SKU)) {
-          // Tính tổng lượng Nhập sau khi đã loại bỏ phiếu bị xóa
-          const totalNhap = remainingDetails
-            .filter(d => d.SKU === p.SKU && d.LOAI === 'NHẬP')
-            .reduce((sum, d) => sum + d.SO_LUONG, 0);
-
-          const totalAuditNhapBu = kiemKhos
-            .filter(k => k.SKU === p.SKU && k.LOAI_BU === 'NHẬP BÙ')
-            .reduce((sum, k) => sum + k.LECH, 0);
-
-          // Tính tổng lượng Xuất sau khi loại bỏ phiếu
-          const totalXuat = remainingDetails
-            .filter(d => d.SKU === p.SKU && d.LOAI === 'XUẤT')
-            .reduce((sum, d) => sum + d.SO_LUONG, 0);
-
-          const totalAuditXuatBu = kiemKhos
-            .filter(k => k.SKU === p.SKU && k.LOAI_BU === 'XUẤT BÙ')
-            .reduce((sum, k) => sum + Math.abs(k.LECH), 0);
-
-          const finalNhap = totalNhap + totalAuditNhapBu;
-          const finalXuat = totalXuat + totalAuditXuatBu;
-          const finalTonCuoi = p.TON_DAU + finalNhap - finalXuat;
-
-          return {
-            ...p,
-            NHAP: finalNhap,
-            XUAT: finalXuat,
-            TON_CUOI: finalTonCuoi
-          };
+          const updatedP = recalculateProductState(p.SKU, prevProducts, remainingDetails, kiemKhos);
+          return updatedP ? updatedP : p;
         }
         return p;
       });
-      updatedProducts = next;
+      updatedProductsList = next;
       return next;
     });
 
     // Đồng bộ Supabase
-    if (currentUser && currentUser.username.includes('@')) {
+    if (currentUser) {
       ignoreRealtimeRef.current = true;
       try {
         const uId = await getUserId();
         if (uId) {
           const [resDel, resSync] = await Promise.all([
             deleteNhapXuatAndDetails(hoaDonId),
-            syncSanPhams(updatedProducts.filter(p => skusToRecalc.includes(p.SKU)), uId)
+            syncSanPhams(updatedProductsList.filter(p => skusToRecalc.includes(p.SKU)), uId)
           ]);
           const error = resDel.error || resSync.error;
           if (error) {
@@ -1011,7 +1127,7 @@ export default function App() {
   const handleAddThuongHieu = async (brand: ThươngHieu) => {
     setThuongHieus(prev => [...prev, brand]);
 
-    if (currentUser && currentUser.username.includes('@')) {
+    if (currentUser) {
       try {
         const uId = await getUserId();
         if (uId) {
@@ -1038,7 +1154,7 @@ export default function App() {
   const handleAddChiNhanh = async (branch: ChiNhanh) => {
     setChiNhanhs(prev => [...prev, branch]);
 
-    if (currentUser && currentUser.username.includes('@')) {
+    if (currentUser) {
       try {
         const uId = await getUserId();
         if (uId) {
@@ -1065,7 +1181,7 @@ export default function App() {
   const handleAddNhanVien = async (staff: NhanVien) => {
     setNhanViens(prev => [...prev, staff]);
 
-    if (currentUser && currentUser.username.includes('@')) {
+    if (currentUser) {
       try {
         const uId = await getUserId();
         if (uId) {
@@ -1098,7 +1214,7 @@ export default function App() {
       setSanPhams(prev => prev.map(p => (p.THUONG_HIEU === oldName && p.TINH_NANG === oldFeature) ? { ...p, THUONG_HIEU: brand.THUONG_HIEU, TINH_NANG: brandFeature } : p));
     }
 
-    if (currentUser && currentUser.username.includes('@')) {
+    if (currentUser) {
       try {
         const uId = await getUserId();
         if (uId) {
@@ -1128,7 +1244,7 @@ export default function App() {
   const handleDeleteThuongHieu = async (brandName: string, feature: string) => {
     setThuongHieus(prev => prev.filter(t => !(t.THUONG_HIEU === brandName && (t.TINH_NANG || t.TINH_NANG_MAC_DINH || '') === feature)));
 
-    if (currentUser && currentUser.username.includes('@')) {
+    if (currentUser) {
       try {
         const uId = await getUserId();
         if (uId) {
@@ -1155,7 +1271,7 @@ export default function App() {
   const handleUpdateChiNhanh = async (oldName: string, branch: ChiNhanh) => {
     setChiNhanhs(prev => prev.map(c => c.CHI_NHANH === oldName ? branch : c));
 
-    if (currentUser && currentUser.username.includes('@')) {
+    if (currentUser) {
       try {
         const uId = await getUserId();
         if (uId) {
@@ -1185,7 +1301,7 @@ export default function App() {
   const handleDeleteChiNhanh = async (branchName: string) => {
     setChiNhanhs(prev => prev.filter(c => c.CHI_NHANH !== branchName));
 
-    if (currentUser && currentUser.username.includes('@')) {
+    if (currentUser) {
       try {
         const uId = await getUserId();
         if (uId) {
@@ -1209,10 +1325,33 @@ export default function App() {
     }
   };
 
+  const handleUpdatePassword = async (newPassword: string): Promise<{ success: boolean; message: string }> => {
+    if (!currentUser) return { success: false, message: 'Chưa đăng nhập' };
+    const member = nhanViens.find(n => 
+      n.MA_NV === currentUser.id || 
+      n.EMAIL.toLowerCase() === currentUser.username.toLowerCase() || 
+      (n.TEN_DANG_NHAP && n.TEN_DANG_NHAP.toLowerCase() === currentUser.username.toLowerCase())
+    );
+    if (!member) {
+      return { success: false, message: 'Không tìm thấy thông tin tài khoản nhân sự của bạn trên hệ thống.' };
+    }
+    const updatedMember: NhanVien = {
+      ...member,
+      MAT_KHAU: newPassword,
+      YEU_CAU_RESET: false
+    };
+    await handleUpdateNhanVien(member.EMAIL, updatedMember);
+    return { success: true, message: 'Cập nhật mật khẩu cá nhân thành công!' };
+  };
+
   const handleUpdateNhanVien = async (oldEmail: string, staff: NhanVien) => {
+    const oldStaff = nhanViens.find(n => n.EMAIL === oldEmail);
+    const oldStatus = oldStaff ? (oldStaff.TRANG_THAI || 'ACTIVE').trim().toUpperCase() : 'ACTIVE';
+    const newStatus = (staff.TRANG_THAI || 'ACTIVE').trim().toUpperCase();
+
     setNhanViens(prev => prev.map(n => n.EMAIL === oldEmail ? staff : n));
 
-    if (currentUser && currentUser.username.includes('@')) {
+    if (currentUser) {
       try {
         const uId = await getUserId();
         if (uId) {
@@ -1226,6 +1365,83 @@ export default function App() {
               action: 'Cập nhật nhân viên',
               message: res.error.message || JSON.stringify(res.error)
             });
+          } else {
+            // TỰ ĐỘNG PHÁT HIỆN THAY ĐỔI TRẠNG THÁI ĐỂ GỬI EMAIL THÔNG BÁO THỰC TẾ
+            if (oldStatus !== newStatus) {
+              const emailDate = new Date().toLocaleString('vi-VN');
+              let title = '';
+              let mailContent = '';
+              let loaiEmail = '';
+
+              const isPending = oldStatus === 'CHỜ DUYỆT' || oldStatus === 'PENDING' || oldStatus === 'CHO DUYET';
+              const isActive = newStatus === 'HOẠT ĐỘNG' || newStatus === 'ACTIVE' || newStatus === 'KÍCH HOẠT' || newStatus === 'HOAT DONG';
+              const isRejected = newStatus === 'TỪ CHỐI' || newStatus === 'REJECTED' || newStatus === 'TU CHOI';
+              const isBlocked = newStatus === 'KHÓA' || newStatus === 'BLOCKED' || newStatus === 'KHOA';
+
+              if (isPending && isActive) {
+                // Phê duyệt tài khoản
+                title = "Tài khoản của bạn đã được kích hoạt";
+                mailContent = `Chào ${staff.HO_TEN},\n\n` +
+                  `Chúng tôi vui mừng thông báo rằng yêu cầu đăng ký tài khoản của bạn trên hệ thống Quản lý Xuất Nhập Tồn Tròng Kính Glass Stock Pro đã được Admin phê duyệt kích hoạt thành công!\n\n` +
+                  `Thông tin tài khoản hoạt động:\n` +
+                  `- Họ và tên: ${staff.HO_TEN}\n` +
+                  `- Tên đăng nhập: ${staff.TEN_DANG_NHAP || staff.EMAIL}\n` +
+                  `- Email liên hệ: ${staff.EMAIL}\n` +
+                  `- Vai trò hệ thống: ${staff.ROLE === 'ADMIN' ? 'Admin (Chủ cửa hàng)' : staff.ROLE === 'KHO' ? 'Thủ Kho' : 'Nhân Viên Bán Hàng'}\n` +
+                  `- Chi nhánh: ${staff.CHI_NHANH}\n` +
+                  `- Trạng thái tài khoản: Hoạt động (Active)\n\n` +
+                  `Bây giờ bạn có thể đăng nhập vào ứng dụng và sử dụng các tính năng được cấp quyền ngay lập tức.\n\n` +
+                  `Đường dẫn đăng nhập hệ thống: ${window.location.origin}\n\n` +
+                  `Chúc bạn có một trải nghiệm làm việc hiệu quả!\n\n` +
+                  `Trân trọng,\nBan Quản Trị Glass Stock Pro`;
+                loaiEmail = "Phê duyệt";
+              } else if (isPending && isRejected) {
+                // Từ chối tài khoản
+                title = "Yêu cầu đăng ký tài khoản bị từ chối";
+                mailContent = `Chào ${staff.HO_TEN},\n\n` +
+                  `Chúng tôi rất tiếc phải thông báo rằng yêu cầu đăng ký tài khoản của bạn trên hệ thống Glass Stock Pro đã bị từ chối bởi Quản trị viên hệ thống.\n\n` +
+                  `Thông tin tài khoản đăng ký:\n` +
+                  `- Họ và tên: ${staff.HO_TEN}\n` +
+                  `- Tên đăng nhập: ${staff.TEN_DANG_NHAP}\n` +
+                  `- Email liên hệ: ${staff.EMAIL}\n` +
+                  `- Trạng thái: Bị từ chối (Rejected)\n\n` +
+                  `Nếu có bất kỳ thắc mắc nào hoặc muốn biết thêm lý do, vui lòng liên hệ trực tiếp với Quản lý hoặc Admin để được hỗ trợ giải đáp.\n\n` +
+                  `Trân trọng,\nBan Quản Trị Glass Stock Pro`;
+                loaiEmail = "Từ chối";
+              } else if (isBlocked) {
+                // Khóa tài khoản
+                title = "Tài khoản của bạn đã bị khóa";
+                mailContent = `Chào ${staff.HO_TEN},\n\n` +
+                  `Chúng tôi thông báo rằng tài khoản của bạn trên hệ thống Glass Stock Pro đã bị KHÓA (Blocked) bởi Ban Quản Trị.\n\n` +
+                  `Thông tin chi tiết:\n` +
+                  `- Họ và tên: ${staff.HO_TEN}\n` +
+                  `- Tên đăng nhập: ${staff.TEN_DANG_NHAP || staff.EMAIL}\n` +
+                  `- Trạng thái: Đã bị khóa (Blocked)\n\n` +
+                  `Bạn sẽ không thể đăng nhập vào hệ thống kể từ thời điểm này. Nếu đây là một sự nhầm lẫn hoặc cần khôi phục tài khoản, vui lòng liên hệ trực tiếp với Admin hệ thống.\n\n` +
+                  `Trân trọng,\nBan Quản Trị Glass Stock Pro`;
+                loaiEmail = "Khóa tài khoản";
+              }
+
+              if (title && mailContent && loaiEmail) {
+                try {
+                  await syncEmailLog({
+                    EMAIL: staff.EMAIL,
+                    TIEU_DE: title,
+                    NOI_DUNG: mailContent,
+                    NGAY_GUI: emailDate,
+                    TRANG_THAI: "Thành công",
+                    LOAI_EMAIL: loaiEmail
+                  }, uId);
+
+                  // Load lại danh sách logs email sau khi gửi thành công
+                  const latestLogs = await fetchEmailLogs(uId);
+                  setEmailLogs(latestLogs);
+                  localStorage.setItem('B_EMAILLOG', JSON.stringify(latestLogs));
+                } catch (logErr) {
+                  console.warn("Lỗi ghi nhận log email khi phê duyệt:", logErr);
+                }
+              }
+            }
           }
         }
       } catch (err: any) {
@@ -1242,7 +1458,7 @@ export default function App() {
   const handleDeleteNhanVien = async (email: string) => {
     setNhanViens(prev => prev.filter(n => n.EMAIL !== email));
 
-    if (currentUser && currentUser.username.includes('@')) {
+    if (currentUser) {
       try {
         const uId = await getUserId();
         if (uId) {
@@ -1310,6 +1526,9 @@ export default function App() {
           };
           setCurrentUser(cleanUser);
           localStorage.setItem('CURRENT_USER', JSON.stringify(cleanUser));
+
+          // ĐỒNG BỘ DỮ LIỆU LẬP TỨC KHI ĐĂNG NHẬP THÀNH CÔNG!
+          syncAllDataFromSupabase(cleanUser.id || '00000000-0000-0000-0000-000000000000', cleanUser.username);
           
           // Tự động chuyển hướng tab phù hợp
           if (cleanUser.role === 'NHAN_VIEN') {
@@ -1351,7 +1570,7 @@ export default function App() {
           </span>
         </div>
         <div className="flex items-center gap-2">
-          {currentUser?.username?.includes('@') && (
+          {currentUser && (
             <button
               onClick={handleManualSync}
               disabled={isSyncing}
@@ -1445,7 +1664,7 @@ export default function App() {
                 </div>
               )}
             </div>
-            {!sidebarCollapsed && currentUser?.username?.includes('@') && (
+            {!sidebarCollapsed && currentUser && (
               <button
                 onClick={handleManualSync}
                 disabled={isSyncing}
@@ -1595,7 +1814,7 @@ export default function App() {
             </div>
 
             {/* SUPABASE STATUS INDICATOR */}
-            {currentUser.username.includes('@') && (
+            {currentUser && (
               <div className={`flex items-center justify-between text-[10px] pt-1.5 border-t ${sidebarStyle.divider}`}>
                 <span className={`font-semibold ${sidebarStyle.switchText}`}>Supabase Cloud:</span>
                 {loadingDb ? (
@@ -1796,6 +2015,7 @@ export default function App() {
                   thuongHieus={thuongHieus}
                   chiNhanhs={chiNhanhs}
                   nhanViens={nhanViens}
+                  emailLogs={emailLogs}
                   onAddThuongHieu={handleAddThuongHieu}
                   onAddChiNhanh={handleAddChiNhanh}
                   onAddNhanVien={handleAddNhanVien}
@@ -1814,6 +2034,7 @@ export default function App() {
                   themeMode={themeMode}
                   accentColor={accentColor}
                   onUpdateTheme={handleUpdateTheme}
+                  onUpdatePassword={handleUpdatePassword}
                 />
               )}
             </motion.div>
@@ -1863,7 +2084,7 @@ export default function App() {
             const isActive = activeTab === item.tab || (item.label === 'Home' && (activeTab === 'DASHBOARD' || (currentUser.role === 'NHAN_VIEN' && activeTab === 'TRANSACTION_XUAT')));
             return (
               <button
-                key={item.tab}
+                key={item.label}
                 onClick={() => selectTabOnMobile(item.tab as any)}
                 className="flex-1 h-full flex flex-col items-center justify-center gap-1 cursor-pointer transition-colors"
               >

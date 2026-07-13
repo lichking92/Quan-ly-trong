@@ -1,5 +1,5 @@
 import { supabase } from './supabaseClient';
-import { SanPham, NhapXuat, NhapXuatCT, KiemKho, ThươngHieu, ChiNhanh, NhanVien } from './types';
+import { SanPham, NhapXuat, NhapXuatCT, KiemKho, ThươngHieu, ChiNhanh, NhanVien, EmailLog } from './types';
 import {
   MOCK_SAN_PHAM,
   MOCK_NHAP_XUAT,
@@ -11,6 +11,50 @@ import {
 } from './data/mockData';
 
 export const SHARED_USER_ID = "00000000-0000-0000-0000-000000000000";
+
+/**
+ * Trả về User ID có hiệu lực của Chủ cửa hàng/Admin (bảo đảm tính nhất quán của Cơ sở dữ liệu và bảo vệ fkey)
+ */
+export async function resolveEffectiveUserId(): Promise<string> {
+  // 1. Kiểm tra session hiện tại của Supabase Auth (dành cho Chủ cửa hàng đăng nhập trực tuyến)
+  try {
+    const { data: { session } } = await supabase.auth.getSession();
+    if (session?.user?.id) {
+      localStorage.setItem('DB_OWNER_USER_ID', session.user.id);
+      return session.user.id;
+    }
+  } catch (err) {
+    console.warn("Lỗi getSession trong resolveEffectiveUserId:", err);
+  }
+
+  // 2. Dự phòng: Đọc từ localStorage đã lưu từ lần trước
+  const saved = localStorage.getItem('DB_OWNER_USER_ID');
+  if (saved && saved !== SHARED_USER_ID) {
+    return saved;
+  }
+
+  // 3. Nếu chưa có, cố truy vấn nhanh bảng b_nhanvien để tìm user_id của Admin
+  try {
+    const { data: adminList } = await supabase
+      .from('b_nhanvien')
+      .select('user_id')
+      .or('ROLE.eq.ADMIN,CHUC_VU.ilike.%chủ%')
+      .not('user_id', 'is', null)
+      .limit(1);
+
+    if (adminList && adminList.length > 0 && adminList[0].user_id) {
+      const uid = adminList[0].user_id;
+      if (uid && uid !== SHARED_USER_ID) {
+        localStorage.setItem('DB_OWNER_USER_ID', uid);
+        return uid;
+      }
+    }
+  } catch (err) {
+    console.warn("Không thể truy vấn b_nhanvien để tìm owner id:", err);
+  }
+
+  return SHARED_USER_ID;
+}
 
 /**
  * FILE: supabaseSync.ts
@@ -36,6 +80,58 @@ export async function tryCreateColumnsOnSupabase() {
   const sql = `
     DO $$ 
     BEGIN
+      -- Tự động tìm và xóa các khóa ngoại trên cột user_id để tránh lỗi ràng buộc fkey khi chia sẻ SHARED_USER_ID
+      BEGIN
+        DECLARE
+          r RECORD;
+        BEGIN
+          FOR r IN 
+            SELECT tc.table_name, tc.constraint_name 
+            FROM information_schema.table_constraints tc
+            JOIN information_schema.key_column_usage kcu 
+              ON tc.constraint_name = kcu.constraint_name
+              AND tc.table_schema = kcu.table_schema
+            WHERE tc.constraint_type = 'FOREIGN KEY'
+              AND tc.table_schema = 'public'
+              AND kcu.column_name = 'user_id'
+              AND tc.table_name IN ('b_thuonghieu', 'b_sanpham', 'b_nhapxuat', 'b_nhapxuatct', 'b_kiemkho', 'b_chinhanh', 'b_nhanvien')
+          LOOP
+            EXECUTE 'ALTER TABLE public.' || quote_ident(r.table_name) || ' DROP CONSTRAINT IF EXISTS ' || quote_ident(r.constraint_name) || ';';
+          END LOOP;
+        END;
+      EXCEPTION WHEN others THEN NULL;
+      END;
+
+      -- Xóa cụ thể các ràng buộc khóa ngoại phổ biến nếu có
+      BEGIN
+        ALTER TABLE b_thuonghieu DROP CONSTRAINT IF EXISTS b_thuonghieu_user_id_fkey;
+      EXCEPTION WHEN others THEN NULL;
+      END;
+      BEGIN
+        ALTER TABLE b_sanpham DROP CONSTRAINT IF EXISTS b_sanpham_user_id_fkey;
+      EXCEPTION WHEN others THEN NULL;
+      END;
+      BEGIN
+        ALTER TABLE b_nhapxuat DROP CONSTRAINT IF EXISTS b_nhapxuat_user_id_fkey;
+      EXCEPTION WHEN others THEN NULL;
+      END;
+      BEGIN
+        ALTER TABLE b_nhapxuatct DROP CONSTRAINT IF EXISTS b_nhapxuatct_user_id_fkey;
+      EXCEPTION WHEN others THEN NULL;
+      END;
+      BEGIN
+        ALTER TABLE b_kiemkho DROP CONSTRAINT IF EXISTS b_kiemkho_user_id_fkey;
+      EXCEPTION WHEN others THEN NULL;
+      END;
+      BEGIN
+        ALTER TABLE b_chinhanh DROP CONSTRAINT IF EXISTS b_chinhanh_user_id_fkey;
+      EXCEPTION WHEN others THEN NULL;
+      END;
+      BEGIN
+        ALTER TABLE b_nhanvien DROP CONSTRAINT IF EXISTS b_nhanvien_user_id_fkey;
+      EXCEPTION WHEN others THEN NULL;
+      END;
+
       -- Thêm các cột cho b_nhanvien nếu chưa có
       BEGIN
         ALTER TABLE b_nhanvien ADD COLUMN IF NOT EXISTS "TEN_DANG_NHAP" text;
@@ -54,6 +150,26 @@ export async function tryCreateColumnsOnSupabase() {
 
       BEGIN
         ALTER TABLE b_nhanvien ADD COLUMN IF NOT EXISTS "TRANG_THAI" text DEFAULT 'Hoạt động';
+      EXCEPTION WHEN others THEN NULL;
+      END;
+
+      BEGIN
+        ALTER TABLE b_nhanvien ADD COLUMN IF NOT EXISTS "NGAY_DANG_KY" text;
+      EXCEPTION WHEN others THEN NULL;
+      END;
+
+      -- Tạo bảng b_emaillog nếu chưa có để lưu nhật ký email gửi đi
+      BEGIN
+        CREATE TABLE IF NOT EXISTS public.b_emaillog (
+          id uuid DEFAULT gen_random_uuid() PRIMARY KEY,
+          "EMAIL" text,
+          "TIEU_DE" text,
+          "NOI_DUNG" text,
+          "NGAY_GUI" text,
+          "TRANG_THAI" text DEFAULT 'Thành công',
+          "LOAI_EMAIL" text,
+          user_id uuid
+        );
       EXCEPTION WHEN others THEN NULL;
       END;
 
@@ -109,6 +225,10 @@ export async function tryCreateColumnsOnSupabase() {
           ALTER PUBLICATION supabase_realtime ADD TABLE b_nhanvien;
         EXCEPTION WHEN others THEN NULL;
         END;
+        BEGIN
+          ALTER PUBLICATION supabase_realtime ADD TABLE b_emaillog;
+        EXCEPTION WHEN others THEN NULL;
+        END;
       END IF;
     END $$;
   `;
@@ -128,7 +248,7 @@ export async function tryCreateColumnsOnSupabase() {
 }
 
 export async function ensureUserOnboarded(userId: string): Promise<UserDataPayload> {
-  userId = SHARED_USER_ID;
+  userId = await resolveEffectiveUserId();
   try {
     // 1. Cố gắng tự động tạo cột trên Supabase (nếu chưa có)
     await tryCreateColumnsOnSupabase();
@@ -263,7 +383,7 @@ export async function ensureUserOnboarded(userId: string): Promise<UserDataPaylo
  * Tải toàn bộ dòng của một bảng theo phân trang (để vượt qua giới hạn 1000 dòng mặc định của Supabase/PostgREST)
  */
 export async function fetchAllRows(tableName: string, userId: string): Promise<any[]> {
-  userId = SHARED_USER_ID;
+  userId = await resolveEffectiveUserId();
   let allData: any[] = [];
   let from = 0;
   const pageSize = 1000;
@@ -299,7 +419,7 @@ export async function fetchAllRows(tableName: string, userId: string): Promise<a
  * Tải toàn bộ dữ liệu của người dùng hiện tại
  */
 export async function fetchAllUserData(userId: string): Promise<UserDataPayload> {
-  userId = SHARED_USER_ID;
+  userId = await resolveEffectiveUserId();
   const [
     dataSanPhams,
     dataNhapXuats,
@@ -404,7 +524,10 @@ export async function fetchAllUserData(userId: string): Promise<UserDataPayload>
     PERMISSIONS: item.PERMISSIONS || [],
     WRITE_ACCESS: item.WRITE_ACCESS ?? false,
     TEN_DANG_NHAP: item.TEN_DANG_NHAP || '',
-    MAT_KHAU: item.MAT_KHAU || ''
+    MAT_KHAU: item.MAT_KHAU || '',
+    TRANG_THAI: item.TRANG_THAI || 'Hoạt động',
+    YEU_CAU_RESET: item.YEU_CAU_RESET || false,
+    NGAY_DANG_KY: item.NGAY_DANG_KY || ''
   }));
 
   return {
@@ -422,7 +545,7 @@ export async function fetchAllUserData(userId: string): Promise<UserDataPayload>
  * Đồng bộ hoặc Thêm/Sửa một Sản phẩm
  */
 export async function syncSanPham(p: SanPham, userId: string) {
-  userId = SHARED_USER_ID;
+  userId = await resolveEffectiveUserId();
   try {
     const payload = {
       "SKU": p.SKU,
@@ -479,7 +602,7 @@ export async function syncSanPham(p: SanPham, userId: string) {
  * Đồng bộ danh sách Sản phẩm (hỗ trợ lưu nhiều sản phẩm cùng lúc)
  */
 export async function syncSanPhams(pList: SanPham[], userId: string) {
-  userId = SHARED_USER_ID;
+  userId = await resolveEffectiveUserId();
   try {
     const promises = pList.map(async (p) => {
       const payload = {
@@ -538,7 +661,7 @@ export async function syncSanPhams(pList: SanPham[], userId: string) {
  * Đồng bộ hoặc Thêm/Sửa Phiếu xuất nhập
  */
 export async function syncNhapXuat(nx: NhapXuat, userId: string) {
-  userId = SHARED_USER_ID;
+  userId = await resolveEffectiveUserId();
   try {
     const payload = {
       "HOA_DON": nx.HOA_DON,
@@ -593,7 +716,7 @@ export async function syncNhapXuat(nx: NhapXuat, userId: string) {
  * Đồng bộ danh sách chi tiết hóa đơn
  */
 export async function syncNhapXuatCTs(details: NhapXuatCT[], userId: string) {
-  userId = SHARED_USER_ID;
+  userId = await resolveEffectiveUserId();
   try {
     const promises = details.map(async (d) => {
       const payload = {
@@ -653,7 +776,7 @@ export async function syncNhapXuatCTs(details: NhapXuatCT[], userId: string) {
  * Đồng bộ phiếu kiểm kho
  */
 export async function syncKiemKho(k: KiemKho, userId: string) {
-  userId = SHARED_USER_ID;
+  userId = await resolveEffectiveUserId();
   try {
     const payload = {
       "MA_PHIEU": k.MA_PHIEU,
@@ -709,7 +832,7 @@ export async function syncKiemKho(k: KiemKho, userId: string) {
  * Đồng bộ Thương hiệu
  */
 export async function syncThuongHieu(t: ThươngHieu, userId: string) {
-  userId = SHARED_USER_ID;
+  userId = await resolveEffectiveUserId();
   try {
     const payload = {
       "THUONG_HIEU": t.THUONG_HIEU,
@@ -756,7 +879,7 @@ export async function syncThuongHieu(t: ThươngHieu, userId: string) {
  * Đồng bộ Chi nhánh
  */
 export async function syncChiNhanh(c: ChiNhanh, userId: string) {
-  userId = SHARED_USER_ID;
+  userId = await resolveEffectiveUserId();
   try {
     const payload = {
       "CHI_NHANH": c.CHI_NHANH,
@@ -803,7 +926,7 @@ export async function syncChiNhanh(c: ChiNhanh, userId: string) {
  * Đồng bộ Nhân viên
  */
 export async function syncNhanVien(n: NhanVien, userId: string) {
-  userId = SHARED_USER_ID;
+  userId = await resolveEffectiveUserId();
   try {
     const payload = {
       "MA_NV": n.MA_NV,
@@ -877,7 +1000,7 @@ export async function deleteNhapXuatAndDetails(hoaDon: string) {
  * Xóa Thương hiệu
  */
 export async function deleteThuongHieu(thuongHieu: string, userId: string) {
-  userId = SHARED_USER_ID;
+  userId = await resolveEffectiveUserId();
   const res = await supabase.from('b_thuonghieu').delete().eq('THUONG_HIEU', thuongHieu).eq('user_id', userId);
   if (res.error) console.error("Lỗi deleteThuongHieu:", res.error);
   return res;
@@ -887,7 +1010,7 @@ export async function deleteThuongHieu(thuongHieu: string, userId: string) {
  * Xóa Chi nhánh
  */
 export async function deleteChiNhanh(chiNhanh: string, userId: string) {
-  userId = SHARED_USER_ID;
+  userId = await resolveEffectiveUserId();
   const res = await supabase.from('b_chinhanh').delete().eq('CHI_NHANH', chiNhanh).eq('user_id', userId);
   if (res.error) console.error("Lỗi deleteChiNhanh:", res.error);
   return res;
@@ -897,8 +1020,125 @@ export async function deleteChiNhanh(chiNhanh: string, userId: string) {
  * Xóa Nhân viên
  */
 export async function deleteNhanVien(email: string, userId: string) {
-  userId = SHARED_USER_ID;
+  userId = await resolveEffectiveUserId();
   const res = await supabase.from('b_nhanvien').delete().eq('EMAIL', email).eq('user_id', userId);
   if (res.error) console.error("Lỗi deleteNhanVien:", res.error);
   return res;
+}
+
+/**
+ * Ghi nhận nhật ký email gửi đi
+ */
+export async function syncEmailLog(log: EmailLog, userId: string) {
+  userId = await resolveEffectiveUserId();
+  const emailDate = log.NGAY_GUI || new Date().toLocaleString('vi-VN');
+  
+  const localLog: EmailLog = {
+    id: log.id || Math.random().toString(36).substring(2, 15),
+    EMAIL: log.EMAIL,
+    TIEU_DE: log.TIEU_DE,
+    NOI_DUNG: log.NOI_DUNG,
+    NGAY_GUI: emailDate,
+    TRANG_THAI: log.TRANG_THAI || 'Thành công',
+    LOAI_EMAIL: log.LOAI_EMAIL,
+    user_id: userId
+  };
+
+  // 1. Lưu vào localStorage trước để đảm bảo dữ liệu không bị mất
+  try {
+    const saved = localStorage.getItem('B_EMAILLOG');
+    const logs: EmailLog[] = saved ? JSON.parse(saved) : [];
+    
+    // Tránh trùng lặp
+    if (!logs.some(l => l.id === localLog.id || (l.EMAIL === localLog.EMAIL && l.TIEU_DE === localLog.TIEU_DE && l.NGAY_GUI === localLog.NGAY_GUI))) {
+      logs.unshift(localLog);
+      localStorage.setItem('B_EMAILLOG', JSON.stringify(logs.slice(0, 300))); // Lưu tối đa 300 dòng nhật ký
+    }
+  } catch (err) {
+    console.warn("Lỗi lưu email log vào localStorage:", err);
+  }
+  
+  console.log(`[EMAIL SENDING] Gửi email đến: ${log.EMAIL} | Tiêu đề: ${log.TIEU_DE}`);
+  
+  const payload = {
+    EMAIL: log.EMAIL,
+    TIEU_DE: log.TIEU_DE,
+    NOI_DUNG: log.NOI_DUNG,
+    NGAY_GUI: emailDate,
+    TRANG_THAI: log.TRANG_THAI || 'Thành công',
+    LOAI_EMAIL: log.LOAI_EMAIL,
+    user_id: userId
+  };
+
+  // 2. Cố gắng ghi nhận lên Supabase b_emaillog
+  try {
+    const res = await supabase.from('b_emaillog').insert(payload).select();
+    if (res.error) {
+      const isMissingTable = res.error.code === '42P01' || 
+                             res.error.message?.includes('b_emaillog') || 
+                             res.error.message?.includes('schema cache');
+      if (isMissingTable) {
+        console.log("[EMAIL LOG] Bảng b_emaillog chưa tồn tại trên Supabase khi gửi email. Sử dụng LocalStorage làm fallback.");
+      } else {
+        console.warn("Lỗi syncEmailLog lên Supabase (sử dụng lưu trữ cục bộ fallback):", res.error.message);
+      }
+    }
+    return res;
+  } catch (err: any) {
+    console.warn("Exception khi syncEmailLog lên Supabase:", err?.message || err);
+    return { data: null, error: err };
+  }
+}
+
+/**
+ * Lấy danh sách nhật ký email
+ */
+export async function fetchEmailLogs(userId: string): Promise<EmailLog[]> {
+  userId = await resolveEffectiveUserId();
+
+  // Đọc danh sách cục bộ dự phòng trước
+  let localLogs: EmailLog[] = [];
+  try {
+    const saved = localStorage.getItem('B_EMAILLOG');
+    if (saved) {
+      localLogs = JSON.parse(saved);
+    }
+  } catch (err) {
+    console.warn("Lỗi đọc email logs từ localStorage:", err);
+  }
+  
+  try {
+    const { data, error } = await supabase
+      .from('b_emaillog')
+      .select('*')
+      .eq('user_id', userId)
+      .order('NGAY_GUI', { ascending: false });
+      
+    if (error) {
+      // Giảm độ nghiêm trọng của log nếu chỉ là lỗi thiếu bảng hoặc lỗi cache schema
+      const isMissingTable = error.code === '42P01' || 
+                             error.message?.includes('b_emaillog') || 
+                             error.message?.includes('schema cache');
+      if (isMissingTable) {
+        console.log("[EMAIL LOG] Bảng b_emaillog chưa tồn tại trên Supabase. Hệ thống tự động kích hoạt chế độ lưu trữ cục bộ LocalStorage.");
+      } else {
+        console.warn("Lỗi fetchEmailLogs từ Supabase:", error.message);
+      }
+      return localLogs;
+    }
+    
+    // Nếu có dữ liệu từ Supabase, cập nhật ngược lại cache cục bộ để đảm bảo đồng nhất
+    if (data) {
+      try {
+        localStorage.setItem('B_EMAILLOG', JSON.stringify(data));
+      } catch (err) {
+        console.warn("Lỗi lưu cache email logs:", err);
+      }
+      return data;
+    }
+  } catch (err: any) {
+    console.warn("Exception khi fetchEmailLogs từ Supabase:", err?.message || err);
+  }
+
+  return localLogs;
 }

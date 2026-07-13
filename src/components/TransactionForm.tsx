@@ -455,7 +455,9 @@ export default function TransactionForm({
         NGUOI_TAO: currentUser.username,
         TEN_NGUOI_TAO: currentUser.fullName,
         TG_TAO: getVietnamDateTimeString(),
-        GHI_CHU: ghiChuPhieu || `Lập phiếu ${loaiPhieu.toLowerCase()} kho tại ${selectedBranch}`
+        GHI_CHU: ghiChuPhieu || `Lập phiếu ${loaiPhieu.toLowerCase()} kho tại ${selectedBranch}`,
+        MA_NV: currentUser.id,
+        TEN_DANG_NHAP: currentUser.username
       };
 
       // 3. Tạo Danh sách Chi tiết dòng (B_NHAPXUATCT)

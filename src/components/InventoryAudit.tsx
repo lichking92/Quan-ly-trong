@@ -41,7 +41,7 @@ interface InventoryAuditProps {
   currentUser: UserType;
   sanPhams: SanPham[];
   kiemKhos: KiemKho[];
-  onSaveAudit: (newAudit: KiemKho) => void;
+  onSaveAudit: (newAudits: KiemKho[]) => void;
   thuongHieus: string[];
   brandList?: ThươngHieu[];
   chiNhanhs: string[];
@@ -347,24 +347,22 @@ export default function InventoryAudit({
       return;
     }
 
-    // Duyệt qua giỏ hàng và lưu từng sản phẩm kiểm kê
-    auditCart.forEach((item, index) => {
-      // Thiết lập độ trễ nhỏ để tránh xung đột mã định danh ID nếu sinh trong cùng mili giây
-      setTimeout(() => {
-        const auditRecord: KiemKho = {
-          MA_PHIEU: 'TEMP_PKK', // Sẽ được App.tsx xử lý tăng dần tự động (Ví dụ PKK000001)
-          SKU: item.sku,
-          TON_HE_THONG: item.tonHeThong,
-          TON_THUC_TE: item.tonThucTe,
-          LECH: item.lech,
-          LOAI_BU: item.loaiBu,
-          NGUOI_KIEM: currentUser.fullName,
-          THOI_DIEM: getVietnamDateTimeString(),
-          KHO: selectedBranch
-        };
-        onSaveAudit(auditRecord);
-      }, index * 100);
-    });
+    // Tạo danh sách các bản ghi kiểm kê từ giỏ hàng để lưu cùng một lúc
+    const auditRecords: KiemKho[] = auditCart.map((item) => ({
+      MA_PHIEU: 'TEMP_PKK', // Sẽ được App.tsx xử lý tăng dần tự động (Ví dụ PKK000001)
+      SKU: item.sku,
+      TON_HE_THONG: item.tonHeThong,
+      TON_THUC_TE: item.tonThucTe,
+      LECH: item.lech,
+      LOAI_BU: item.loaiBu,
+      NGUOI_KIEM: currentUser.fullName,
+      THOI_DIEM: getVietnamDateTimeString(),
+      KHO: selectedBranch,
+      MA_NV: currentUser.id,
+      TEN_DANG_NHAP: currentUser.username
+    }));
+
+    onSaveAudit(auditRecords);
 
     setSuccessMsg(`Lập phiếu kiểm kê kho thành công! Hệ thống tự động cập nhật số tồn thực tế và tạo các giao dịch điều chỉnh (PNK/PXK) liên kết.`);
     setAuditCart([]);

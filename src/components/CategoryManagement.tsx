@@ -17,10 +17,11 @@ import {
   Briefcase,
   Edit,
   Trash2,
-  X
+  X,
+  Key
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { ThươngHieu, ChiNhanh, NhanVien, UserRole } from '../types';
+import { ThươngHieu, ChiNhanh, NhanVien, UserRole, EmailLog } from '../types';
 
 /**
  * FILE: CategoryManagement.tsx
@@ -34,6 +35,7 @@ interface CategoryManagementProps {
   thuongHieus: ThươngHieu[];
   chiNhanhs: ChiNhanh[];
   nhanViens: NhanVien[];
+  emailLogs?: EmailLog[];
   onAddThuongHieu: (brand: ThươngHieu) => void;
   onAddChiNhanh: (branch: ChiNhanh) => void;
   onAddNhanVien: (staff: NhanVien) => void;
@@ -50,6 +52,7 @@ export default function CategoryManagement({
   thuongHieus,
   chiNhanhs,
   nhanViens,
+  emailLogs = [],
   onAddThuongHieu,
   onAddChiNhanh,
   onAddNhanVien,
@@ -63,7 +66,8 @@ export default function CategoryManagement({
 }: CategoryManagementProps) {
   
   // --- 1. QUẢN LÝ TAB DANH MỤC HIỆN TẠI ---
-  const [activeSubTab, setActiveSubTab] = useState<'BRAND' | 'BRANCH' | 'STAFF'>('BRAND');
+  const [activeSubTab, setActiveSubTab] = useState<'BRAND' | 'BRANCH' | 'STAFF' | 'EMAILLOG'>('BRAND');
+  const [viewingEmailLog, setViewingEmailLog] = useState<EmailLog | null>(null);
   
   const consolidatedBrandsList = useMemo(() => {
     const mergedMap = new Map<string, { chietXuats: Set<string>; features: Set<string> }>();
@@ -99,9 +103,48 @@ export default function CategoryManagement({
   const [successMsg, setSuccessMsg] = useState<string>('');
   const [errorMsg, setErrorMsg] = useState<string>('');
 
+  const pendingStaffs = useMemo(() => {
+    return nhanViens.filter(n => {
+      const status = (n.TRANG_THAI || 'ACTIVE').trim().toUpperCase();
+      return status === 'PENDING' || status === 'CHỜ DUYỆT' || status === 'CHO DUYET';
+    });
+  }, [nhanViens]);
+
+  const activeStaffs = useMemo(() => {
+    return nhanViens.filter(n => {
+      const status = (n.TRANG_THAI || 'ACTIVE').trim().toUpperCase();
+      return status !== 'PENDING' && status !== 'CHỜ DUYỆT' && status !== 'CHO DUYET';
+    });
+  }, [nhanViens]);
+
   const [editingBrand, setEditingBrand] = useState<{ oldName: string; oldFeature: string; brand: ThươngHieu } | null>(null);
   const [editingBranch, setEditingBranch] = useState<{ oldName: string; branch: ChiNhanh } | null>(null);
   const [editingStaff, setEditingStaff] = useState<{ oldEmail: string; staff: NhanVien } | null>(null);
+
+  // Reset Mật khẩu nhanh (Admin Reset)
+  const [resetStaff, setResetStaff] = useState<NhanVien | null>(null);
+  const [resetPasswordInput, setResetPasswordInput] = useState<string>('');
+
+  const handleQuickResetPassword = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!resetStaff) return;
+    if (!resetPasswordInput.trim()) {
+      setErrorMsg('Vui lòng nhập mật khẩu mới.');
+      return;
+    }
+
+    const updatedStaff: NhanVien = {
+      ...resetStaff,
+      MAT_KHAU: resetPasswordInput.trim(),
+      YEU_CAU_RESET: false
+    };
+
+    onUpdateNhanVien(resetStaff.EMAIL, updatedStaff);
+    setSuccessMsg(`Đã đặt lại mật khẩu cho nhân viên [${resetStaff.HO_TEN}] thành công!`);
+    setResetStaff(null);
+    setResetPasswordInput('');
+    setTimeout(() => setSuccessMsg(''), 3000);
+  };
 
   // Form Thương hiệu
   const [newBrandName, setNewBrandName] = useState<string>('');
@@ -123,7 +166,7 @@ export default function CategoryManagement({
   const [newStaffChucVu, setNewStaffChucVu] = useState<string>('Nhân viên bán kính');
   const [newStaffUsername, setNewStaffUsername] = useState<string>('');
   const [newStaffPassword, setNewStaffPassword] = useState<string>('');
-  const [newStaffStatus, setNewStaffStatus] = useState<string>('Hoạt động');
+  const [newStaffStatus, setNewStaffStatus] = useState<string>('ACTIVE');
 
   const handleAddFeature = () => {
     const val = featureInput.trim();
@@ -388,7 +431,7 @@ export default function CategoryManagement({
     setNewStaffUsername('');
     setNewStaffPassword('');
     setNewStaffChucVu('Nhân viên bán kính');
-    setNewStaffStatus('Hoạt động');
+    setNewStaffStatus('ACTIVE');
     setTimeout(() => setSuccessMsg(''), 3000);
   };
 
@@ -400,7 +443,7 @@ export default function CategoryManagement({
     setNewStaffBranch(staff.CHI_NHANH);
     setNewStaffChucVu(staff.CHUC_VU);
     setNewStaffRole(staff.ROLE);
-    setNewStaffStatus(staff.TRANG_THAI || 'Hoạt động');
+    setNewStaffStatus(staff.TRANG_THAI || 'ACTIVE');
   };
 
   const handleSaveEditStaff = (e: React.FormEvent) => {
@@ -436,7 +479,7 @@ export default function CategoryManagement({
     setNewStaffUsername('');
     setNewStaffPassword('');
     setNewStaffChucVu('Nhân viên bán kính');
-    setNewStaffStatus('Hoạt động');
+    setNewStaffStatus('ACTIVE');
     setTimeout(() => setSuccessMsg(''), 3000);
   };
 
@@ -446,7 +489,7 @@ export default function CategoryManagement({
     setNewStaffUsername('');
     setNewStaffPassword('');
     setNewStaffChucVu('Nhân viên bán kính');
-    setNewStaffStatus('Hoạt động');
+    setNewStaffStatus('ACTIVE');
   };
 
   const handleDeleteStaffItem = (email: string) => {
@@ -504,6 +547,14 @@ export default function CategoryManagement({
             }`}
           >
             <Users className="w-3.5 h-3.5" /> Nhân Viên & Quyền
+          </button>
+          <button
+            onClick={() => { setActiveSubTab('EMAILLOG'); setErrorMsg(''); setSuccessMsg(''); }}
+            className={`flex items-center gap-1.5 py-1.5 px-3.5 text-xs font-bold rounded-lg transition-all cursor-pointer ${
+              activeSubTab === 'EMAILLOG' ? 'bg-red-600 text-white shadow-xs' : 'text-slate-500 hover:text-slate-700'
+            }`}
+          >
+            <Mail className="w-3.5 h-3.5" /> Nhật Ký Email
           </button>
         </div>
       </div>
@@ -986,75 +1037,293 @@ export default function CategoryManagement({
               </div>
             )}
 
-            {/* Bảng danh sách */}
-            <div className={`bento-card !p-0 overflow-hidden ${currentUser.writeAccess !== false ? 'lg:col-span-3' : 'lg:col-span-5'}`}>
-              <div className="bg-slate-50/75 px-4 py-3 border-b border-slate-100">
-                <span className="text-xs font-bold text-slate-700 uppercase">Danh sách nhân sự & Quyền hạn</span>
-              </div>
-              <div className="divide-y divide-slate-50 max-h-[400px] overflow-y-auto">
-                {nhanViens.map((n) => {
-                  let roleColor = 'bg-blue-50 text-blue-700 border-blue-100';
-                  if (n.ROLE === 'ADMIN') roleColor = 'bg-rose-50 text-rose-700 border-rose-100';
-                  if (n.ROLE === 'KHO') roleColor = 'bg-emerald-50 text-emerald-700 border-emerald-100';
-
-                  return (
-                    <div key={n.MA_NV} className="p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
-                      <div className="space-y-1 min-w-0">
-                        <p className="font-bold text-slate-800 flex items-center gap-1.5 flex-wrap">
-                          {n.HO_TEN} 
-                          <span className="text-[10px] font-mono text-slate-400 bg-slate-100 py-0.5 px-1.5 rounded">
-                            {n.MA_NV}
-                          </span>
-                          {n.YEU_CAU_RESET && (
-                            <span className="animate-pulse bg-red-100 text-red-700 border border-red-200 text-[9px] py-0.5 px-2 rounded-full font-bold flex items-center gap-0.5 shrink-0">
-                              ⚠️ Đang yêu cầu Reset MK
-                            </span>
-                          )}
-                          <span className={`text-[9px] font-bold py-0.5 px-2 rounded-full border ${
-                            (n.TRANG_THAI || 'Hoạt động').toLowerCase().includes('khóa') || (n.TRANG_THAI || 'Hoạt động').toLowerCase().includes('lock')
-                              ? 'bg-slate-100 text-slate-500 border-slate-200' 
-                              : 'bg-emerald-100 text-emerald-700 border-emerald-200'
-                          }`}>
-                            {n.TRANG_THAI || 'Hoạt động'}
-                          </span>
-                        </p>
-                        <p className="text-slate-600 font-mono text-[11px] flex items-center gap-1">
-                          <Users className="w-3.5 h-3.5 text-slate-400" /> Tài khoản: <span className="font-bold text-blue-600">{n.TEN_DANG_NHAP || 'Chưa thiết lập'}</span>
-                        </p>
-                        <p className="text-slate-400 font-medium text-[11px] flex items-center gap-1">
-                          <Briefcase className="w-3.5 h-3.5 text-slate-300" /> {n.CHUC_VU} | {n.CHI_NHANH}
-                        </p>
-                      </div>
-
-                      <div className="flex items-center gap-2 shrink-0">
-                        <span className={`inline-flex items-center gap-1 font-mono font-bold text-[10px] py-1 px-3 rounded-full border ${roleColor}`}>
-                          <Shield className="w-3 h-3" /> {n.ROLE}
-                        </span>
-                        {currentUser.writeAccess !== false && (
-                          <div className="flex items-center gap-1">
-                            <button
-                              onClick={() => handleStartEditStaff(n)}
-                              className="p-1 text-blue-600 hover:bg-blue-50 rounded-md cursor-pointer transition-colors inline-flex"
-                              title="Sửa"
-                            >
-                              <Edit className="w-3.5 h-3.5" />
-                            </button>
-                            <button
-                              onClick={() => handleDeleteStaffItem(n.EMAIL)}
-                              className="p-1 text-red-600 hover:bg-red-50 rounded-md cursor-pointer transition-colors inline-flex"
-                              title="Xóa"
-                            >
-                              <Trash2 className="w-3.5 h-3.5" />
-                            </button>
-                          </div>
-                        )}
-                      </div>
+            {/* Bảng danh sách & Duyệt tài khoản */}
+            <div className={`space-y-6 ${currentUser.writeAccess !== false ? 'lg:col-span-3' : 'lg:col-span-5'}`}>
+              
+              {/* BẢNG 1: DANH SÁCH CHỜ PHÊ DUYỆT (PENDING QUEUE) */}
+              <div className="bento-card !p-0 overflow-hidden border border-amber-100 shadow-sm">
+                <div className="bg-amber-50/70 px-4 py-3 border-b border-amber-100 flex justify-between items-center">
+                  <span className="text-xs font-bold text-amber-800 uppercase flex items-center gap-1.5">
+                    ⚠️ Danh sách chờ phê duyệt ({pendingStaffs.length})
+                  </span>
+                  <span className="text-[10px] font-bold text-amber-600 bg-white border border-amber-100 py-0.5 px-2 rounded-full animate-pulse">
+                    Cần xử lý
+                  </span>
+                </div>
+                <div className="divide-y divide-slate-50 max-h-[300px] overflow-y-auto">
+                  {pendingStaffs.length === 0 ? (
+                    <div className="p-8 text-center text-slate-400 font-medium text-xs">
+                      🎉 Không có yêu cầu đăng ký nào đang chờ phê duyệt.
                     </div>
-                  );
-                })}
+                  ) : (
+                    pendingStaffs.map((n) => (
+                      <div key={n.MA_NV} className="p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs bg-amber-50/20 hover:bg-amber-50/40 transition-colors">
+                        <div className="space-y-1 min-w-0">
+                          <p className="font-bold text-slate-800 flex items-center gap-1.5 flex-wrap">
+                            {n.HO_TEN}
+                            <span className="text-[10px] font-mono text-slate-400 bg-slate-100 py-0.5 px-1.5 rounded">
+                              {n.MA_NV}
+                            </span>
+                            <span className="text-[9px] font-bold py-0.5 px-2 rounded-full border bg-amber-100 text-amber-700 border-amber-200">
+                              {n.TRANG_THAI || 'Chờ duyệt'}
+                            </span>
+                          </p>
+                          <p className="text-slate-600 font-mono text-[11px]">
+                            📧 Email: <span className="font-semibold">{n.EMAIL}</span>
+                          </p>
+                          <p className="text-slate-600 font-mono text-[11px]">
+                            👤 Tên đăng nhập: <span className="font-bold text-blue-600">{n.TEN_DANG_NHAP || 'Chưa thiết lập'}</span>
+                          </p>
+                          {n.NGAY_DANG_KY && (
+                            <p className="text-slate-400 font-medium text-[10px] font-mono">
+                              📅 Đăng ký ngày: {n.NGAY_DANG_KY}
+                            </p>
+                          )}
+                        </div>
+
+                        <div className="flex items-center gap-2 shrink-0">
+                          {currentUser.writeAccess !== false && (
+                            <div className="flex items-center gap-1.5">
+                              <button
+                                onClick={() => {
+                                  const updatedStaff: NhanVien = {
+                                    ...n,
+                                    TRANG_THAI: 'ACTIVE',
+                                    CHUC_VU: n.CHUC_VU === 'Nhân viên chờ duyệt' ? 'Nhân viên bán kính' : n.CHUC_VU
+                                  };
+                                  onUpdateNhanVien(n.EMAIL, updatedStaff);
+                                  setSuccessMsg(`Đã phê duyệt & kích hoạt tài khoản cho [${n.HO_TEN}]. Email thông báo đã gửi.`);
+                                  setTimeout(() => setSuccessMsg(''), 4000);
+                                }}
+                                className="py-1.5 px-3 bg-emerald-600 hover:bg-emerald-500 text-white text-[10px] font-bold rounded-lg cursor-pointer transition-all shrink-0 flex items-center gap-1 shadow-2xs"
+                                title="Phê duyệt tài khoản"
+                              >
+                                <CheckCircle className="w-3 h-3" /> Phê duyệt
+                              </button>
+                              <button
+                                onClick={() => {
+                                  const updatedStaff: NhanVien = {
+                                    ...n,
+                                    TRANG_THAI: 'Từ chối'
+                                  };
+                                  onUpdateNhanVien(n.EMAIL, updatedStaff);
+                                  setSuccessMsg(`Đã từ chối tài khoản cho [${n.HO_TEN}]. Email thông báo đã gửi.`);
+                                  setTimeout(() => setSuccessMsg(''), 4000);
+                                }}
+                                className="py-1.5 px-3 bg-red-600 hover:bg-red-500 text-white text-[10px] font-bold rounded-lg cursor-pointer transition-all shrink-0 flex items-center gap-1 shadow-2xs"
+                                title="Từ chối tài khoản"
+                              >
+                                <X className="w-3 h-3" /> Từ chối
+                              </button>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    ))
+                  )}
+                </div>
               </div>
+
+              {/* BẢNG 2: DANH SÁCH TÀI KHOẢN CHÍNH THỨC */}
+              <div className="bento-card !p-0 overflow-hidden">
+                <div className="bg-slate-50/75 px-4 py-3 border-b border-slate-100 flex justify-between items-center">
+                  <span className="text-xs font-bold text-slate-700 uppercase">
+                    Danh sách tài khoản hệ thống ({activeStaffs.length})
+                  </span>
+                </div>
+                <div className="divide-y divide-slate-50 max-h-[350px] overflow-y-auto">
+                  {activeStaffs.map((n) => {
+                    let roleColor = 'bg-blue-50 text-blue-700 border-blue-100';
+                    if (n.ROLE === 'ADMIN') roleColor = 'bg-rose-50 text-rose-700 border-rose-100';
+                    if (n.ROLE === 'KHO') roleColor = 'bg-emerald-50 text-emerald-700 border-emerald-100';
+
+                    const rawStatus = (n.TRANG_THAI || 'ACTIVE').trim().toUpperCase();
+                    const isBlocked = rawStatus === 'KHÓA' || rawStatus === 'BLOCKED' || rawStatus === 'KHOA';
+                    const isRejected = rawStatus === 'TỪ CHỐI' || rawStatus === 'REJECTED' || rawStatus === 'TU CHOI';
+
+                    return (
+                      <div key={n.MA_NV} className={`p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs ${isBlocked ? 'bg-slate-50/50' : ''}`}>
+                        <div className="space-y-1 min-w-0">
+                          <p className="font-bold text-slate-800 flex items-center gap-1.5 flex-wrap">
+                            {n.HO_TEN} 
+                            <span className="text-[10px] font-mono text-slate-400 bg-slate-100 py-0.5 px-1.5 rounded">
+                              {n.MA_NV}
+                            </span>
+                            {n.YEU_CAU_RESET && (
+                              <span className="animate-pulse bg-red-100 text-red-700 border border-red-200 text-[9px] py-0.5 px-2 rounded-full font-bold flex items-center gap-0.5 shrink-0">
+                                ⚠️ Yêu cầu Reset MK
+                              </span>
+                            )}
+                            <span className={`text-[9px] font-bold py-0.5 px-2 rounded-full border ${
+                              isBlocked 
+                                ? 'bg-red-50 text-red-600 border-red-200' 
+                                : isRejected
+                                  ? 'bg-slate-100 text-slate-500 border-slate-200'
+                                  : 'bg-emerald-50 text-emerald-700 border-emerald-100'
+                            }`}>
+                              {(n.TRANG_THAI === 'ACTIVE' || n.TRANG_THAI === 'Hoạt động') ? 'ACTIVE' : (n.TRANG_THAI === 'PENDING' || n.TRANG_THAI === 'Chờ duyệt') ? 'PENDING' : (n.TRANG_THAI || 'ACTIVE')}
+                            </span>
+                          </p>
+                          <p className="text-slate-600 font-mono text-[11px] flex items-center gap-1">
+                            <Users className="w-3.5 h-3.5 text-slate-400" /> Tài khoản: <span className="font-bold text-blue-600">{n.TEN_DANG_NHAP || 'Chưa thiết lập'}</span>
+                          </p>
+                          <p className="text-slate-400 font-medium text-[11px] flex items-center gap-1">
+                            <Briefcase className="w-3.5 h-3.5 text-slate-300" /> {n.CHUC_VU} | {n.CHI_NHANH}
+                          </p>
+                        </div>
+
+                        <div className="flex items-center gap-2 shrink-0">
+                          <span className={`inline-flex items-center gap-1 font-mono font-bold text-[10px] py-1 px-3 rounded-full border ${roleColor}`}>
+                            <Shield className="w-3 h-3" /> {n.ROLE}
+                          </span>
+                          {currentUser.writeAccess !== false && (
+                            <div className="flex items-center gap-1">
+                              {/* NÚT KHÓA / MỞ KHÓA TÀI KHOẢN */}
+                              {isBlocked ? (
+                                <button
+                                  onClick={() => {
+                                    const updatedStaff: NhanVien = {
+                                      ...n,
+                                      TRANG_THAI: 'ACTIVE'
+                                    };
+                                    onUpdateNhanVien(n.EMAIL, updatedStaff);
+                                    setSuccessMsg(`Đã mở khóa tài khoản cho [${n.HO_TEN}].`);
+                                    setTimeout(() => setSuccessMsg(''), 3000);
+                                  }}
+                                  className="py-1 px-2.5 bg-emerald-600 hover:bg-emerald-500 text-white text-[10px] font-bold rounded-lg cursor-pointer transition-all shrink-0"
+                                  title="Mở khóa tài khoản"
+                                >
+                                  Mở khóa
+                                </button>
+                              ) : (
+                                <button
+                                  onClick={() => {
+                                    const updatedStaff: NhanVien = {
+                                      ...n,
+                                      TRANG_THAI: 'Khóa'
+                                    };
+                                    onUpdateNhanVien(n.EMAIL, updatedStaff);
+                                    setSuccessMsg(`Đã khóa tài khoản [${n.HO_TEN}]. Email thông báo đã gửi.`);
+                                    setTimeout(() => setSuccessMsg(''), 4000);
+                                  }}
+                                  className="py-1 px-2.5 bg-red-50 hover:bg-red-100 text-red-600 border border-red-100 text-[10px] font-bold rounded-lg cursor-pointer transition-all shrink-0"
+                                  title="Khóa tài khoản"
+                                >
+                                  Khóa tài khoản
+                                </button>
+                              )}
+
+                              <button
+                                onClick={() => {
+                                  setResetStaff(n);
+                                  setResetPasswordInput('');
+                                }}
+                                className="p-1 text-amber-600 hover:bg-amber-50 rounded-md cursor-pointer transition-colors inline-flex"
+                                title="Đặt lại mật khẩu"
+                              >
+                                <Key className="w-3.5 h-3.5" />
+                              </button>
+                              <button
+                                onClick={() => handleStartEditStaff(n)}
+                                className="p-1 text-blue-600 hover:bg-blue-50 rounded-md cursor-pointer transition-colors inline-flex"
+                                title="Sửa"
+                              >
+                                <Edit className="w-3.5 h-3.5" />
+                              </button>
+                              <button
+                                onClick={() => handleDeleteStaffItem(n.EMAIL)}
+                                className="p-1 text-red-600 hover:bg-red-50 rounded-md cursor-pointer transition-colors inline-flex"
+                                title="Xóa"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+
             </div>
           </>
+        )}
+
+        {/* TAB 4: NHẬT KÝ EMAIL HỆ THỐNG */}
+        {activeSubTab === 'EMAILLOG' && (
+          <div className="bento-card !p-0 overflow-hidden lg:col-span-5 border border-slate-100 shadow-xs">
+            <div className="bg-slate-50/75 px-5 py-4 border-b border-slate-100 flex justify-between items-center">
+              <span className="text-xs font-bold text-slate-700 uppercase flex items-center gap-1.5">
+                <Mail className="w-4 h-4 text-slate-400" /> Nhật ký email thông báo hệ thống
+              </span>
+              <span className="text-[10px] font-mono text-slate-400 bg-white border border-slate-200 py-0.5 px-2 rounded-full">
+                Thời gian thực (UTC+7)
+              </span>
+            </div>
+            
+            <div className="p-4 bg-amber-50/50 border-b border-slate-100 text-[11px] text-amber-800 leading-relaxed">
+              💡 <strong>Hệ thống email tự động:</strong> Glass Stock Pro sử dụng cơ chế ghi log email tập trung trực tiếp lên Supabase Cloud. Mọi thao tác Đăng ký tài khoản mới, Phê duyệt, Từ chối, Khóa tài khoản hoặc Khôi phục mật khẩu đều được tự động ghi nhận và đồng bộ trực quan tại đây để Admin theo dõi vết và hỗ trợ người dùng thuận tiện nhất.
+            </div>
+
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-xs border-collapse">
+                <thead>
+                  <tr className="bg-slate-50/50 border-b border-slate-100 text-slate-500 font-bold uppercase text-[10px]">
+                    <th className="p-3.5">Thời gian</th>
+                    <th className="p-3.5">Người nhận (Email)</th>
+                    <th className="p-3.5">Loại email</th>
+                    <th className="p-3.5">Tiêu đề thông báo</th>
+                    <th className="p-3.5">Trạng thái gửi</th>
+                    <th className="p-3.5 text-right">Tác vụ</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-50">
+                  {(!emailLogs || emailLogs.length === 0) ? (
+                    <tr>
+                      <td colSpan={6} className="p-12 text-center text-slate-400 font-medium">
+                        Không có nhật ký email nào được ghi nhận trên hệ thống.
+                      </td>
+                    </tr>
+                  ) : (
+                    emailLogs.map((log, i) => (
+                      <tr key={log.id || i} className="hover:bg-slate-50/35 transition-colors">
+                        <td className="p-3.5 font-mono text-slate-400 text-[11px] shrink-0">{log.NGAY_GUI}</td>
+                        <td className="p-3.5 font-semibold text-slate-700">{log.EMAIL}</td>
+                        <td className="p-3.5">
+                          <span className={`text-[10px] font-bold py-0.5 px-2 rounded-full border ${
+                            log.LOAI_EMAIL === 'Phê duyệt' 
+                              ? 'bg-emerald-50 text-emerald-700 border-emerald-100'
+                              : log.LOAI_EMAIL === 'Đăng ký'
+                                ? 'bg-blue-50 text-blue-700 border-blue-100'
+                                : log.LOAI_EMAIL === 'Từ chối' || log.LOAI_EMAIL === 'Khóa tài khoản'
+                                  ? 'bg-red-50 text-red-700 border-red-100'
+                                  : 'bg-amber-50 text-amber-700 border-amber-100'
+                          }`}>
+                            {log.LOAI_EMAIL}
+                          </span>
+                        </td>
+                        <td className="p-3.5 font-medium text-slate-600 max-w-xs truncate">{log.TIEU_DE}</td>
+                        <td className="p-3.5">
+                          <span className="inline-flex items-center gap-1 text-emerald-600 font-bold text-[11px] bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-100 shadow-2xs">
+                            ● {log.TRANG_THAI || 'Thành công'}
+                          </span>
+                        </td>
+                        <td className="p-3.5 text-right">
+                          <button
+                            onClick={() => setViewingEmailLog(log)}
+                            className="text-blue-600 hover:text-blue-800 font-bold text-[11px] cursor-pointer"
+                          >
+                            Xem chi tiết
+                          </button>
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
         )}
 
       </div>
@@ -1420,6 +1689,19 @@ export default function CategoryManagement({
                   </div>
                 </div>
 
+                <div className="space-y-1">
+                  <label className="text-[10px] uppercase font-bold text-slate-400">Trạng thái tài khoản</label>
+                  <select
+                    value={newStaffStatus}
+                    onChange={(e) => setNewStaffStatus(e.target.value)}
+                    className="w-full text-xs font-semibold text-slate-700 bg-slate-50 border border-slate-100 rounded-lg p-2.5 focus:outline-hidden"
+                  >
+                    <option value="ACTIVE">ACTIVE (Đang hoạt động)</option>
+                    <option value="Khóa">Khóa tài khoản (Locked)</option>
+                    <option value="PENDING">PENDING (Chờ duyệt)</option>
+                  </select>
+                </div>
+
                 <div className="flex gap-2.5 pt-2">
                   <button
                     type="button"
@@ -1436,6 +1718,131 @@ export default function CategoryManagement({
                   </button>
                 </div>
               </form>
+            </motion.div>
+          </div>
+        )}
+
+        {/* 4. Quick Reset Password Modal */}
+        {resetStaff && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/60 backdrop-blur-xs">
+            <motion.div
+              initial={{ scale: 0.95, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.95, opacity: 0 }}
+              className="bg-white rounded-2xl max-w-sm w-full shadow-2xl overflow-hidden border border-slate-100 flex flex-col"
+            >
+              <div className="bg-slate-50 px-5 py-4 border-b border-slate-100 flex items-center justify-between">
+                <h3 className="font-sans font-bold text-slate-800 text-sm uppercase flex items-center gap-1.5">
+                  <Key className="w-4 h-4 text-amber-500" />
+                  Đặt lại mật khẩu
+                </h3>
+                <button
+                  type="button"
+                  onClick={() => setResetStaff(null)}
+                  className="p-1 text-slate-400 hover:text-slate-600 cursor-pointer text-xs font-bold"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              <form onSubmit={handleQuickResetPassword} className="p-5 space-y-4">
+                <div>
+                  <p className="text-xs text-slate-500">
+                    Bạn đang thực hiện cấp lại mật khẩu mới cho nhân sự: <strong>{resetStaff.HO_TEN}</strong> ({resetStaff.TEN_DANG_NHAP}).
+                  </p>
+                </div>
+
+                <div className="space-y-1">
+                  <label className="text-[10px] uppercase font-bold text-slate-400">Mật khẩu mới</label>
+                  <input
+                    type="password"
+                    placeholder="Nhập mật khẩu mới..."
+                    value={resetPasswordInput}
+                    onChange={(e) => setResetPasswordInput(e.target.value)}
+                    className="w-full text-xs font-semibold text-slate-700 bg-slate-50 border border-slate-100 rounded-lg p-2.5 focus:outline-hidden font-mono"
+                    autoFocus
+                  />
+                </div>
+
+                <div className="flex gap-2.5 pt-2">
+                  <button
+                    type="button"
+                    onClick={() => setResetStaff(null)}
+                    className="flex-1 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-600 text-xs font-bold rounded-xl cursor-pointer transition-all flex items-center justify-center gap-1"
+                  >
+                    Hủy
+                  </button>
+                  <button
+                    type="submit"
+                    className="flex-1 py-2.5 bg-amber-500 hover:bg-amber-600 text-white text-xs font-bold rounded-xl cursor-pointer transition-all flex items-center justify-center gap-1.5"
+                  >
+                    <CheckCircle className="w-4 h-4" /> Xác nhận
+                  </button>
+                </div>
+              </form>
+            </motion.div>
+          </div>
+        )}
+
+        {/* 5. View Email Log Detail Modal */}
+        {viewingEmailLog && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/60 backdrop-blur-xs">
+            <motion.div
+              initial={{ scale: 0.95, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.95, opacity: 0 }}
+              className="bg-white rounded-2xl max-w-lg w-full shadow-2xl overflow-hidden border border-slate-100 flex flex-col"
+            >
+              <div className="bg-slate-50 px-5 py-4 border-b border-slate-100 flex items-center justify-between">
+                <h3 className="font-sans font-bold text-slate-800 text-sm uppercase flex items-center gap-1.5">
+                  <Mail className="w-4 h-4 text-blue-500" />
+                  Chi tiết nội dung email gửi đi
+                </h3>
+                <button
+                  type="button"
+                  onClick={() => setViewingEmailLog(null)}
+                  className="p-1 text-slate-400 hover:text-slate-600 cursor-pointer text-xs font-bold"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              <div className="p-6 space-y-4">
+                <div className="grid grid-cols-3 gap-y-2.5 text-xs border-b border-slate-100 pb-4">
+                  <div className="text-slate-400 uppercase font-bold">Người nhận:</div>
+                  <div className="col-span-2 font-semibold text-slate-800">{viewingEmailLog.EMAIL}</div>
+                  
+                  <div className="text-slate-400 uppercase font-bold">Thời gian:</div>
+                  <div className="col-span-2 font-mono text-slate-600">{viewingEmailLog.NGAY_GUI}</div>
+                  
+                  <div className="text-slate-400 uppercase font-bold">Loại email:</div>
+                  <div className="col-span-2">
+                    <span className="bg-blue-50 text-blue-700 font-bold border border-blue-100 px-2 py-0.5 rounded text-[10px]">
+                      {viewingEmailLog.LOAI_EMAIL}
+                    </span>
+                  </div>
+
+                  <div className="text-slate-400 uppercase font-bold">Tiêu đề:</div>
+                  <div className="col-span-2 font-bold text-slate-800">{viewingEmailLog.TIEU_DE}</div>
+                </div>
+
+                <div className="space-y-1.5">
+                  <label className="text-[10px] uppercase font-bold text-slate-400">Nội dung Email (HTML/Text)</label>
+                  <div className="w-full h-64 overflow-y-auto bg-slate-50 border border-slate-100 rounded-xl p-4 font-mono text-[11px] text-slate-600 whitespace-pre-wrap leading-relaxed shadow-inner">
+                    {viewingEmailLog.NOI_DUNG}
+                  </div>
+                </div>
+
+                <div className="flex justify-end pt-2">
+                  <button
+                    type="button"
+                    onClick={() => setViewingEmailLog(null)}
+                    className="py-2 px-5 bg-slate-100 hover:bg-slate-200 text-slate-600 text-xs font-bold rounded-xl cursor-pointer transition-all"
+                  >
+                    Đóng cửa sổ
+                  </button>
+                </div>
+              </div>
             </motion.div>
           </div>
         )}

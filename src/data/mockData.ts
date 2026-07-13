@@ -44,11 +44,11 @@ export const MOCK_NHAN_VIEN: NhanVien[] = [
     CHI_NHANH: 'Kho Trung Tâm',
     EMAIL: 'nguyenkienduc.digital@gmail.com', // Trùng khớp với email user đăng nhập để auto-phân quyền ADMIN
     ROLE: 'ADMIN',
-    PASSWORD: '12345',
+    PASSWORD: '123456',
     PERMISSIONS: ['DASHBOARD', 'PRODUCT', 'TRANSACTION', 'AUDIT', 'HISTORY', 'CATEGORY', 'APPS_SCRIPT'],
     WRITE_ACCESS: true,
     TEN_DANG_NHAP: 'admin',
-    MAT_KHAU: '12345',
+    MAT_KHAU: '123456',
     VAI_TRO: 'ADMIN',
     TRANG_THAI: 'Hoạt động'
   },

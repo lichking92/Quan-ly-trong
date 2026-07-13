@@ -4,7 +4,7 @@
  */
 
 import React, { useState, useEffect } from 'react';
-import { Sun, Moon, Palette, Check, Save } from 'lucide-react';
+import { Sun, Moon, Palette, Check, Save, Key, Lock } from 'lucide-react';
 import { motion } from 'motion/react';
 import { User as UserType } from '../types';
 
@@ -21,6 +21,7 @@ interface ThemeSettingsProps {
   themeMode: 'light' | 'dark';
   accentColor: 'blue' | 'green' | 'orange' | 'red' | 'purple';
   onUpdateTheme: (theme: 'light' | 'dark', accent: 'blue' | 'green' | 'orange' | 'red' | 'purple') => void;
+  onUpdatePassword: (newPassword: string) => Promise<{ success: boolean; message: string }>;
 }
 
 const ACCENT_OPTIONS = [
@@ -35,12 +36,57 @@ export default function ThemeSettings({
   currentUser,
   themeMode,
   accentColor,
-  onUpdateTheme
+  onUpdateTheme,
+  onUpdatePassword
 }: ThemeSettingsProps) {
 
   const [localTheme, setLocalTheme] = useState<'light' | 'dark'>(themeMode);
   const [localAccent, setLocalAccent] = useState<'blue' | 'green' | 'orange' | 'red' | 'purple'>(accentColor);
   const [successMsg, setSuccessMsg] = useState<string>('');
+
+  // Password form states
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [isChangingPassword, setIsChangingPassword] = useState(false);
+  const [passwordSuccess, setPasswordSuccess] = useState('');
+  const [passwordError, setPasswordError] = useState('');
+
+  const handleChangePasswordSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setPasswordSuccess('');
+    setPasswordError('');
+
+    if (!newPassword.trim()) {
+      setPasswordError('Vui lòng nhập mật khẩu mới.');
+      return;
+    }
+
+    if (newPassword !== confirmPassword) {
+      setPasswordError('Mật khẩu xác nhận không trùng khớp.');
+      return;
+    }
+
+    if (newPassword.length < 4) {
+      setPasswordError('Mật khẩu phải chứa ít nhất 4 ký tự.');
+      return;
+    }
+
+    setIsChangingPassword(true);
+    try {
+      const result = await onUpdatePassword(newPassword.trim());
+      if (result.success) {
+        setPasswordSuccess(result.message || 'Thay đổi mật khẩu thành công!');
+        setNewPassword('');
+        setConfirmPassword('');
+      } else {
+        setPasswordError(result.message || 'Có lỗi xảy ra khi đổi mật khẩu.');
+      }
+    } catch (err: any) {
+      setPasswordError(err.message || 'Không thể cập nhật mật khẩu.');
+    } finally {
+      setIsChangingPassword(false);
+    }
+  };
 
   // Đồng bộ với Props khi props thay đổi (ví dụ khi F5 hoặc đổi vai nhanh)
   useEffect(() => {
@@ -194,6 +240,67 @@ export default function ThemeSettings({
           </button>
         </div>
 
+      </div>
+
+      {/* CARD ĐỔI MẬT KHẨU TÀI KHOẢN */}
+      <div className="bento-card bg-white p-6 rounded-2xl shadow-md border border-slate-100 space-y-5">
+        <div className="space-y-1">
+          <h3 className="font-sans font-bold text-slate-800 text-xs uppercase tracking-wider text-title-color flex items-center gap-2">
+            <Lock className="w-4 h-4 text-slate-400" />
+            Đổi mật khẩu tài khoản
+          </h3>
+          <p className="text-[11px] text-slate-400 text-desc-color">Cập nhật mật khẩu đăng nhập trực tiếp vào hệ thống Supabase</p>
+        </div>
+
+        {passwordSuccess && (
+          <div className="p-4 bg-emerald-50 border border-emerald-100 text-emerald-700 rounded-xl text-xs flex items-center gap-2 shadow-xs">
+            <Check className="w-4.5 h-4.5 text-emerald-500 shrink-0" />
+            <span className="font-bold">{passwordSuccess}</span>
+          </div>
+        )}
+
+        {passwordError && (
+          <div className="p-4 bg-red-50 border border-red-100 text-red-700 rounded-xl text-xs flex items-center gap-2 shadow-xs">
+            <span className="font-semibold text-red-500">{passwordError}</span>
+          </div>
+        )}
+
+        <form onSubmit={handleChangePasswordSubmit} className="space-y-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div className="space-y-1">
+              <label className="text-[10px] uppercase font-bold text-slate-400">Mật khẩu mới</label>
+              <input
+                type="password"
+                placeholder="Tối thiểu 4 ký tự..."
+                value={newPassword}
+                onChange={(e) => setNewPassword(e.target.value)}
+                className="w-full text-xs font-semibold text-slate-700 bg-slate-50 border border-slate-100 rounded-lg p-2.5 focus:outline-hidden font-mono"
+              />
+            </div>
+
+            <div className="space-y-1">
+              <label className="text-[10px] uppercase font-bold text-slate-400">Xác nhận mật khẩu mới</label>
+              <input
+                type="password"
+                placeholder="Nhập lại mật khẩu..."
+                value={confirmPassword}
+                onChange={(e) => setConfirmPassword(e.target.value)}
+                className="w-full text-xs font-semibold text-slate-700 bg-slate-50 border border-slate-100 rounded-lg p-2.5 focus:outline-hidden font-mono"
+              />
+            </div>
+          </div>
+
+          <div className="flex justify-end pt-2">
+            <button
+              type="submit"
+              disabled={isChangingPassword}
+              className="flex items-center gap-2 bg-slate-800 hover:bg-slate-950 text-white font-extrabold text-xs py-2.5 px-6 rounded-xl cursor-pointer transition-colors shadow-sm disabled:opacity-50"
+            >
+              <Key className="w-4 h-4" />
+              {isChangingPassword ? 'Đang cập nhật...' : 'Cập Nhật Mật Khẩu'}
+            </button>
+          </div>
+        </form>
       </div>
 
     </div>

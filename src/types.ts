@@ -125,4 +125,17 @@ export interface NhanVien {
   VAI_TRO?: UserRole;      // Quyền hạn (vai trò tiếng Việt/English)
   TRANG_THAI?: string;     // Trạng thái tài khoản (Hoạt động, khóa...)
   YEU_CAU_RESET?: boolean; // Yêu cầu khôi phục mật khẩu
+  NGAY_DANG_KY?: string;   // Ngày đăng ký tài khoản mới
+}
+
+// B_EMAILLOG: Nhật ký gửi email thông báo từ hệ thống
+export interface EmailLog {
+  id?: string;
+  EMAIL: string;
+  TIEU_DE: string;
+  NOI_DUNG: string;
+  NGAY_GUI: string;
+  TRANG_THAI: string; // 'Thành công' | 'Thất bại'
+  LOAI_EMAIL: string; // 'Đăng ký' | 'Phê duyệt' | 'Từ chối' | 'Quên mật khẩu' | 'Khóa tài khoản'
+  user_id?: string;
 }
