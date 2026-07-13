@@ -10,6 +10,8 @@ import {
   MOCK_NHAN_VIEN
 } from './data/mockData';
 
+export const SHARED_USER_ID = "00000000-0000-0000-0000-000000000000";
+
 /**
  * FILE: supabaseSync.ts
  * MÔ TẢ: Hệ thống đồng bộ dữ liệu thời gian thực và tự động Onboarding qua Supabase.
@@ -31,31 +33,102 @@ export interface UserDataPayload {
  * Kiểm tra xem tài khoản đã có dữ liệu chưa, nếu chưa thì tự động Onboard nạp dữ liệu mẫu
  */
 export async function tryCreateColumnsOnSupabase() {
+  const sql = `
+    DO $$ 
+    BEGIN
+      -- Thêm các cột cho b_nhanvien nếu chưa có
+      BEGIN
+        ALTER TABLE b_nhanvien ADD COLUMN IF NOT EXISTS "TEN_DANG_NHAP" text;
+      EXCEPTION WHEN others THEN NULL;
+      END;
+
+      BEGIN
+        ALTER TABLE b_nhanvien ADD COLUMN IF NOT EXISTS "MAT_KHAU" text;
+      EXCEPTION WHEN others THEN NULL;
+      END;
+
+      BEGIN
+        ALTER TABLE b_nhanvien ADD COLUMN IF NOT EXISTS "YEU_CAU_RESET" boolean DEFAULT false;
+      EXCEPTION WHEN others THEN NULL;
+      END;
+
+      BEGIN
+        ALTER TABLE b_nhanvien ADD COLUMN IF NOT EXISTS "TRANG_THAI" text DEFAULT 'Hoạt động';
+      EXCEPTION WHEN others THEN NULL;
+      END;
+
+      -- Thêm các cột cho b_nhapxuat
+      BEGIN
+        ALTER TABLE b_nhapxuat ADD COLUMN IF NOT EXISTS "MA_NV" text;
+      EXCEPTION WHEN others THEN NULL;
+      END;
+
+      BEGIN
+        ALTER TABLE b_nhapxuat ADD COLUMN IF NOT EXISTS "TEN_DANG_NHAP" text;
+      EXCEPTION WHEN others THEN NULL;
+      END;
+
+      -- Thêm các cột cho b_kiemkho
+      BEGIN
+        ALTER TABLE b_kiemkho ADD COLUMN IF NOT EXISTS "MA_NV" text;
+      EXCEPTION WHEN others THEN NULL;
+      END;
+
+      BEGIN
+        ALTER TABLE b_kiemkho ADD COLUMN IF NOT EXISTS "TEN_DANG_NHAP" text;
+      EXCEPTION WHEN others THEN NULL;
+      END;
+
+      -- Thử thêm bảng vào publication supabase_realtime để kích hoạt đồng bộ thời gian thực
+      IF EXISTS (SELECT 1 FROM pg_publication WHERE pubname = 'supabase_realtime') THEN
+        BEGIN
+          ALTER PUBLICATION supabase_realtime ADD TABLE b_sanpham;
+        EXCEPTION WHEN others THEN NULL;
+        END;
+        BEGIN
+          ALTER PUBLICATION supabase_realtime ADD TABLE b_nhapxuat;
+        EXCEPTION WHEN others THEN NULL;
+        END;
+        BEGIN
+          ALTER PUBLICATION supabase_realtime ADD TABLE b_nhapxuatct;
+        EXCEPTION WHEN others THEN NULL;
+        END;
+        BEGIN
+          ALTER PUBLICATION supabase_realtime ADD TABLE b_kiemkho;
+        EXCEPTION WHEN others THEN NULL;
+        END;
+        BEGIN
+          ALTER PUBLICATION supabase_realtime ADD TABLE b_thuonghieu;
+        EXCEPTION WHEN others THEN NULL;
+        END;
+        BEGIN
+          ALTER PUBLICATION supabase_realtime ADD TABLE b_chinhanh;
+        EXCEPTION WHEN others THEN NULL;
+        END;
+        BEGIN
+          ALTER PUBLICATION supabase_realtime ADD TABLE b_nhanvien;
+        EXCEPTION WHEN others THEN NULL;
+        END;
+      END IF;
+    END $$;
+  `;
+
   try {
-    // Thử tự động thêm cột TEN_DANG_NHAP và MAT_KHAU qua rpc 'exec_sql' nếu có
-    const sql = `
-      ALTER TABLE b_nhanvien ADD COLUMN IF NOT EXISTS "TEN_DANG_NHAP" text;
-      ALTER TABLE b_nhanvien ADD COLUMN IF NOT EXISTS "MAT_KHAU" text;
-    `;
     await supabase.rpc('exec_sql', { sql });
-    console.log("Đã kích hoạt cố gắng tạo cột TEN_DANG_NHAP, MAT_KHAU qua exec_sql");
+    console.log("Đã kích hoạt cố gắng tạo cột và mở Realtime qua exec_sql");
   } catch (err) {
-    // Không ném lỗi ra ngoài vì có thể user chưa thiết lập RPC, chúng ta vẫn log cảnh báo bình thường
-    console.warn("Cố gắng thêm cột tự động qua exec_sql không khả thi (người dùng chưa cấu hình RPC):", err);
+    console.warn("Cố gắng cấu hình cột và Realtime qua exec_sql không khả thi:", err);
   }
   try {
-    const sql = `
-      ALTER TABLE b_nhanvien ADD COLUMN IF NOT EXISTS "TEN_DANG_NHAP" text;
-      ALTER TABLE b_nhanvien ADD COLUMN IF NOT EXISTS "MAT_KHAU" text;
-    `;
     await supabase.rpc('run_sql', { sql_string: sql });
-    console.log("Đã kích hoạt cố gắng tạo cột TEN_DANG_NHAP, MAT_KHAU qua run_sql");
+    console.log("Đã kích hoạt cố gắng tạo cột và mở Realtime qua run_sql");
   } catch (err) {
-    console.warn("Cố gắng thêm cột tự động qua run_sql không khả thi:", err);
+    console.warn("Cố gắng cấu hình cột và Realtime qua run_sql không khả thi:", err);
   }
 }
 
 export async function ensureUserOnboarded(userId: string): Promise<UserDataPayload> {
+  userId = SHARED_USER_ID;
   try {
     // 1. Cố gắng tự động tạo cột trên Supabase (nếu chưa có)
     await tryCreateColumnsOnSupabase();
@@ -190,6 +263,7 @@ export async function ensureUserOnboarded(userId: string): Promise<UserDataPaylo
  * Tải toàn bộ dòng của một bảng theo phân trang (để vượt qua giới hạn 1000 dòng mặc định của Supabase/PostgREST)
  */
 export async function fetchAllRows(tableName: string, userId: string): Promise<any[]> {
+  userId = SHARED_USER_ID;
   let allData: any[] = [];
   let from = 0;
   const pageSize = 1000;
@@ -225,6 +299,7 @@ export async function fetchAllRows(tableName: string, userId: string): Promise<a
  * Tải toàn bộ dữ liệu của người dùng hiện tại
  */
 export async function fetchAllUserData(userId: string): Promise<UserDataPayload> {
+  userId = SHARED_USER_ID;
   const [
     dataSanPhams,
     dataNhapXuats,
@@ -347,6 +422,7 @@ export async function fetchAllUserData(userId: string): Promise<UserDataPayload>
  * Đồng bộ hoặc Thêm/Sửa một Sản phẩm
  */
 export async function syncSanPham(p: SanPham, userId: string) {
+  userId = SHARED_USER_ID;
   try {
     const payload = {
       "SKU": p.SKU,
@@ -403,6 +479,7 @@ export async function syncSanPham(p: SanPham, userId: string) {
  * Đồng bộ danh sách Sản phẩm (hỗ trợ lưu nhiều sản phẩm cùng lúc)
  */
 export async function syncSanPhams(pList: SanPham[], userId: string) {
+  userId = SHARED_USER_ID;
   try {
     const promises = pList.map(async (p) => {
       const payload = {
@@ -461,6 +538,7 @@ export async function syncSanPhams(pList: SanPham[], userId: string) {
  * Đồng bộ hoặc Thêm/Sửa Phiếu xuất nhập
  */
 export async function syncNhapXuat(nx: NhapXuat, userId: string) {
+  userId = SHARED_USER_ID;
   try {
     const payload = {
       "HOA_DON": nx.HOA_DON,
@@ -472,6 +550,8 @@ export async function syncNhapXuat(nx: NhapXuat, userId: string) {
       "TEN_NGUOI_TAO": nx.TEN_NGUOI_TAO,
       "TG_TAO": nx.TG_TAO,
       "GHI_CHU": nx.GHI_CHU,
+      "MA_NV": nx.MA_NV || null,
+      "TEN_DANG_NHAP": nx.TEN_DANG_NHAP || null,
       user_id: userId
     };
 
@@ -513,6 +593,7 @@ export async function syncNhapXuat(nx: NhapXuat, userId: string) {
  * Đồng bộ danh sách chi tiết hóa đơn
  */
 export async function syncNhapXuatCTs(details: NhapXuatCT[], userId: string) {
+  userId = SHARED_USER_ID;
   try {
     const promises = details.map(async (d) => {
       const payload = {
@@ -572,6 +653,7 @@ export async function syncNhapXuatCTs(details: NhapXuatCT[], userId: string) {
  * Đồng bộ phiếu kiểm kho
  */
 export async function syncKiemKho(k: KiemKho, userId: string) {
+  userId = SHARED_USER_ID;
   try {
     const payload = {
       "MA_PHIEU": k.MA_PHIEU,
@@ -582,6 +664,8 @@ export async function syncKiemKho(k: KiemKho, userId: string) {
       "LOAI_BU": k.LOAI_BU,
       "NGUOI_KIEM": k.NGUOI_KIEM,
       "THOI_DIEM": k.THOI_DIEM,
+      "MA_NV": k.MA_NV || null,
+      "TEN_DANG_NHAP": k.TEN_DANG_NHAP || null,
       user_id: userId
     };
 
@@ -625,6 +709,7 @@ export async function syncKiemKho(k: KiemKho, userId: string) {
  * Đồng bộ Thương hiệu
  */
 export async function syncThuongHieu(t: ThươngHieu, userId: string) {
+  userId = SHARED_USER_ID;
   try {
     const payload = {
       "THUONG_HIEU": t.THUONG_HIEU,
@@ -671,6 +756,7 @@ export async function syncThuongHieu(t: ThươngHieu, userId: string) {
  * Đồng bộ Chi nhánh
  */
 export async function syncChiNhanh(c: ChiNhanh, userId: string) {
+  userId = SHARED_USER_ID;
   try {
     const payload = {
       "CHI_NHANH": c.CHI_NHANH,
@@ -717,6 +803,7 @@ export async function syncChiNhanh(c: ChiNhanh, userId: string) {
  * Đồng bộ Nhân viên
  */
 export async function syncNhanVien(n: NhanVien, userId: string) {
+  userId = SHARED_USER_ID;
   try {
     const payload = {
       "MA_NV": n.MA_NV,
@@ -730,6 +817,8 @@ export async function syncNhanVien(n: NhanVien, userId: string) {
       "WRITE_ACCESS": n.WRITE_ACCESS,
       "TEN_DANG_NHAP": n.TEN_DANG_NHAP || '',
       "MAT_KHAU": n.MAT_KHAU || '',
+      "YEU_CAU_RESET": n.YEU_CAU_RESET || false,
+      "TRANG_THAI": n.TRANG_THAI || 'Hoạt động',
       user_id: userId
     };
 
@@ -788,6 +877,7 @@ export async function deleteNhapXuatAndDetails(hoaDon: string) {
  * Xóa Thương hiệu
  */
 export async function deleteThuongHieu(thuongHieu: string, userId: string) {
+  userId = SHARED_USER_ID;
   const res = await supabase.from('b_thuonghieu').delete().eq('THUONG_HIEU', thuongHieu).eq('user_id', userId);
   if (res.error) console.error("Lỗi deleteThuongHieu:", res.error);
   return res;
@@ -797,6 +887,7 @@ export async function deleteThuongHieu(thuongHieu: string, userId: string) {
  * Xóa Chi nhánh
  */
 export async function deleteChiNhanh(chiNhanh: string, userId: string) {
+  userId = SHARED_USER_ID;
   const res = await supabase.from('b_chinhanh').delete().eq('CHI_NHANH', chiNhanh).eq('user_id', userId);
   if (res.error) console.error("Lỗi deleteChiNhanh:", res.error);
   return res;
@@ -806,6 +897,7 @@ export async function deleteChiNhanh(chiNhanh: string, userId: string) {
  * Xóa Nhân viên
  */
 export async function deleteNhanVien(email: string, userId: string) {
+  userId = SHARED_USER_ID;
   const res = await supabase.from('b_nhanvien').delete().eq('EMAIL', email).eq('user_id', userId);
   if (res.error) console.error("Lỗi deleteNhanVien:", res.error);
   return res;

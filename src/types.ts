@@ -56,6 +56,8 @@ export interface NhapXuat {
   TEN_NGUOI_TAO: string;   // Tên đầy đủ người lập phiếu
   TG_TAO: string;          // Thời gian tạo chi tiết (Định dạng YYYY-MM-DD HH:mm:ss)
   GHI_CHU: string;         // Ghi chú tổng quát của phiếu
+  MA_NV?: string;          // Mã nhân viên thực hiện (định danh đồng nhất)
+  TEN_DANG_NHAP?: string;  // Tên đăng nhập người tạo
 }
 
 // B_NHAPXUATCT: Chi tiết từng dòng sản phẩm trong phiếu Nhập / Xuất / Kiểm kho
@@ -87,6 +89,8 @@ export interface KiemKho {
   NGUOI_KIEM: string;      // Tên hoặc username người thực hiện kiểm kho
   THOI_DIEM: string;       // Thời gian thực hiện kiểm kho (YYYY-MM-DD HH:mm:ss)
   KHO?: string;            // Tên chi nhánh / kho thực hiện kiểm kê
+  MA_NV?: string;          // Mã nhân viên kiểm kho
+  TEN_DANG_NHAP?: string;  // Tên đăng nhập người kiểm kho
 }
 
 // B_THUONGHIEU: Danh mục thương hiệu tròng kính được quản lý trong hệ thống
@@ -120,4 +124,5 @@ export interface NhanVien {
   MAT_KHAU?: string;       // Mật khẩu mã hóa hoặc văn bản thô
   VAI_TRO?: UserRole;      // Quyền hạn (vai trò tiếng Việt/English)
   TRANG_THAI?: string;     // Trạng thái tài khoản (Hoạt động, khóa...)
+  YEU_CAU_RESET?: boolean; // Yêu cầu khôi phục mật khẩu
 }

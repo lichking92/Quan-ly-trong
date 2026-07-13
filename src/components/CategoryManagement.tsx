@@ -123,6 +123,7 @@ export default function CategoryManagement({
   const [newStaffChucVu, setNewStaffChucVu] = useState<string>('Nhân viên bán kính');
   const [newStaffUsername, setNewStaffUsername] = useState<string>('');
   const [newStaffPassword, setNewStaffPassword] = useState<string>('');
+  const [newStaffStatus, setNewStaffStatus] = useState<string>('Hoạt động');
 
   const handleAddFeature = () => {
     const val = featureInput.trim();
@@ -376,7 +377,9 @@ export default function CategoryManagement({
       ROLE: newStaffRole,
       WRITE_ACCESS: newStaffRole === 'ADMIN' || newStaffRole === 'KHO',
       TEN_DANG_NHAP: newStaffUsername.trim(),
-      MAT_KHAU: newStaffPassword.trim()
+      MAT_KHAU: newStaffPassword.trim(),
+      TRANG_THAI: newStaffStatus,
+      YEU_CAU_RESET: false
     };
 
     onAddNhanVien(staffRecord);
@@ -385,6 +388,7 @@ export default function CategoryManagement({
     setNewStaffUsername('');
     setNewStaffPassword('');
     setNewStaffChucVu('Nhân viên bán kính');
+    setNewStaffStatus('Hoạt động');
     setTimeout(() => setSuccessMsg(''), 3000);
   };
 
@@ -396,6 +400,7 @@ export default function CategoryManagement({
     setNewStaffBranch(staff.CHI_NHANH);
     setNewStaffChucVu(staff.CHUC_VU);
     setNewStaffRole(staff.ROLE);
+    setNewStaffStatus(staff.TRANG_THAI || 'Hoạt động');
   };
 
   const handleSaveEditStaff = (e: React.FormEvent) => {
@@ -419,7 +424,9 @@ export default function CategoryManagement({
       ROLE: newStaffRole,
       WRITE_ACCESS: newStaffRole === 'ADMIN' || newStaffRole === 'KHO',
       TEN_DANG_NHAP: newStaffUsername.trim(),
-      MAT_KHAU: newStaffPassword.trim()
+      MAT_KHAU: newStaffPassword.trim(),
+      TRANG_THAI: newStaffStatus,
+      YEU_CAU_RESET: false // Tự động tắt yêu cầu reset khi Admin đổi/lưu lại mật khẩu mới!
     };
 
     onUpdateNhanVien(editingStaff.oldEmail, updatedStaff);
@@ -429,6 +436,7 @@ export default function CategoryManagement({
     setNewStaffUsername('');
     setNewStaffPassword('');
     setNewStaffChucVu('Nhân viên bán kính');
+    setNewStaffStatus('Hoạt động');
     setTimeout(() => setSuccessMsg(''), 3000);
   };
 
@@ -438,6 +446,7 @@ export default function CategoryManagement({
     setNewStaffUsername('');
     setNewStaffPassword('');
     setNewStaffChucVu('Nhân viên bán kính');
+    setNewStaffStatus('Hoạt động');
   };
 
   const handleDeleteStaffItem = (email: string) => {
@@ -991,10 +1000,22 @@ export default function CategoryManagement({
                   return (
                     <div key={n.MA_NV} className="p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
                       <div className="space-y-1 min-w-0">
-                        <p className="font-bold text-slate-800 flex items-center gap-1.5">
+                        <p className="font-bold text-slate-800 flex items-center gap-1.5 flex-wrap">
                           {n.HO_TEN} 
                           <span className="text-[10px] font-mono text-slate-400 bg-slate-100 py-0.5 px-1.5 rounded">
                             {n.MA_NV}
+                          </span>
+                          {n.YEU_CAU_RESET && (
+                            <span className="animate-pulse bg-red-100 text-red-700 border border-red-200 text-[9px] py-0.5 px-2 rounded-full font-bold flex items-center gap-0.5 shrink-0">
+                              ⚠️ Đang yêu cầu Reset MK
+                            </span>
+                          )}
+                          <span className={`text-[9px] font-bold py-0.5 px-2 rounded-full border ${
+                            (n.TRANG_THAI || 'Hoạt động').toLowerCase().includes('khóa') || (n.TRANG_THAI || 'Hoạt động').toLowerCase().includes('lock')
+                              ? 'bg-slate-100 text-slate-500 border-slate-200' 
+                              : 'bg-emerald-100 text-emerald-700 border-emerald-200'
+                          }`}>
+                            {n.TRANG_THAI || 'Hoạt động'}
                           </span>
                         </p>
                         <p className="text-slate-600 font-mono text-[11px] flex items-center gap-1">

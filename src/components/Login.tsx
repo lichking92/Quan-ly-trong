@@ -4,18 +4,10 @@
  */
 
 import React, { useState } from 'react';
-import { Shield, Key, User as UserIcon, AlertCircle, Eye, EyeOff, Boxes, CheckCircle2 } from 'lucide-react';
-import { motion } from 'motion/react';
+import { Shield, Key, User as UserIcon, AlertCircle, Eye, EyeOff, Boxes, CheckCircle2, HelpCircle, X } from 'lucide-react';
+import { motion, AnimatePresence } from 'motion/react';
 import { User, NhanVien } from '../types';
 import { supabase } from '../supabaseClient';
-
-/**
- * FILE: Login.tsx
- * TÁC GIẢ: Lão làng Lập trình Hệ thống (30+ năm kinh nghiệm)
- * MÔ TẢ: Giao diện đăng nhập & đăng ký bảo mật của hệ thống quản lý kho tròng kính.
- *        Cổng tích hợp trực tiếp với Supabase Auth, hỗ trợ chế độ Đăng ký (Sign Up)
- *        và Đăng nhập (Sign In) tự động nhận diện vai trò nhân viên.
- */
 
 interface LoginProps {
   onLoginSuccess: (user: User) => void;
@@ -26,10 +18,16 @@ export default function Login({ onLoginSuccess, nhanViens = [] }: LoginProps) {
   const [username, setUsername] = useState<string>('');
   const [password, setPassword] = useState<string>('');
   const [showPassword, setShowPassword] = useState<boolean>(false);
-  const [isSignUp, setIsSignUp] = useState<boolean>(false);
   const [errorMsg, setErrorMsg] = useState<string>('');
   const [successMsg, setSuccessMsg] = useState<string>('');
   const [loading, setLoading] = useState<boolean>(false);
+
+  // States cho Quên mật khẩu
+  const [showResetModal, setShowResetModal] = useState<boolean>(false);
+  const [resetUsername, setResetUsername] = useState<string>('');
+  const [resetError, setResetError] = useState<string>('');
+  const [resetSuccess, setResetSuccess] = useState<string>('');
+  const [resetLoading, setResetLoading] = useState<boolean>(false);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -48,20 +46,61 @@ export default function Login({ onLoginSuccess, nhanViens = [] }: LoginProps) {
 
     const lowerUser = inputUser.toLowerCase();
 
-    // 1. Kiểm tra tài khoản trong danh sách B_NHANVIEN (từ props & localStorage)
+    // 1. Kiểm tra tài khoản trực tiếp từ bảng b_nhanvien trên Supabase Cloud
+    try {
+      const { data: dbNhanViens, error: dbError } = await supabase
+        .from('b_nhanvien')
+        .select('*')
+        .eq('user_id', '00000000-0000-0000-0000-000000000000');
+
+      if (dbNhanViens && dbNhanViens.length > 0) {
+        const staffMember = dbNhanViens.find(n => {
+          const storedUser = (n.TEN_DANG_NHAP || '').trim().toLowerCase();
+          const storedEmail = (n.EMAIL || '').trim().toLowerCase();
+          const storedCode = (n.MA_NV || '').trim().toLowerCase();
+          return storedUser === lowerUser || storedEmail === lowerUser || storedCode === lowerUser;
+        });
+
+        if (staffMember) {
+          // KIỂM TRA TRẠNG THÁI HOẠT ĐỘNG
+          const rawStatus = (staffMember.TRANG_THAI || '').trim().toUpperCase();
+          if (rawStatus && rawStatus !== 'HOẠT ĐỘNG' && rawStatus !== 'ACTIVE' && rawStatus !== 'KÍCH HOẠT' && rawStatus !== 'HOAT DONG') {
+            setErrorMsg('Tài khoản này đã bị khóa hoặc tạm ngừng hoạt động. Vui lòng liên hệ Quản lý.');
+            setLoading(false);
+            return;
+          }
+
+          // Kiểm tra mật khẩu
+          const matchedPassword = (staffMember.MAT_KHAU || staffMember.PASSWORD || '').trim();
+          if (matchedPassword === cleanPass) {
+            setLoading(false);
+            onLoginSuccess({
+              username: staffMember.TEN_DANG_NHAP || staffMember.EMAIL || staffMember.HO_TEN,
+              fullName: staffMember.HO_TEN,
+              role: staffMember.ROLE || staffMember.VAI_TRO || 'NHAN_VIEN',
+              branch: staffMember.CHI_NHANH || 'Kho Trung Tâm',
+              writeAccess: staffMember.WRITE_ACCESS !== false,
+              WRITE_ACCESS: staffMember.WRITE_ACCESS !== false,
+              id: staffMember.MA_NV
+            });
+            return;
+          } else {
+            setErrorMsg('Mật khẩu không chính xác. Vui lòng kiểm tra lại.');
+            setLoading(false);
+            return;
+          }
+        }
+      }
+    } catch (err) {
+      console.error('Lỗi khi đối chiếu thông tin nhân viên trực tuyến:', err);
+    }
+
+    // 2. Dự phòng ngoại tuyến: Kiểm tra trong localStorage hoặc các prop truyền vào
     try {
       const savedNhanViens = localStorage.getItem('B_NHANVIEN');
       const localNhanVien: NhanVien[] = savedNhanViens ? JSON.parse(savedNhanViens) : [];
-      
-      // Hợp nhất dữ liệu để đảm bảo chính xác nhất
-      const allNhanViens = [...nhanViens];
-      localNhanVien.forEach(ln => {
-        if (!allNhanViens.some(n => n.MA_NV === ln.MA_NV)) {
-          allNhanViens.push(ln);
-        }
-      });
+      const allNhanViens = [...nhanViens, ...localNhanVien];
 
-      // Tìm kiếm nhân viên hợp lệ (so sánh không phân biệt chữ hoa/thường, hỗ trợ cả mã nhân viên, email, tên đăng nhập)
       const staffMember = allNhanViens.find(n => {
         const storedUser = (n.TEN_DANG_NHAP || '').trim().toLowerCase();
         const storedEmail = (n.EMAIL || '').trim().toLowerCase();
@@ -70,24 +109,21 @@ export default function Login({ onLoginSuccess, nhanViens = [] }: LoginProps) {
       });
 
       if (staffMember) {
-        // KIỂM TRA TRẠNG THÁI HOẠT ĐỘNG (Lọc tài khoản hoạt động)
         const rawStatus = (staffMember.TRANG_THAI || '').trim().toUpperCase();
-        // Nếu có trạng thái và không phải là hoạt động/active/kích hoạt
         if (rawStatus && rawStatus !== 'HOẠT ĐỘNG' && rawStatus !== 'ACTIVE' && rawStatus !== 'KÍCH HOẠT' && rawStatus !== 'HOAT DONG') {
           setErrorMsg('Tài khoản này đã bị khóa hoặc tạm ngừng hoạt động. Vui lòng liên hệ Quản lý.');
           setLoading(false);
           return;
         }
 
-        // Kiểm tra mật khẩu (hỗ trợ cả MAT_KHAU và PASSWORD cũ, so sánh phân biệt chữ hoa/thường, loại bỏ khoảng trắng thừa)
         const matchedPassword = (staffMember.MAT_KHAU || staffMember.PASSWORD || '').trim();
         if (matchedPassword === cleanPass) {
           setLoading(false);
           onLoginSuccess({
-            username: staffMember.EMAIL || staffMember.TEN_DANG_NHAP || staffMember.HO_TEN,
+            username: staffMember.TEN_DANG_NHAP || staffMember.EMAIL || staffMember.HO_TEN,
             fullName: staffMember.HO_TEN,
-            role: staffMember.VAI_TRO || staffMember.ROLE,
-            branch: staffMember.CHI_NHANH,
+            role: staffMember.ROLE || staffMember.VAI_TRO || 'NHAN_VIEN',
+            branch: staffMember.CHI_NHANH || 'Kho Trung Tâm',
             writeAccess: staffMember.WRITE_ACCESS !== false,
             WRITE_ACCESS: staffMember.WRITE_ACCESS !== false,
             id: staffMember.MA_NV
@@ -100,10 +136,10 @@ export default function Login({ onLoginSuccess, nhanViens = [] }: LoginProps) {
         }
       }
     } catch (err) {
-      console.error('Lỗi khi đối chiếu thông tin nhân viên:', err);
+      console.error('Lỗi đối chiếu dự phòng:', err);
     }
 
-    // 2. Nếu là tài khoản test nhanh cục bộ không chứa ký tự '@'
+    // 3. Nếu là tài khoản test nhanh cục bộ không chứa ký tự '@'
     if (!lowerUser.includes('@')) {
       setLoading(false);
       // Kiểm tra tài khoản Admin mặc định hoặc gõ "admin"
@@ -113,7 +149,9 @@ export default function Login({ onLoginSuccess, nhanViens = [] }: LoginProps) {
           fullName: 'Nguyễn Kiến Đức',
           role: 'ADMIN',
           branch: 'Kho Trung Tâm',
-          writeAccess: true
+          writeAccess: true,
+          WRITE_ACCESS: true,
+          id: 'NV0001'
         });
         return;
       }
@@ -121,11 +159,13 @@ export default function Login({ onLoginSuccess, nhanViens = [] }: LoginProps) {
       // Kiểm tra tài khoản Thù Kho mặc định hoặc gõ "kho"
       if (lowerUser === 'kho' && cleanPass === '12345') {
         onLoginSuccess({
-          username: 'kho@gmail.com',
+          username: 'kho',
           fullName: 'Trần Văn Kho',
           role: 'KHO',
           branch: 'Kho Trung Tâm',
-          writeAccess: true
+          writeAccess: true,
+          WRITE_ACCESS: true,
+          id: 'NV0002'
         });
         return;
       }
@@ -133,11 +173,13 @@ export default function Login({ onLoginSuccess, nhanViens = [] }: LoginProps) {
       // Kiểm tra tài khoản Nhân viên bán hàng mặc định hoặc gõ "nhanvien"
       if (lowerUser === 'nhanvien' && cleanPass === '12345') {
         onLoginSuccess({
-          username: 'nhanvien@gmail.com',
+          username: 'nhanvien',
           fullName: 'Lê Thị Bán Hàng',
           role: 'NHAN_VIEN',
           branch: 'Chi nhánh Quận 1',
-          writeAccess: false
+          writeAccess: false,
+          WRITE_ACCESS: false,
+          id: 'NV0003'
         });
         return;
       }
@@ -146,81 +188,91 @@ export default function Login({ onLoginSuccess, nhanViens = [] }: LoginProps) {
       return;
     }
 
-    // 3. Xử lý qua Supabase Auth (dành cho các tài khoản email trực tuyến)
+    // 4. Fallback qua Supabase Auth nếu người dùng gõ Email thực tế của Admin
     try {
-      if (isSignUp) {
-        const { data, error } = await supabase.auth.signUp({
-          email: lowerUser,
-          password: cleanPass,
-        });
-
-        if (error) {
-          setErrorMsg(error.message);
-          setLoading(false);
-          return;
-        }
-
-        if (data?.user) {
-          // Tìm nhân viên tương thích trong danh sách đã được thiết lập sẵn ở localStorage
-          const savedNhanViens = localStorage.getItem('B_NHANVIEN');
-          const listNhanVien: NhanVien[] = savedNhanViens ? JSON.parse(savedNhanViens) : [];
-          const staffMember = listNhanVien.find(n => n.EMAIL.toLowerCase() === lowerUser);
-
-          const isOwner = lowerUser === 'nguyenkienduc.digital@gmail.com';
-          if (data.session) {
-            onLoginSuccess({
-              username: lowerUser,
-              fullName: isOwner ? 'Nguyễn Kiến Đức' : (staffMember?.HO_TEN || lowerUser.split('@')[0]),
-              role: isOwner ? 'ADMIN' : (staffMember?.ROLE || 'NHAN_VIEN'),
-              branch: isOwner ? 'Kho Trung Tâm' : (staffMember?.CHI_NHANH || 'Kho Trung Tâm'),
-              writeAccess: isOwner ? true : (staffMember ? staffMember.WRITE_ACCESS : false),
-              WRITE_ACCESS: isOwner ? true : (staffMember ? staffMember.WRITE_ACCESS : false),
-              id: data.user.id
-            });
-          } else {
-            setSuccessMsg('Đăng ký thành công! Hãy xác nhận email của bạn hoặc tiến hành Đăng nhập.');
-            setIsSignUp(false);
-          }
-        }
-      } else {
+      if (lowerUser === 'nguyenkienduc.digital@gmail.com' || lowerUser === 'nguyennhanhoa.artist@gmail.com') {
         const { data, error } = await supabase.auth.signInWithPassword({
           email: lowerUser,
           password: cleanPass,
         });
 
-        if (error) {
-          setErrorMsg(error.message);
-          setLoading(false);
-          return;
-        }
-
-        if (data?.user) {
-          const savedNhanViens = localStorage.getItem('B_NHANVIEN');
-          const listNhanVien: NhanVien[] = savedNhanViens ? JSON.parse(savedNhanViens) : [];
-          const staffMember = listNhanVien.find(n => n.EMAIL.toLowerCase() === lowerUser);
-
-          const isOwner = lowerUser === 'nguyenkienduc.digital@gmail.com';
+        if (!error && data?.user) {
           onLoginSuccess({
             username: lowerUser,
-            fullName: isOwner ? 'Nguyễn Kiến Đức' : (staffMember?.HO_TEN || lowerUser.split('@')[0]),
-            role: isOwner ? 'ADMIN' : (staffMember?.ROLE || 'NHAN_VIEN'),
-            branch: isOwner ? 'Kho Trung Tâm' : (staffMember?.CHI_NHANH || 'Kho Trung Tâm'),
-            writeAccess: isOwner ? true : (staffMember ? staffMember.WRITE_ACCESS : false),
-            WRITE_ACCESS: isOwner ? true : (staffMember ? staffMember.WRITE_ACCESS : false),
-            id: data.user.id
+            fullName: lowerUser === 'nguyenkienduc.digital@gmail.com' ? 'Nguyễn Kiến Đức' : 'Nguyễn Nhân Hòa',
+            role: 'ADMIN',
+            branch: 'Kho Trung Tâm',
+            writeAccess: true,
+            WRITE_ACCESS: true,
+            id: 'NV0001'
           });
+          return;
         }
       }
-    } catch (err: any) {
-      setErrorMsg(err.message || 'Lỗi bất ngờ xảy ra khi kết nối dịch vụ Auth.');
+    } catch (authErr) {
+      console.warn('Lỗi Supabase Auth fallback:', authErr);
+    }
+
+    setErrorMsg('Tên đăng nhập hoặc mật khẩu chưa chính xác.');
+    setLoading(false);
+  };
+
+  // Gửi yêu cầu reset mật khẩu
+  const handleRequestReset = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setResetError('');
+    setResetSuccess('');
+    setResetLoading(true);
+
+    const targetUser = resetUsername.trim();
+    if (!targetUser) {
+      setResetError('Vui lòng nhập Tên đăng nhập.');
+      setResetLoading(false);
+      return;
+    }
+
+    try {
+      const { data: dbNhanViens, error: dbError } = await supabase
+        .from('b_nhanvien')
+        .select('*')
+        .eq('user_id', '00000000-0000-0000-0000-000000000000');
+
+      if (dbNhanViens && dbNhanViens.length > 0) {
+        const staffMember = dbNhanViens.find(n => {
+          const storedUser = (n.TEN_DANG_NHAP || '').trim().toLowerCase();
+          const storedEmail = (n.EMAIL || '').trim().toLowerCase();
+          const storedCode = (n.MA_NV || '').trim().toLowerCase();
+          return storedUser === targetUser.toLowerCase() || storedEmail === targetUser.toLowerCase() || storedCode === targetUser.toLowerCase();
+        });
+
+        if (staffMember) {
+          const { error: updateError } = await supabase
+            .from('b_nhanvien')
+            .update({ YEU_CAU_RESET: true })
+            .eq('MA_NV', staffMember.MA_NV)
+            .eq('user_id', '00000000-0000-0000-0000-000000000000');
+
+          if (updateError) {
+            setResetError('Có lỗi xảy ra khi gửi yêu cầu lên máy chủ.');
+          } else {
+            setResetSuccess('Gửi yêu cầu thành công! Vui lòng báo cho Admin/Quản lý để đặt lại mật khẩu mới cho bạn.');
+          }
+        } else {
+          setResetError('Không tìm thấy tài khoản nhân viên tương thích.');
+        }
+      } else {
+        setResetError('Không thể kết nối CSDL hoặc dữ liệu nhân sự trống.');
+      }
+    } catch (err) {
+      console.error(err);
+      setResetError('Đã xảy ra lỗi ngoài ý muốn.');
     } finally {
-      setLoading(false);
+      setResetLoading(false);
     }
   };
 
   // Trợ lý điền thông tin nhanh khi test
   const handleQuickLogin = (roleType: 'ADMIN' | 'KHO' | 'NHAN_VIEN') => {
-    setIsSignUp(false);
     if (roleType === 'ADMIN') {
       setUsername('admin');
       setPassword('12345');
@@ -281,17 +333,17 @@ export default function Login({ onLoginSuccess, nhanViens = [] }: LoginProps) {
           </motion.div>
         )}
 
-        {/* FORM ĐĂNG NHẬP / ĐĂNG KÝ */}
+        {/* FORM ĐĂNG NHẬP */}
         <form onSubmit={handleSubmit} className="space-y-5">
           <div className="space-y-1.5">
-            <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Tên Đăng Nhập</label>
+            <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Tên Đăng Nhập / Email</label>
             <div className="relative">
               <span className="absolute inset-y-0 left-0 flex items-center pl-3.5 text-slate-500">
                 <UserIcon className="w-4 h-4" />
               </span>
               <input
                 type="text"
-                placeholder={isSignUp ? "Đăng ký email (cho Supabase)" : "Nhập tên đăng nhập hoặc email..."}
+                placeholder="Nhập tên đăng nhập hoặc email..."
                 value={username}
                 onChange={(e) => setUsername(e.target.value)}
                 className="w-full text-base md:text-xs font-semibold text-white bg-slate-800/60 border border-slate-750 rounded-xl py-3 pl-10 pr-4 focus:outline-hidden focus:border-blue-500 focus:ring-2 focus:ring-blue-500/10 transition-all font-mono"
@@ -300,7 +352,17 @@ export default function Login({ onLoginSuccess, nhanViens = [] }: LoginProps) {
           </div>
 
           <div className="space-y-1.5">
-            <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Mật khẩu bảo mật</label>
+            <div className="flex justify-between items-center">
+              <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Mật khẩu bảo mật</label>
+              <button
+                type="button"
+                onClick={() => setShowResetModal(true)}
+                className="text-[10px] font-bold text-blue-400 hover:text-blue-300 uppercase tracking-wider flex items-center gap-1 cursor-pointer bg-transparent border-none"
+              >
+                <HelpCircle className="w-3 h-3" />
+                Quên mật khẩu?
+              </button>
+            </div>
             <div className="relative">
               <span className="absolute inset-y-0 left-0 flex items-center pl-3.5 text-slate-500">
                 <Key className="w-4 h-4" />
@@ -332,22 +394,8 @@ export default function Login({ onLoginSuccess, nhanViens = [] }: LoginProps) {
             ) : (
               <Shield className="w-4.5 h-4.5" />
             )}
-            {isSignUp ? 'ĐĂNG KÝ TÀI KHOẢN MỚI' : 'ĐĂNG NHẬP HỆ THỐNG'}
+            ĐĂNG NHẬP HỆ THỐNG
           </button>
-
-          <div className="text-center mt-4">
-            <button
-              type="button"
-              onClick={() => {
-                setIsSignUp(!isSignUp);
-                setErrorMsg('');
-                setSuccessMsg('');
-              }}
-              className="text-xs text-blue-400 hover:text-blue-300 font-semibold cursor-pointer underline decoration-dotted"
-            >
-              {isSignUp ? 'Đã có tài khoản? Đăng nhập tại đây' : 'Chưa có tài khoản? Đăng ký ngay'}
-            </button>
-          </div>
         </form>
 
         {/* PHÂN VAI KIỂM THỬ NHANH */}
@@ -379,6 +427,95 @@ export default function Login({ onLoginSuccess, nhanViens = [] }: LoginProps) {
         </div>
 
       </motion.div>
+
+      {/* MODAL KHÔI PHỤC MẬT KHẨU */}
+      <AnimatePresence>
+        {showResetModal && (
+          <div className="fixed inset-0 bg-black/70 backdrop-blur-md flex items-center justify-center p-4 z-50">
+            <motion.div
+              initial={{ opacity: 0, scale: 0.9 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.9 }}
+              className="w-full max-w-md bg-slate-850 border border-slate-700 rounded-3xl p-6 relative shadow-2xl"
+            >
+              <button
+                onClick={() => {
+                  setShowResetModal(false);
+                  setResetUsername('');
+                  setResetError('');
+                  setResetSuccess('');
+                }}
+                className="absolute top-4 right-4 text-slate-400 hover:text-white p-1 rounded-full hover:bg-slate-800 transition-colors cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+
+              <div className="flex items-center gap-3 mb-4">
+                <div className="p-2.5 bg-blue-600/20 text-blue-400 rounded-xl">
+                  <HelpCircle className="w-6 h-6" />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-white">Yêu Cầu Reset Mật Khẩu</h3>
+                  <p className="text-xs text-slate-400">Gửi yêu cầu đặt lại mật khẩu mới tới Admin</p>
+                </div>
+              </div>
+
+              {resetError && (
+                <div className="p-3 bg-red-500/10 border border-red-500/20 text-red-200 rounded-xl text-xs flex items-center gap-2 mb-4">
+                  <AlertCircle className="w-4 h-4 text-red-400 shrink-0" />
+                  <span>{resetError}</span>
+                </div>
+              )}
+
+              {resetSuccess && (
+                <div className="p-3 bg-emerald-500/10 border border-emerald-500/20 text-emerald-200 rounded-xl text-xs flex items-center gap-2 mb-4">
+                  <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                  <span>{resetSuccess}</span>
+                </div>
+              )}
+
+              <form onSubmit={handleRequestReset} className="space-y-4">
+                <div className="space-y-1">
+                  <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Tên Đăng Nhập Của Bạn</label>
+                  <input
+                    type="text"
+                    placeholder="Ví dụ: admin, kho, nhanvien..."
+                    value={resetUsername}
+                    onChange={(e) => setResetUsername(e.target.value)}
+                    className="w-full text-xs font-semibold text-white bg-slate-800 border border-slate-700 rounded-xl py-3 px-4 focus:outline-hidden focus:border-blue-500 transition-all font-mono"
+                  />
+                </div>
+
+                <div className="flex gap-2 justify-end pt-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowResetModal(false);
+                      setResetUsername('');
+                      setResetError('');
+                      setResetSuccess('');
+                    }}
+                    className="py-2.5 px-4 bg-slate-800 hover:bg-slate-750 text-slate-300 text-xs font-bold rounded-xl cursor-pointer"
+                  >
+                    Đóng
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={resetLoading}
+                    className="py-2.5 px-4 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white text-xs font-bold rounded-xl cursor-pointer flex items-center gap-1.5"
+                  >
+                    {resetLoading ? (
+                      <span className="animate-spin inline-block w-4 h-4 border-2 border-white border-t-transparent rounded-full" />
+                    ) : (
+                      'Gửi Yêu Cầu'
+                    )}
+                  </button>
+                </div>
+              </form>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }

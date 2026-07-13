@@ -24,7 +24,8 @@ import {
   CheckCircle,
   Palette,
   ChevronLeft,
-  ChevronRight
+  ChevronRight,
+  RefreshCw
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 
@@ -130,6 +131,60 @@ export default function App() {
     localStorage.removeItem('CURRENT_USER');
     await supabase.auth.signOut();
   };
+
+  const [isSyncing, setIsSyncing] = useState<boolean>(false);
+
+  const handleManualSync = async () => {
+    if (!currentUser || !currentUser.username.includes('@') || !currentUser.id) {
+      setSuccessToast({ message: "Vui lòng đăng nhập tài khoản trực tuyến để đồng bộ!" });
+      return;
+    }
+    setIsSyncing(true);
+    try {
+      await syncAllDataFromSupabase(currentUser.id, currentUser.username);
+      setSuccessToast({ message: "Đồng bộ dữ liệu trực tuyến thành công!" });
+    } catch (err) {
+      console.error("Lỗi đồng bộ thủ công:", err);
+    } finally {
+      setIsSyncing(false);
+    }
+  };
+
+  // Background polling interval - Tự động đồng bộ liên tục mỗi 15 giây (seamless, không che mờ màn hình)
+  useEffect(() => {
+    if (!currentUser || !currentUser.username.includes('@') || !currentUser.id) return;
+
+    const interval = setInterval(async () => {
+      if (ignoreRealtimeRef.current) {
+        console.log("Đang lưu phiếu hoặc có thao tác ghi dữ liệu, tạm dừng polling...");
+        return;
+      }
+      try {
+        console.log("Background Polling: Đang âm thầm kiểm tra cập nhật mới...");
+        const payload = await ensureUserOnboarded(currentUser.id);
+        
+        setSanPhams(payload.sanPhams);
+        setNhapXuats(payload.nhapXuats);
+        setNhapXuatCTs(payload.nhapXuatCTs);
+        setKiemKhos(payload.kiemKhos);
+        setThuongHieus(payload.thuongHieus);
+        setChiNhanhs(payload.chiNhanhs);
+        setNhanViens(payload.nhanViens);
+
+        localStorage.setItem('B_SANPHAM', JSON.stringify(payload.sanPhams));
+        localStorage.setItem('B_NHAPXUAT', JSON.stringify(payload.nhapXuats));
+        localStorage.setItem('B_NHAPXUATCT', JSON.stringify(payload.nhapXuatCTs));
+        localStorage.setItem('B_KIEMKHO', JSON.stringify(payload.kiemKhos));
+        localStorage.setItem('B_THUONGHIEU', JSON.stringify(payload.thuongHieus));
+        localStorage.setItem('B_CHINHANH', JSON.stringify(payload.chiNhanhs));
+        localStorage.setItem('B_NHANVIEN', JSON.stringify(payload.nhanViens));
+      } catch (err) {
+        console.warn("Lỗi đồng bộ ngầm:", err);
+      }
+    }, 15000); // 15 giây
+
+    return () => clearInterval(interval);
+  }, [currentUser]);
 
   // Hàm tải dữ liệu chuyên biệt từ Supabase Cloud và gán đồng bộ vào State và LocalStorage
   const syncAllDataFromSupabase = async (userId: string, email: string) => {
@@ -1296,6 +1351,18 @@ export default function App() {
           </span>
         </div>
         <div className="flex items-center gap-2">
+          {currentUser?.username?.includes('@') && (
+            <button
+              onClick={handleManualSync}
+              disabled={isSyncing}
+              className={`p-1.5 rounded-lg transition-colors cursor-pointer ${
+                themeMode === 'light' ? 'hover:bg-slate-100 text-slate-600' : 'hover:bg-slate-800 text-slate-300'
+              }`}
+              title="Đồng bộ dữ liệu"
+            >
+              <RefreshCw className={`w-4 h-4 ${isSyncing ? 'animate-spin text-emerald-500' : ''}`} />
+            </button>
+          )}
           <span className="text-[10px] font-mono py-1 px-2.5 rounded-full uppercase font-bold tracking-wider" style={{
             backgroundColor: `${accentHex}15`,
             color: accentHex,
@@ -1361,20 +1428,36 @@ export default function App() {
 
         {/* THÔNG TIN USER ĐANG ĐĂNG NHẬP */}
         <div className={`p-3 mx-3 my-4 rounded-2xl border flex flex-col gap-3 ${sidebarStyle.userBox} ${sidebarCollapsed ? 'items-center px-1' : ''}`}>
-          <div className="flex items-center gap-2.5">
-            <div 
-              className="h-8 w-8 rounded-xl bg-blue-600/10 text-blue-400 border border-blue-500/20 flex items-center justify-center font-bold text-xs uppercase shrink-0"
-              title={`${currentUser.fullName} (${currentUser.role})`}
-            >
-              {currentUser.fullName.charAt(0)}
-            </div>
-            {!sidebarCollapsed && (
-              <div className="min-w-0">
-                <p className={`text-xs font-bold truncate ${sidebarStyle.userText}`}>{currentUser.fullName}</p>
-                <p className={`text-[9px] font-mono font-bold uppercase tracking-wider truncate ${sidebarStyle.userSub}`}>
-                  {currentUser.role === 'ADMIN' ? 'Chủ Cửa Hàng' : currentUser.role === 'KHO' ? 'Thủ Kho' : 'Nhân Viên'} | {currentUser.branch}
-                </p>
+          <div className="flex items-center justify-between gap-2 w-full">
+            <div className="flex items-center gap-2.5 min-w-0 flex-1">
+              <div 
+                className="h-8 w-8 rounded-xl bg-blue-600/10 text-blue-400 border border-blue-500/20 flex items-center justify-center font-bold text-xs uppercase shrink-0"
+                title={`${currentUser.fullName} (${currentUser.role})`}
+              >
+                {currentUser.fullName.charAt(0)}
               </div>
+              {!sidebarCollapsed && (
+                <div className="min-w-0 flex-1">
+                  <p className={`text-xs font-bold truncate ${sidebarStyle.userText}`}>{currentUser.fullName}</p>
+                  <p className={`text-[9px] font-mono font-bold uppercase tracking-wider truncate ${sidebarStyle.userSub}`}>
+                    {currentUser.role === 'ADMIN' ? 'Chủ Cửa Hàng' : currentUser.role === 'KHO' ? 'Thủ Kho' : 'Nhân Viên'} | {currentUser.branch}
+                  </p>
+                </div>
+              )}
+            </div>
+            {!sidebarCollapsed && currentUser?.username?.includes('@') && (
+              <button
+                onClick={handleManualSync}
+                disabled={isSyncing}
+                className={`p-1.5 rounded-lg border transition-colors cursor-pointer shrink-0 ${
+                  themeMode === 'light' 
+                    ? 'hover:bg-slate-200/80 border-slate-200/80 text-slate-500' 
+                    : 'hover:bg-slate-800 border-slate-800 text-slate-400'
+                }`}
+                title="Đồng bộ dữ liệu"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${isSyncing ? 'animate-spin text-emerald-500' : ''}`} />
+              </button>
             )}
           </div>
         </div>
