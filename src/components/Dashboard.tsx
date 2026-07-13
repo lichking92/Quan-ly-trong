@@ -88,24 +88,73 @@ export default function Dashboard({ sanPhams, nhapXuats, nhapXuatCTs, chiNhanhs,
   };
 
   // --- 2. BỘ LỌC NHANH THỜI GIAN (QUICK FILTERS) ---
-  const handleQuickFilter = (type: '7d' | '30d' | '90d' | '6m' | '1y') => {
+  const handleQuickFilter = (type: 'today' | 'yesterday' | 'this_week' | 'last_week' | 'this_month' | 'last_month' | '7d' | '30d' | '90d' | '6m' | '1y') => {
     setActiveQuickFilter(type);
-    const refDate = new Date(maxDataDateStr);
-    setEndDate(formatDate(refDate));
+    const today = new Date();
     
-    const startDateObj = new Date(refDate);
-    if (type === '7d') {
-      startDateObj.setDate(startDateObj.getDate() - 7);
-    } else if (type === '30d') {
-      startDateObj.setDate(startDateObj.getDate() - 30);
-    } else if (type === '90d') {
-      startDateObj.setDate(startDateObj.getDate() - 90);
-    } else if (type === '6m') {
-      startDateObj.setMonth(startDateObj.getMonth() - 6);
-    } else if (type === '1y') {
-      startDateObj.setFullYear(startDateObj.getFullYear() - 1);
+    if (type === 'today') {
+      setStartDate(formatDate(today));
+      setEndDate(formatDate(today));
+    } else if (type === 'yesterday') {
+      const yesterday = new Date();
+      yesterday.setDate(yesterday.getDate() - 1);
+      setStartDate(formatDate(yesterday));
+      setEndDate(formatDate(yesterday));
+    } else if (type === 'this_week') {
+      const currentDay = today.getDay();
+      const distance = currentDay === 0 ? -6 : 1 - currentDay;
+      const monday = new Date(today);
+      monday.setDate(today.getDate() + distance);
+      const sunday = new Date(monday);
+      sunday.setDate(monday.getDate() + 6);
+      setStartDate(formatDate(monday));
+      setEndDate(formatDate(sunday));
+    } else if (type === 'last_week') {
+      const currentDay = today.getDay();
+      const distance = (currentDay === 0 ? -6 : 1 - currentDay) - 7;
+      const monday = new Date(today);
+      monday.setDate(today.getDate() + distance);
+      const sunday = new Date(monday);
+      sunday.setDate(monday.getDate() + 6);
+      setStartDate(formatDate(monday));
+      setEndDate(formatDate(sunday));
+    } else if (type === 'this_month') {
+      const firstDay = new Date(today.getFullYear(), today.getMonth(), 1);
+      const lastDay = new Date(today.getFullYear(), today.getMonth() + 1, 0);
+      setStartDate(formatDate(firstDay));
+      setEndDate(formatDate(lastDay));
+    } else if (type === 'last_month') {
+      const firstDay = new Date(today.getFullYear(), today.getMonth() - 1, 1);
+      const lastDay = new Date(today.getFullYear(), today.getMonth(), 0);
+      setStartDate(formatDate(firstDay));
+      setEndDate(formatDate(lastDay));
+    } else {
+      const refDate = new Date(maxDataDateStr);
+      setEndDate(formatDate(refDate));
+      const startDateObj = new Date(refDate);
+      if (type === '7d') {
+        startDateObj.setDate(startDateObj.getDate() - 7);
+      } else if (type === '30d') {
+        startDateObj.setDate(startDateObj.getDate() - 30);
+      } else if (type === '90d') {
+        startDateObj.setDate(startDateObj.getDate() - 90);
+      } else if (type === '6m') {
+        startDateObj.setMonth(startDateObj.getMonth() - 6);
+      } else if (type === '1y') {
+        startDateObj.setFullYear(startDateObj.getFullYear() - 1);
+      }
+      setStartDate(formatDate(startDateObj));
     }
-    setStartDate(formatDate(startDateObj));
+  };
+
+  const handleResetFilters = () => {
+    setSelectedBranch('Tất cả');
+    setSelectedBrandFilter('Tất cả');
+    setSelectedFeatureFilter('Tất cả');
+    setSelectedSkuFilter('Tất cả');
+    setStartDate('2026-07-01');
+    setEndDate('2026-07-31');
+    setActiveQuickFilter('30d');
   };
 
   // --- 3. LỌC DỮ LIỆU THEO ĐIỀU KIỆN ---
@@ -324,25 +373,38 @@ export default function Dashboard({ sanPhams, nhapXuats, nhapXuatCTs, chiNhanhs,
             </div>
           </div>
 
-          <div className="flex items-center gap-2">
-            <span className="text-[10px] uppercase font-bold text-slate-400">Đồ thị:</span>
-            <div className="flex bg-slate-100 p-1 rounded-lg">
-              <button
-                onClick={() => setChartType('line')}
-                className={`text-[10px] font-bold px-2.5 py-1 rounded-md transition-all cursor-pointer ${
-                  chartType === 'line' ? 'bg-blue-650 text-white shadow-xs' : 'text-slate-500 hover:text-slate-800'
-                }`}
-              >
-                Đường xu hướng
-              </button>
-              <button
-                onClick={() => setChartType('stacked')}
-                className={`text-[10px] font-bold px-2.5 py-1 rounded-md transition-all cursor-pointer ${
-                  chartType === 'stacked' ? 'bg-blue-650 text-white shadow-xs' : 'text-slate-500 hover:text-slate-800'
-                }`}
-              >
-                Cột chồng
-              </button>
+          <div className="flex items-center gap-3">
+            <button
+              type="button"
+              onClick={handleResetFilters}
+              className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold text-slate-600 hover:text-slate-800 bg-slate-100 hover:bg-slate-200 active:bg-slate-300 rounded-xl transition-all cursor-pointer"
+            >
+              <RefreshCw className="w-3.5 h-3.5" />
+              Reset bộ lọc
+            </button>
+
+            <div className="flex items-center gap-2">
+              <span className="text-[10px] uppercase font-bold text-slate-400">Đồ thị:</span>
+              <div className="flex bg-slate-100 p-1 rounded-lg">
+                <button
+                  type="button"
+                  onClick={() => setChartType('line')}
+                  className={`text-[10px] font-bold px-2.5 py-1 rounded-md transition-all cursor-pointer ${
+                    chartType === 'line' ? 'bg-blue-650 text-white shadow-xs' : 'text-slate-500 hover:text-slate-800'
+                  }`}
+                >
+                  Đường xu hướng
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setChartType('stacked')}
+                  className={`text-[10px] font-bold px-2.5 py-1 rounded-md transition-all cursor-pointer ${
+                    chartType === 'stacked' ? 'bg-blue-650 text-white shadow-xs' : 'text-slate-500 hover:text-slate-800'
+                  }`}
+                >
+                  Cột chồng
+                </button>
+              </div>
             </div>
           </div>
         </div>
@@ -353,19 +415,21 @@ export default function Dashboard({ sanPhams, nhapXuats, nhapXuatCTs, chiNhanhs,
             <label className="text-[9px] uppercase tracking-wider font-extrabold text-slate-400 flex items-center gap-1">
               <Clock className="w-3 h-3" /> Lọc nhanh khoảng thời gian
             </label>
-            <div className="flex items-center gap-1 bg-slate-100/80 p-1 rounded-lg h-[34px]">
+            <div className="flex flex-wrap items-center gap-1 bg-slate-100/80 p-1 rounded-lg">
               {([
-                { key: '7d', label: '7D' },
-                { key: '30d', label: '30D' },
-                { key: '90d', label: '90D' },
-                { key: '6m', label: '6M' },
-                { key: '1y', label: '1Y' }
+                { key: 'today', label: 'Hôm nay' },
+                { key: 'yesterday', label: 'Hôm qua' },
+                { key: 'this_week', label: 'Tuần này' },
+                { key: 'last_week', label: 'Tuần trước' },
+                { key: 'this_month', label: 'Tháng này' },
+                { key: 'last_month', label: 'Tháng trước' }
               ] as const).map(f => (
                 <button
                   key={f.key}
+                  type="button"
                   onClick={() => handleQuickFilter(f.key)}
-                  className={`flex-1 text-[10px] font-extrabold py-1 rounded-md transition-all cursor-pointer ${
-                    activeQuickFilter === f.key ? 'bg-red-600 text-white shadow-2xs' : 'text-slate-500 hover:text-slate-800'
+                  className={`px-2 py-1 text-[9px] font-extrabold rounded-md transition-all cursor-pointer ${
+                    activeQuickFilter === f.key ? 'bg-red-650 text-white shadow-2xs' : 'text-slate-500 hover:text-slate-800'
                   }`}
                 >
                   {f.label}

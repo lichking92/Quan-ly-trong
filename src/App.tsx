@@ -154,11 +154,11 @@ export default function App() {
 
       // Cập nhật quyền ghi dữ liệu của currentUser dựa trên danh sách nhân viên vừa nạp
       const staffMember = payload.nhanViens.find(n => n.EMAIL.toLowerCase() === email.toLowerCase());
-      const isOwner = email.toLowerCase() === 'nguyenkienduc.digital@gmail.com';
+      const isOwner = email.toLowerCase() === 'nguyenkienduc.digital@gmail.com' || email.toLowerCase() === 'nguyennhanhoa.artist@gmail.com';
       
       const u: User = {
         username: email,
-        fullName: isOwner ? 'Nguyễn Kiến Đức' : (staffMember?.HO_TEN || email.split('@')[0]),
+        fullName: isOwner ? 'Nguyễn Nhân Hòa (Owner)' : (staffMember?.HO_TEN || email.split('@')[0]),
         role: isOwner ? 'ADMIN' : (staffMember?.ROLE || 'NHAN_VIEN'),
         branch: isOwner ? 'Kho Trung Tâm' : (staffMember?.CHI_NHANH || 'Kho Trung Tâm'),
         writeAccess: isOwner ? true : (staffMember ? staffMember.WRITE_ACCESS : false),
@@ -1213,13 +1213,13 @@ export default function App() {
         onLoginSuccess={(user) => {
           // Khi đăng nhập, tìm kiếm NhanVien tương ứng để lấy writeAccess chính xác
           const email = user.username;
-          const isOwner = email.toLowerCase() === 'nguyenkienduc.digital@gmail.com';
+          const isOwner = email.toLowerCase() === 'nguyenkienduc.digital@gmail.com' || email.toLowerCase() === 'nguyennhanhoa.artist@gmail.com';
           const staffMember = nhanViens.find(n => n.EMAIL.toLowerCase() === email.toLowerCase());
           
           const cleanUser = {
             ...user,
             role: isOwner ? ('ADMIN' as const) : (staffMember?.ROLE || user.role),
-            fullName: isOwner ? 'Nguyễn Kiến Đức' : (staffMember?.HO_TEN || user.fullName),
+            fullName: isOwner ? 'Nguyễn Nhân Hòa (Owner)' : (staffMember?.HO_TEN || user.fullName),
             branch: isOwner ? 'Kho Trung Tâm' : (staffMember?.CHI_NHANH || user.branch),
             writeAccess: isOwner ? true : (staffMember ? staffMember.WRITE_ACCESS : user.writeAccess),
             WRITE_ACCESS: isOwner ? true : (staffMember ? staffMember.WRITE_ACCESS : user.writeAccess)
