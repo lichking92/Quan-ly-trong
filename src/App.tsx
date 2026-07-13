@@ -697,13 +697,13 @@ export default function App() {
     // 3. Tính tổng lượng Nhập bù từ lịch sử Kiểm kho (chỉ những phiếu kiểm kho CHƯA có phiếu điều chỉnh PNK trong chi tiết)
     const totalAuditNhapBu = currentKiemKhos
       .filter(k => k.SKU === sku && k.LOAI_BU === 'NHẬP BÙ')
-      .filter(k => !currentDetails.some(d => d.SKU === sku && d.GHI_CHU && d.GHI_CHU.includes(k.MA_PHIEU)))
+      .filter(k => !currentDetails.some(d => d.SKU === sku && (d.GHI_CHU || '').includes(k.MA_PHIEU)))
       .reduce((sum, k) => sum + k.LECH, 0);
 
     // 4. Tính tổng lượng Xuất bù từ lịch sử Kiểm kho (chỉ những phiếu kiểm kho CHƯA có phiếu điều chỉnh PXK trong chi tiết)
     const totalAuditXuatBu = currentKiemKhos
       .filter(k => k.SKU === sku && k.LOAI_BU === 'XUẤT BÙ')
-      .filter(k => !currentDetails.some(d => d.SKU === sku && d.GHI_CHU && d.GHI_CHU.includes(k.MA_PHIEU)))
+      .filter(k => !currentDetails.some(d => d.SKU === sku && (d.GHI_CHU || '').includes(k.MA_PHIEU)))
       .reduce((sum, k) => sum + Math.abs(k.LECH), 0);
 
     const finalNhap = totalNhap + totalAuditNhapBu;
@@ -761,20 +761,16 @@ export default function App() {
     setSuccessToast({ message: toastMsg });
 
     // Cập nhật số lượng nhập, xuất, và tồn cuối trực tiếp vào bảng sản phẩm ngay lập tức
-    let updatedProductsList: SanPham[] = [];
     const affectedSKUs = Array.from(new Set(finalizedDetails.map(d => d.SKU)));
-
-    setSanPhams(prevProducts => {
-      const next = prevProducts.map(p => {
-        if (affectedSKUs.includes(p.SKU)) {
-          const updatedP = recalculateProductState(p.SKU, prevProducts, updatedDetails, kiemKhos);
-          return updatedP ? updatedP : p;
-        }
-        return p;
-      });
-      updatedProductsList = next;
-      return next;
+    const updatedProductsList = sanPhams.map(p => {
+      if (affectedSKUs.includes(p.SKU)) {
+        const updatedP = recalculateProductState(p.SKU, sanPhams, updatedDetails, kiemKhos);
+        return updatedP ? updatedP : p;
+      }
+      return p;
     });
+
+    setSanPhams(updatedProductsList);
 
     // Đồng bộ Supabase
     if (currentUser) {
@@ -932,20 +928,16 @@ export default function App() {
     }
 
     // Tính toán và cập nhật lại tồn kho sản phẩm hoàn toàn chính xác
-    let updatedProductsList: SanPham[] = [];
     const affectedSKUs = Array.from(new Set(finalizedAudits.map(a => a.SKU)));
-
-    setSanPhams(prevProducts => {
-      const next = prevProducts.map(p => {
-        if (affectedSKUs.includes(p.SKU)) {
-          const updatedP = recalculateProductState(p.SKU, prevProducts, updatedDetails, updatedKiemKhos);
-          return updatedP ? updatedP : p;
-        }
-        return p;
-      });
-      updatedProductsList = next;
-      return next;
+    const updatedProductsList = sanPhams.map(p => {
+      if (affectedSKUs.includes(p.SKU)) {
+        const updatedP = recalculateProductState(p.SKU, sanPhams, updatedDetails, updatedKiemKhos);
+        return updatedP ? updatedP : p;
+      }
+      return p;
     });
+
+    setSanPhams(updatedProductsList);
 
     // Đồng bộ Supabase và LocalStorage
     if (currentUser) {
@@ -1012,18 +1004,15 @@ export default function App() {
     setNhapXuatCTs(updatedDetails);
 
     // 3. Tái tính toán cục bộ cho các SKU bị ảnh hưởng
-    let updatedProductsList: SanPham[] = [];
-    setSanPhams(prevProducts => {
-      const next = prevProducts.map(p => {
-        if (skusToRecalc.includes(p.SKU)) {
-          const updatedP = recalculateProductState(p.SKU, prevProducts, updatedDetails, kiemKhos);
-          return updatedP ? updatedP : p;
-        }
-        return p;
-      });
-      updatedProductsList = next;
-      return next;
+    const updatedProductsList = sanPhams.map(p => {
+      if (skusToRecalc.includes(p.SKU)) {
+        const updatedP = recalculateProductState(p.SKU, sanPhams, updatedDetails, kiemKhos);
+        return updatedP ? updatedP : p;
+      }
+      return p;
     });
+
+    setSanPhams(updatedProductsList);
 
     // Đồng bộ Supabase
     if (currentUser) {
@@ -1076,18 +1065,15 @@ export default function App() {
     setNhapXuatCTs(remainingDetails);
 
     // 3. Tái tính toán khôi phục kho cho các SKU bị ảnh hưởng (Rollback hoàn toàn)
-    let updatedProductsList: SanPham[] = [];
-    setSanPhams(prevProducts => {
-      const next = prevProducts.map(p => {
-        if (skusToRecalc.includes(p.SKU)) {
-          const updatedP = recalculateProductState(p.SKU, prevProducts, remainingDetails, kiemKhos);
-          return updatedP ? updatedP : p;
-        }
-        return p;
-      });
-      updatedProductsList = next;
-      return next;
+    const updatedProductsList = sanPhams.map(p => {
+      if (skusToRecalc.includes(p.SKU)) {
+        const updatedP = recalculateProductState(p.SKU, sanPhams, remainingDetails, kiemKhos);
+        return updatedP ? updatedP : p;
+      }
+      return p;
     });
+
+    setSanPhams(updatedProductsList);
 
     // Đồng bộ Supabase
     if (currentUser) {
