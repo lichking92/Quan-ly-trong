@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { 
   TrendingUp, 
   TrendingDown, 
@@ -79,6 +79,8 @@ import ThemeSettings from './components/ThemeSettings';
  */
 
 export default function App() {
+  const ignoreRealtimeRef = useRef<boolean>(false);
+
   // --- 1. KHỞI TẠO STATE CƠ SỞ DỮ LIỆU ĐỒNG BỘ LOCALSTORAGE ---
   const [sanPhams, setSanPhams] = useState<SanPham[]>(() => {
     const saved = localStorage.getItem('B_SANPHAM');
@@ -206,6 +208,10 @@ export default function App() {
 
             // Nếu dữ liệu thay đổi thuộc về user hiện tại, tự động reload lại toàn bộ
             if (rowUserId === userId) {
+              if (ignoreRealtimeRef.current) {
+                console.log('Đang bỏ qua sự kiện Realtime để tránh ghi đè dữ liệu cục bộ đang đồng bộ...');
+                return;
+              }
               console.log('Phát hiện thay đổi dữ liệu của bạn trên Supabase Cloud. Tiến hành đồng bộ thời gian thực tự động...');
               try {
                 const payloadDb = await ensureUserOnboarded(userId);
@@ -556,14 +562,16 @@ export default function App() {
 
     // Cập nhật số lượng nhập, xuất, và tồn cuối trực tiếp vào bảng sản phẩm ngay lập tức
     let updatedProducts: SanPham[] = [];
-    const allDetailsWithNew = [...nhapXuatCTs, ...finalizedDetails];
     setSanPhams(prevProducts => {
       const next = prevProducts.map(p => {
         // Chỉ tính toán lại cho các SKU có trong phiếu vừa lưu để tối ưu hiệu năng
         if (finalizedDetails.some(fd => fd.SKU === p.SKU)) {
-          const skuDetails = allDetailsWithNew.filter(d => d.SKU === p.SKU);
-          const newNhap = skuDetails.filter(d => d.LOAI === 'NHẬP').reduce((sum, d) => sum + d.SO_LUONG, 0);
-          const newXuat = skuDetails.filter(d => d.LOAI === 'XUẤT').reduce((sum, d) => sum + d.SO_LUONG, 0);
+          const productDetails = finalizedDetails.filter(fd => fd.SKU === p.SKU);
+          const addedNhap = productDetails.filter(fd => fd.LOAI === 'NHẬP').reduce((sum, fd) => sum + fd.SO_LUONG, 0);
+          const addedXuat = productDetails.filter(fd => fd.LOAI === 'XUẤT').reduce((sum, fd) => sum + fd.SO_LUONG, 0);
+          
+          const newNhap = (p.NHAP || 0) + addedNhap;
+          const newXuat = (p.XUAT || 0) + addedXuat;
           const newTonCuoi = p.TON_DAU + newNhap - newXuat;
 
           return {
@@ -581,6 +589,7 @@ export default function App() {
 
     // Đồng bộ Supabase
     if (currentUser && currentUser.username.includes('@')) {
+      ignoreRealtimeRef.current = true;
       try {
         const uId = await getUserId();
         if (uId) {
@@ -605,6 +614,10 @@ export default function App() {
           action: 'Lưu hóa đơn',
           message: err.message || JSON.stringify(err)
         });
+      } finally {
+        setTimeout(() => {
+          ignoreRealtimeRef.current = false;
+        }, 3000);
       }
     }
   };
@@ -694,13 +707,14 @@ export default function App() {
 
     // Đồng bộ lượng chênh lệch kiểm kê bù trừ trực tiếp vào sản phẩm tương ứng (B_SANPHAM)
     let updatedProducts: SanPham[] = [];
-    const allDetailsWithNew = [...nhapXuatCTs, ...finalizedDetails];
     setSanPhams(prevProducts => {
       const next = prevProducts.map(p => {
         if (p.SKU === finalizedAudit.SKU) {
-          const skuDetails = allDetailsWithNew.filter(d => d.SKU === p.SKU);
-          const newNhap = skuDetails.filter(d => d.LOAI === 'NHẬP').reduce((sum, d) => sum + d.SO_LUONG, 0);
-          const newXuat = skuDetails.filter(d => d.LOAI === 'XUẤT').reduce((sum, d) => sum + d.SO_LUONG, 0);
+          const addedNhap = finalizedDetails.filter(d => d.SKU === p.SKU && d.LOAI === 'NHẬP').reduce((sum, d) => sum + d.SO_LUONG, 0);
+          const addedXuat = finalizedDetails.filter(d => d.SKU === p.SKU && d.LOAI === 'XUẤT').reduce((sum, d) => sum + d.SO_LUONG, 0);
+          
+          const newNhap = (p.NHAP || 0) + addedNhap;
+          const newXuat = (p.XUAT || 0) + addedXuat;
           const newTonCuoi = p.TON_DAU + newNhap - newXuat;
 
           return {
@@ -718,6 +732,7 @@ export default function App() {
 
     // Đồng bộ Supabase
     if (currentUser && currentUser.username.includes('@')) {
+      ignoreRealtimeRef.current = true;
       try {
         const uId = await getUserId();
         if (uId) {
@@ -748,6 +763,10 @@ export default function App() {
           action: 'Lưu phiếu kiểm và điều chỉnh',
           message: err.message || JSON.stringify(err)
         });
+      } finally {
+        setTimeout(() => {
+          ignoreRealtimeRef.current = false;
+        }, 3000);
       }
     }
   };
@@ -811,6 +830,7 @@ export default function App() {
 
     // Đồng bộ Supabase
     if (currentUser && currentUser.username.includes('@')) {
+      ignoreRealtimeRef.current = true;
       try {
         const uId = await getUserId();
         if (uId) {
@@ -838,6 +858,10 @@ export default function App() {
           action: 'Cập nhật hóa đơn',
           message: err.message || JSON.stringify(err)
         });
+      } finally {
+        setTimeout(() => {
+          ignoreRealtimeRef.current = false;
+        }, 3000);
       }
     }
   };
@@ -896,6 +920,7 @@ export default function App() {
 
     // Đồng bộ Supabase
     if (currentUser && currentUser.username.includes('@')) {
+      ignoreRealtimeRef.current = true;
       try {
         const uId = await getUserId();
         if (uId) {
@@ -919,6 +944,10 @@ export default function App() {
           action: 'Xóa hóa đơn',
           message: err.message || JSON.stringify(err)
         });
+      } finally {
+        setTimeout(() => {
+          ignoreRealtimeRef.current = false;
+        }, 3000);
       }
     }
   };
@@ -1616,6 +1645,7 @@ export default function App() {
                   sanPhams={sanPhams}
                   onAddProduct={handleAddProduct}
                   thuongHieus={listBrandNames}
+                  brandList={thuongHieus}
                 />
               )}
 

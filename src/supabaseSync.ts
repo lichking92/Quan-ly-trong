@@ -116,7 +116,12 @@ export async function ensureUserOnboarded(userId: string): Promise<UserDataPaylo
       // Thêm Thương hiệu mẫu
       if (MOCK_THUONG_HIEU.length > 0) {
         await supabase.from('b_thuonghieu').insert(
-          MOCK_THUONG_HIEU.map(t => ({ ...t, user_id: userId }))
+          MOCK_THUONG_HIEU.map(t => ({
+            "THUONG_HIEU": t.THUONG_HIEU,
+            "CHIET_XUAT_MAC_DINH": t.CHIET_XUAT_MAC_DINH,
+            "TINH_NANG_MAC_DINH": t.TINH_NANG_MAC_DINH,
+            user_id: userId
+          }))
         );
       }
 
@@ -303,7 +308,8 @@ export async function fetchAllUserData(userId: string): Promise<UserDataPayload>
   const thuongHieus: ThươngHieu[] = (resThuongHieus.data || []).map(item => ({
     THUONG_HIEU: item.THUONG_HIEU,
     CHIET_XUAT_MAC_DINH: item.CHIET_XUAT_MAC_DINH,
-    TINH_NANG_MAC_DINH: item.TINH_NANG_MAC_DINH
+    TINH_NANG_MAC_DINH: item.TINH_NANG_MAC_DINH,
+    TINH_NANG: item.TINH_NANG_MAC_DINH || ''
   }));
 
   const chiNhanhs: ChiNhanh[] = (resChiNhanhs.data || []).map(item => ({

@@ -161,12 +161,32 @@ export default function TransactionForm({
   // --- 3. QUY TẮC NGHIỆP VỤ - ĐỒNG BỘ CHIẾT XUẤT VÀ TÍNH NĂNG THEO THƯƠNG HIỆU ---
   const availableFeatures = useMemo(() => {
     if (!brandList) return ['ĐM', 'ASX'];
-    const features = brandList
-      .filter(b => b.THUONG_HIEU === selectBrand)
-      .map(b => b.TINH_NANG || b.TINH_NANG_MAC_DINH || '')
-      .filter(f => f !== '');
-    const uniqueFeatures = Array.from(new Set(features));
-    return uniqueFeatures.length > 0 ? uniqueFeatures : ['ĐM', 'ASX'];
+    const featuresSet = new Set<string>();
+    brandList
+      .filter(b => b.THUONG_HIEU.trim() === selectBrand.trim())
+      .forEach(b => {
+        const valStr = b.TINH_NANG_MAC_DINH || b.TINH_NANG || '';
+        if (valStr) {
+          valStr.split(',').map(s => s.trim()).filter(Boolean).forEach(f => featuresSet.add(f));
+        }
+      });
+    const result = Array.from(featuresSet);
+    return result.length > 0 ? result : ['ĐM', 'ASX'];
+  }, [brandList, selectBrand]);
+
+  const availableChietXuats = useMemo(() => {
+    if (!brandList) return ['1.56', '1.60', '1.61', '1.67', '1.74'];
+    const cxSet = new Set<string>();
+    brandList
+      .filter(b => b.THUONG_HIEU.trim() === selectBrand.trim())
+      .forEach(b => {
+        const valStr = b.CHIET_XUAT_MAC_DINH || '';
+        if (valStr) {
+          valStr.split(',').map(s => s.trim()).filter(Boolean).forEach(cx => cxSet.add(cx));
+        }
+      });
+    const result = Array.from(cxSet);
+    return result.length > 0 ? result : ['1.56', '1.60', '1.61', '1.67', '1.74'];
   }, [brandList, selectBrand]);
 
   useEffect(() => {
@@ -175,32 +195,63 @@ export default function TransactionForm({
     }
   }, [availableFeatures, selectTinhNang]);
 
+  useEffect(() => {
+    if (availableChietXuats.length > 0 && !availableChietXuats.includes(selectChietXuat)) {
+      setSelectChietXuat(availableChietXuats[0]);
+    }
+  }, [availableChietXuats, selectChietXuat]);
+
   const handleBrandChange = (brand: string) => {
     setSelectBrand(brand);
     
-    // Tìm tính năng đầu tiên khả dụng của thương hiệu này từ danh sách brandList
+    let nextFeature = '';
+    let nextChietXuat = '';
+
     if (brandList) {
-      const features = brandList
-        .filter(b => b.THUONG_HIEU === brand)
-        .map(b => b.TINH_NANG || b.TINH_NANG_MAC_DINH || '')
-        .filter(f => f !== '');
-      if (features.length > 0) {
-        setSelectTinhNang(features[0]);
+      const matchedBrands = brandList.filter(b => b.THUONG_HIEU.trim() === brand.trim());
+      
+      const featuresSet = new Set<string>();
+      const cxSet = new Set<string>();
+
+      matchedBrands.forEach(b => {
+        const fStr = b.TINH_NANG_MAC_DINH || b.TINH_NANG || '';
+        if (fStr) {
+          fStr.split(',').map(s => s.trim()).filter(Boolean).forEach(f => featuresSet.add(f));
+        }
+        const cxStr = b.CHIET_XUAT_MAC_DINH || '';
+        if (cxStr) {
+          cxStr.split(',').map(s => s.trim()).filter(Boolean).forEach(cx => cxSet.add(cx));
+        }
+      });
+
+      const fList = Array.from(featuresSet);
+      const cxList = Array.from(cxSet);
+
+      if (fList.length > 0) {
+        nextFeature = fList[0];
       }
-    } else {
-      const isDM = ['Blick', 'Element', 'Nikki'].includes(brand);
-      const newTinhNang = isDM ? 'ĐM' : 'ASX';
-      setSelectTinhNang(newTinhNang);
+      if (cxList.length > 0) {
+        nextChietXuat = cxList[0];
+      }
     }
 
-    // Rule 2: Nếu Thương hiệu là Blick, Zeiss Clear, Essilor Pre, Essilor Rock thì Chiết suất là 1.56.
-    // Zeiss Blue chiết suất sẽ là 1.60. Còn lại thì sẽ dropdown 1.56; 1.61; 1.67; 1.74
-    if (['Blick', 'Zeiss Clear', 'Essilor Pre', 'Essilor Rock'].includes(brand)) {
-      setSelectChietXuat('1.56');
-    } else if (brand === 'Zeiss Blue') {
-      setSelectChietXuat('1.60');
+    if (nextFeature) {
+      setSelectTinhNang(nextFeature);
     } else {
-      setSelectChietXuat('1.61');
+      const isDM = ['Blick', 'Element', 'Nikki'].includes(brand);
+      setSelectTinhNang(isDM ? 'ĐM' : 'ASX');
+    }
+
+    if (nextChietXuat) {
+      setSelectChietXuat(nextChietXuat);
+    } else {
+      if (['Blick', 'Zeiss Clear', 'Essilor Pre', 'Essilor Rock'].includes(brand)) {
+        setSelectChietXuat('1.56');
+      } else if (brand === 'Zeiss Blue') {
+        setSelectChietXuat('1.60');
+      } else {
+        setSelectChietXuat('1.61');
+      }
     }
   };
 
@@ -679,13 +730,11 @@ export default function TransactionForm({
                         <select
                           value={selectChietXuat}
                           onChange={(e) => setSelectChietXuat(e.target.value)}
-                          className="w-full text-sm font-semibold text-slate-700 bg-slate-50 border border-slate-200 p-2.5 rounded-xl focus:outline-hidden"
+                          className="w-full text-sm font-semibold text-slate-700 bg-slate-50 border border-slate-200 p-2.5 rounded-xl focus:outline-hidden font-mono"
                         >
-                          <option value="1.56">1.56</option>
-                          <option value="1.60">1.60</option>
-                          <option value="1.61">1.61</option>
-                          <option value="1.67">1.67</option>
-                          <option value="1.74">1.74</option>
+                          {availableChietXuats.map(cx => (
+                            <option key={cx} value={cx}>{cx}</option>
+                          ))}
                         </select>
                       </div>
 

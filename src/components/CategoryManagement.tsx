@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import { 
   FolderTree, 
   Tag, 
@@ -65,6 +65,36 @@ export default function CategoryManagement({
   // --- 1. QUẢN LÝ TAB DANH MỤC HIỆN TẠI ---
   const [activeSubTab, setActiveSubTab] = useState<'BRAND' | 'BRANCH' | 'STAFF'>('BRAND');
   
+  const consolidatedBrandsList = useMemo(() => {
+    const mergedMap = new Map<string, { chietXuats: Set<string>; features: Set<string> }>();
+    thuongHieus.forEach(b => {
+      const key = b.THUONG_HIEU.trim();
+      if (!mergedMap.has(key)) {
+        mergedMap.set(key, { chietXuats: new Set(), features: new Set() });
+      }
+      const val = mergedMap.get(key)!;
+      
+      if (b.CHIET_XUAT_MAC_DINH) {
+        b.CHIET_XUAT_MAC_DINH.split(',').map(s => s.trim()).filter(Boolean).forEach(c => val.chietXuats.add(c));
+      }
+      const fStr = b.TINH_NANG_MAC_DINH || b.TINH_NANG || '';
+      if (fStr) {
+        fStr.split(',').map(s => s.trim()).filter(Boolean).forEach(f => val.features.add(f));
+      }
+    });
+    
+    return Array.from(mergedMap.entries()).map(([name, val]) => {
+      const cxList = Array.from(val.chietXuats);
+      const fnList = Array.from(val.features);
+      return {
+        THUONG_HIEU: name,
+        CHIET_XUAT_MAC_DINH: cxList.length > 0 ? cxList.join(',') : '1.56',
+        TINH_NANG_MAC_DINH: fnList.length > 0 ? fnList.join(',') : 'ASX',
+        TINH_NANG: fnList.length > 0 ? fnList.join(',') : 'ASX'
+      };
+    });
+  }, [thuongHieus]);
+
   // Các trạng thái Form và Edit
   const [successMsg, setSuccessMsg] = useState<string>('');
   const [errorMsg, setErrorMsg] = useState<string>('');
@@ -75,8 +105,10 @@ export default function CategoryManagement({
 
   // Form Thương hiệu
   const [newBrandName, setNewBrandName] = useState<string>('');
-  const [newBrandCX, setNewBrandCX] = useState<string>('1.56');
-  const [newBrandTN, setNewBrandTN] = useState<string>('ASX');
+  const [newBrandFeatures, setNewBrandFeatures] = useState<string[]>([]);
+  const [newBrandChietXuats, setNewBrandChietXuats] = useState<string[]>([]);
+  const [featureInput, setFeatureInput] = useState<string>('');
+  const [chietXuatInput, setChietXuatInput] = useState<string>('');
 
   // Form Chi nhánh
   const [newBranchName, setNewBranchName] = useState<string>('');
@@ -92,6 +124,38 @@ export default function CategoryManagement({
   const [newStaffUsername, setNewStaffUsername] = useState<string>('');
   const [newStaffPassword, setNewStaffPassword] = useState<string>('');
 
+  const handleAddFeature = () => {
+    const val = featureInput.trim();
+    if (!val) return;
+    if (newBrandFeatures.some(f => f.toLowerCase() === val.toLowerCase())) {
+      setErrorMsg('Tính năng này đã được thêm.');
+      return;
+    }
+    setNewBrandFeatures(prev => [...prev, val]);
+    setFeatureInput('');
+    setErrorMsg('');
+  };
+
+  const handleRemoveFeature = (feature: string) => {
+    setNewBrandFeatures(prev => prev.filter(f => f !== feature));
+  };
+
+  const handleAddChietXuat = () => {
+    const val = chietXuatInput.trim();
+    if (!val) return;
+    if (newBrandChietXuats.some(c => c === val)) {
+      setErrorMsg('Chiết suất này đã được thêm.');
+      return;
+    }
+    setNewBrandChietXuats(prev => [...prev, val]);
+    setChietXuatInput('');
+    setErrorMsg('');
+  };
+
+  const handleRemoveChietXuat = (cx: string) => {
+    setNewBrandChietXuats(prev => prev.filter(c => c !== cx));
+  };
+
   // --- 2. THƯƠNG HIỆU (BRAND) ACTIONS ---
   const handleCreateBrand = (e: React.FormEvent) => {
     e.preventDefault();
@@ -103,39 +167,57 @@ export default function CategoryManagement({
       return;
     }
 
-    const targetTN = newBrandTN;
+    if (newBrandFeatures.length === 0) {
+      setErrorMsg('Vui lòng thêm ít nhất một tính năng.');
+      return;
+    }
+
+    if (newBrandChietXuats.length === 0) {
+      setErrorMsg('Vui lòng thêm ít nhất một chiết suất.');
+      return;
+    }
+
     const isExist = thuongHieus.some(b => 
-      b.THUONG_HIEU.toLowerCase() === newBrandName.trim().toLowerCase() && 
-      (b.TINH_NANG || b.TINH_NANG_MAC_DINH || '').toLowerCase() === targetTN.toLowerCase()
+      b.THUONG_HIEU.toLowerCase() === newBrandName.trim().toLowerCase()
     );
     if (isExist) {
-      setErrorMsg(`Thương hiệu [${newBrandName}] với tính năng [${targetTN}] đã tồn tại trong danh mục.`);
+      setErrorMsg(`Thương hiệu [${newBrandName}] đã tồn tại trong danh mục.`);
       return;
     }
 
     const brandRecord: ThươngHieu = {
       THUONG_HIEU: newBrandName.trim(),
-      CHIET_XUAT_MAC_DINH: newBrandCX,
-      TINH_NANG_MAC_DINH: targetTN,
-      TINH_NANG: targetTN
+      CHIET_XUAT_MAC_DINH: newBrandChietXuats.join(','),
+      TINH_NANG_MAC_DINH: newBrandFeatures.join(','),
+      TINH_NANG: newBrandFeatures.join(',')
     };
 
     onAddThuongHieu(brandRecord);
-    setSuccessMsg(`Đã khai báo thương hiệu mới [${newBrandName}] với tính năng [${targetTN}] thành công!`);
-    setNewBrandName('');
+    setSuccessMsg(`Đã khai báo thương hiệu mới [${newBrandName}] thành công!`);
+    handleCancelEditBrand();
     setTimeout(() => setSuccessMsg(''), 3000);
   };
 
   const handleStartEditBrand = (brand: ThươngHieu) => {
-    const brandFeature = brand.TINH_NANG || brand.TINH_NANG_MAC_DINH || 'ASX';
+    const features = (brand.TINH_NANG_MAC_DINH || brand.TINH_NANG || '')
+      .split(',')
+      .map(s => s.trim())
+      .filter(Boolean);
+    const chietXuats = (brand.CHIET_XUAT_MAC_DINH || '')
+      .split(',')
+      .map(s => s.trim())
+      .filter(Boolean);
+
     setEditingBrand({ 
       oldName: brand.THUONG_HIEU, 
-      oldFeature: brandFeature, 
+      oldFeature: brand.TINH_NANG_MAC_DINH || brand.TINH_NANG || 'ASX', 
       brand: { ...brand } 
     });
     setNewBrandName(brand.THUONG_HIEU);
-    setNewBrandCX(brand.CHIET_XUAT_MAC_DINH || '1.56');
-    setNewBrandTN(brandFeature);
+    setNewBrandFeatures(features);
+    setNewBrandChietXuats(chietXuats);
+    setFeatureInput('');
+    setChietXuatInput('');
   };
 
   const handleSaveEditBrand = (e: React.FormEvent) => {
@@ -149,28 +231,41 @@ export default function CategoryManagement({
       return;
     }
 
+    if (newBrandFeatures.length === 0) {
+      setErrorMsg('Vui lòng thêm ít nhất một tính năng.');
+      return;
+    }
+
+    if (newBrandChietXuats.length === 0) {
+      setErrorMsg('Vui lòng thêm ít nhất một chiết suất.');
+      return;
+    }
+
     const updatedBrand: ThươngHieu = {
       THUONG_HIEU: newBrandName.trim(),
-      CHIET_XUAT_MAC_DINH: newBrandCX,
-      TINH_NANG_MAC_DINH: newBrandTN,
-      TINH_NANG: newBrandTN
+      CHIET_XUAT_MAC_DINH: newBrandChietXuats.join(','),
+      TINH_NANG_MAC_DINH: newBrandFeatures.join(','),
+      TINH_NANG: newBrandFeatures.join(',')
     };
 
     onUpdateThuongHieu(editingBrand.oldName, editingBrand.oldFeature, updatedBrand);
     setSuccessMsg(`Đã cập nhật thương hiệu [${newBrandName}] thành công!`);
-    setEditingBrand(null);
-    setNewBrandName('');
+    handleCancelEditBrand();
     setTimeout(() => setSuccessMsg(''), 3000);
   };
 
   const handleCancelEditBrand = () => {
     setEditingBrand(null);
     setNewBrandName('');
+    setNewBrandFeatures([]);
+    setNewBrandChietXuats([]);
+    setFeatureInput('');
+    setChietXuatInput('');
   };
 
   const handleDeleteBrandItem = (brandName: string, feature: string) => {
     onDeleteThuongHieu(brandName, feature);
-    setSuccessMsg(`Đã xóa thương hiệu [${brandName}] với tính năng [${feature}] khỏi danh mục.`);
+    setSuccessMsg(`Đã xóa thương hiệu [${brandName}] khỏi danh mục.`);
     setTimeout(() => setSuccessMsg(''), 3000);
   };
 
@@ -424,62 +519,185 @@ export default function CategoryManagement({
         {/* TAB 1: THƯƠNG HIỆU & CÀI ĐẶT THƯƠNG HIỆU */}
         {activeSubTab === 'BRAND' && (
           <>
-            {/* Form khai báo mới (Chỉ hiện nếu có quyền ghi) */}
+            {/* Form khai báo mới / Chỉnh sửa (Chỉ hiện nếu có quyền ghi) */}
             {currentUser.writeAccess !== false && (
               <div className="bento-card !p-5 space-y-4 lg:col-span-2">
                 <h3 className="font-sans font-bold text-slate-800 text-xs uppercase border-b border-slate-50 pb-2">
-                  Khai báo thương hiệu mới
+                  {editingBrand ? `Chỉnh sửa thương hiệu: ${editingBrand.oldName}` : 'Khai báo thương hiệu mới'}
                 </h3>
 
-                <form onSubmit={handleCreateBrand} className="space-y-4">
+                <form onSubmit={editingBrand ? handleSaveEditBrand : handleCreateBrand} className="space-y-4">
                   <div className="space-y-1">
                     <label className="text-[10px] uppercase font-bold text-slate-400">Tên Thương Hiệu</label>
                     <input
                       type="text"
                       placeholder="Ví dụ: Kodak, Hoya, Chemi..."
-                      value={editingBrand ? '' : newBrandName}
+                      value={newBrandName}
                       onChange={(e) => setNewBrandName(e.target.value)}
                       className="w-full text-xs font-semibold text-slate-700 bg-slate-50 border border-slate-100 rounded-lg p-2.5 focus:outline-hidden focus:ring-2 focus:ring-blue-500/20"
                     />
                   </div>
 
-                  <div className="grid grid-cols-2 gap-3">
-                    <div className="space-y-1">
-                      <label className="text-[10px] uppercase font-bold text-slate-400">Chiết suất mặc định</label>
-                      <select
-                        value={editingBrand ? '1.56' : newBrandCX}
-                        onChange={(e) => setNewBrandCX(e.target.value)}
-                        className="w-full text-xs font-semibold text-slate-700 bg-slate-50 border border-slate-100 rounded-lg p-2 focus:outline-hidden"
+                  {/* Phần Chiết suất */}
+                  <div className="space-y-1.5 border-t border-slate-50 pt-2">
+                    <label className="text-[10px] uppercase font-bold text-slate-400">Danh sách Chiết suất</label>
+                    <div className="flex gap-1.5">
+                      <input
+                        type="text"
+                        placeholder="Nhập chiết suất..."
+                        value={chietXuatInput}
+                        onChange={(e) => setChietXuatInput(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') {
+                            e.preventDefault();
+                            handleAddChietXuat();
+                          }
+                        }}
+                        className="flex-1 text-xs font-semibold text-slate-700 bg-slate-50 border border-slate-100 rounded-lg p-2 focus:outline-hidden focus:ring-2 focus:ring-blue-500/10 font-mono"
+                      />
+                      <button
+                        type="button"
+                        onClick={handleAddChietXuat}
+                        className="py-2 px-3 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold rounded-lg cursor-pointer transition-all shrink-0"
                       >
-                        <option value="1.56">1.56</option>
-                        <option value="1.60">1.60</option>
-                        <option value="1.61">1.61</option>
-                        <option value="1.67">1.67</option>
-                        <option value="1.74">1.74</option>
-                      </select>
+                        Thêm
+                      </button>
                     </div>
-
-                    <div className="space-y-1">
-                      <label className="text-[10px] uppercase font-bold text-slate-400">Tính năng mặc định</label>
-                      <select
-                        value={editingBrand ? 'ASX' : newBrandTN}
-                        onChange={(e) => setNewBrandTN(e.target.value)}
-                        className="w-full text-xs font-semibold text-slate-700 bg-slate-50 border border-slate-100 rounded-lg p-2 focus:outline-hidden"
-                      >
-                        <option value="ĐM">Đổi màu (ĐM)</option>
-                        <option value="ASX">Ánh sáng xanh (ASX)</option>
-                      </select>
+                    {/* Gợi ý nhanh chiết suất */}
+                    <div className="flex flex-wrap gap-1 items-center">
+                      <span className="text-[10px] text-slate-400 mr-1">Gợi ý:</span>
+                      {['1.56', '1.60', '1.61', '1.67', '1.74'].map(cx => (
+                        <button
+                          key={cx}
+                          type="button"
+                          onClick={() => {
+                            if (!newBrandChietXuats.includes(cx)) {
+                              setNewBrandChietXuats(p => [...p, cx]);
+                            }
+                          }}
+                          className="text-[10px] font-mono font-bold text-slate-500 bg-slate-50 hover:bg-slate-100 border border-slate-200/60 px-1.5 py-0.5 rounded cursor-pointer transition-colors"
+                        >
+                          +{cx}
+                        </button>
+                      ))}
+                    </div>
+                    {/* Danh sách chips chiết suất */}
+                    <div className="flex flex-wrap gap-1.5 mt-2 min-h-[30px] p-2 bg-slate-50/50 rounded-lg border border-dashed border-slate-100">
+                      {newBrandChietXuats.length === 0 ? (
+                        <span className="text-[10px] text-slate-400 italic">Chưa thêm chiết suất nào...</span>
+                      ) : (
+                        newBrandChietXuats.map(cx => (
+                          <span
+                            key={cx}
+                            className="inline-flex items-center gap-1 bg-blue-50 text-blue-600 font-bold px-2 py-0.5 rounded text-[11px] border border-blue-100 font-mono"
+                          >
+                            {cx}
+                            <button
+                              type="button"
+                              onClick={() => handleRemoveChietXuat(cx)}
+                              className="text-blue-400 hover:text-blue-600 font-bold font-sans cursor-pointer"
+                            >
+                              ✕
+                            </button>
+                          </span>
+                        ))
+                      )}
                     </div>
                   </div>
 
-                  <div className="flex gap-2">
-                    <button
-                      type="submit"
-                      className="w-full py-2.5 bg-red-600 hover:bg-red-700 text-white text-xs font-bold rounded-xl cursor-pointer transition-all flex items-center justify-center gap-1.5"
-                    >
-                      <Plus className="w-4 h-4" />
-                      Thêm Thương Hiệu
-                    </button>
+                  {/* Phần Tính năng */}
+                  <div className="space-y-1.5 border-t border-slate-50 pt-2">
+                    <label className="text-[10px] uppercase font-bold text-slate-400">Danh sách Tính năng</label>
+                    <div className="flex gap-1.5">
+                      <input
+                        type="text"
+                        placeholder="Nhập tính năng..."
+                        value={featureInput}
+                        onChange={(e) => setFeatureInput(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') {
+                            e.preventDefault();
+                            handleAddFeature();
+                          }
+                        }}
+                        className="flex-1 text-xs font-semibold text-slate-700 bg-slate-50 border border-slate-100 rounded-lg p-2 focus:outline-hidden focus:ring-2 focus:ring-blue-500/10"
+                      />
+                      <button
+                        type="button"
+                        onClick={handleAddFeature}
+                        className="py-2 px-3 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold rounded-lg cursor-pointer transition-all shrink-0"
+                      >
+                        Thêm
+                      </button>
+                    </div>
+                    {/* Gợi ý nhanh tính năng */}
+                    <div className="flex flex-wrap gap-1 items-center">
+                      <span className="text-[10px] text-slate-400 mr-1">Gợi ý:</span>
+                      {['ĐM', 'ASX', 'Chống trầy', 'Mỏng'].map(fn => (
+                        <button
+                          key={fn}
+                          type="button"
+                          onClick={() => {
+                            if (!newBrandFeatures.some(f => f.toLowerCase() === fn.toLowerCase())) {
+                              setNewBrandFeatures(p => [...p, fn]);
+                            }
+                          }}
+                          className="text-[10px] font-bold text-slate-500 bg-slate-50 hover:bg-slate-100 border border-slate-200/60 px-1.5 py-0.5 rounded cursor-pointer transition-colors"
+                        >
+                          +{fn}
+                        </button>
+                      ))}
+                    </div>
+                    {/* Danh sách chips tính năng */}
+                    <div className="flex flex-wrap gap-1.5 mt-2 min-h-[30px] p-2 bg-slate-50/50 rounded-lg border border-dashed border-slate-100">
+                      {newBrandFeatures.length === 0 ? (
+                        <span className="text-[10px] text-slate-400 italic">Chưa thêm tính năng nào...</span>
+                      ) : (
+                        newBrandFeatures.map(fn => (
+                          <span
+                            key={fn}
+                            className="inline-flex items-center gap-1 bg-emerald-50 text-emerald-600 font-bold px-2 py-0.5 rounded text-[11px] border border-emerald-100"
+                          >
+                            {fn}
+                            <button
+                              type="button"
+                              onClick={() => handleRemoveFeature(fn)}
+                              className="text-emerald-400 hover:text-emerald-600 font-bold cursor-pointer"
+                            >
+                              ✕
+                            </button>
+                          </span>
+                        ))
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="flex gap-2 border-t border-slate-50 pt-3">
+                    {editingBrand ? (
+                      <>
+                        <button
+                          type="submit"
+                          className="flex-1 py-2.5 bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold rounded-xl cursor-pointer transition-all flex items-center justify-center gap-1.5"
+                        >
+                          Cập nhật
+                        </button>
+                        <button
+                          type="button"
+                          onClick={handleCancelEditBrand}
+                          className="py-2.5 px-4 bg-slate-100 hover:bg-slate-200 text-slate-600 text-xs font-bold rounded-xl cursor-pointer transition-all"
+                        >
+                          Hủy
+                        </button>
+                      </>
+                    ) : (
+                      <button
+                        type="submit"
+                        className="w-full py-2.5 bg-red-600 hover:bg-red-700 text-white text-xs font-bold rounded-xl cursor-pointer transition-all flex items-center justify-center gap-1.5"
+                      >
+                        <Plus className="w-4 h-4" />
+                        Lưu Thương Hiệu
+                      </button>
+                    )}
                   </div>
                 </form>
               </div>
@@ -487,34 +705,48 @@ export default function CategoryManagement({
 
             {/* Bảng danh sách */}
             <div className={`bento-card !p-0 overflow-hidden ${currentUser.writeAccess !== false ? 'lg:col-span-3' : 'lg:col-span-5'}`}>
-              <div className="bg-slate-50/75 px-4 py-3 border-b border-slate-100">
+              <div className="bg-slate-50/75 px-4 py-3 border-b border-slate-100 flex justify-between items-center">
                 <span className="text-xs font-bold text-slate-700 uppercase">Danh sách thương hiệu hoạt động</span>
+                <span className="text-[10px] font-mono text-slate-400">Tổng cộng: {consolidatedBrandsList.length}</span>
               </div>
               <div className="overflow-x-auto">
                 <table className="w-full text-left text-xs border-collapse">
                   <thead>
                     <tr className="bg-slate-50/25 border-b border-slate-100">
-                      <th className="py-2.5 px-4 text-slate-400 font-bold uppercase font-mono">STT</th>
-                      <th className="py-2.5 px-4 text-slate-400 font-bold uppercase">Thương Hiệu</th>
-                      <th className="py-2.5 px-4 text-slate-400 font-bold uppercase text-center">Chiết suất mặc định</th>
-                      <th className="py-2.5 px-4 text-slate-400 font-bold uppercase text-center">Tính năng mặc định</th>
+                      <th className="py-2.5 px-4 text-slate-400 font-bold uppercase font-mono w-12">STT</th>
+                      <th className="py-2.5 px-4 text-slate-400 font-bold uppercase w-1/3">Thương Hiệu</th>
+                      <th className="py-2.5 px-4 text-slate-400 font-bold uppercase text-center w-1/4">Chiết suất khả dụng</th>
+                      <th className="py-2.5 px-4 text-slate-400 font-bold uppercase text-center w-1/4">Tính năng khả dụng</th>
                       {currentUser.writeAccess !== false && (
-                        <th className="py-2.5 px-4 text-slate-400 font-bold uppercase text-right">Thao tác</th>
+                        <th className="py-2.5 px-4 text-slate-400 font-bold uppercase text-right w-20">Thao tác</th>
                       )}
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-50">
-                    {thuongHieus.map((b, index) => {
-                      const feature = b.TINH_NANG || b.TINH_NANG_MAC_DINH || '—';
+                    {consolidatedBrandsList.map((b, index) => {
+                      const features = (b.TINH_NANG_MAC_DINH || '').split(',').map(s => s.trim()).filter(Boolean);
+                      const chietXuats = (b.CHIET_XUAT_MAC_DINH || '').split(',').map(s => s.trim()).filter(Boolean);
                       return (
-                        <tr key={`${b.THUONG_HIEU}-${feature}-${index}`} className="hover:bg-slate-50/50 transition-colors">
+                        <tr key={`${b.THUONG_HIEU}-${index}`} className="hover:bg-slate-50/50 transition-colors">
                           <td className="py-3 px-4 font-mono text-slate-400">{index + 1}</td>
                           <td className="py-3 px-4 font-bold text-slate-700">{b.THUONG_HIEU}</td>
-                          <td className="py-3 px-4 text-center font-bold text-blue-600 font-mono">{b.CHIET_XUAT_MAC_DINH || '—'}</td>
                           <td className="py-3 px-4 text-center">
-                            <span className="bg-slate-100 text-slate-600 font-bold py-0.5 px-2 rounded text-[10px]">
-                              {feature}
-                            </span>
+                            <div className="flex flex-wrap justify-center gap-1">
+                              {chietXuats.map(cx => (
+                                <span key={cx} className="bg-blue-50/80 text-blue-600 font-bold py-0.5 px-2 rounded-md text-[10px] font-mono border border-blue-100/50">
+                                  {cx}
+                                </span>
+                              ))}
+                            </div>
+                          </td>
+                          <td className="py-3 px-4 text-center">
+                            <div className="flex flex-wrap justify-center gap-1">
+                              {features.map(f => (
+                                <span key={f} className="bg-emerald-50/80 text-emerald-600 font-bold py-0.5 px-2 rounded-md text-[10px] border border-emerald-100/50">
+                                  {f}
+                                </span>
+                              ))}
+                            </div>
                           </td>
                           {currentUser.writeAccess !== false && (
                             <td className="py-3 px-4 text-right space-x-1.5">
@@ -526,7 +758,7 @@ export default function CategoryManagement({
                                 <Edit className="w-3.5 h-3.5" />
                               </button>
                               <button
-                                onClick={() => handleDeleteBrandItem(b.THUONG_HIEU, feature)}
+                                onClick={() => handleDeleteBrandItem(b.THUONG_HIEU, b.TINH_NANG_MAC_DINH || '')}
                                 className="p-1 text-red-600 hover:bg-red-50 rounded-md cursor-pointer transition-colors inline-flex"
                                 title="Xóa"
                               >
@@ -828,7 +1060,7 @@ export default function CategoryManagement({
                 </button>
               </div>
 
-              <form onSubmit={handleSaveEditBrand} className="p-5 space-y-4">
+              <form onSubmit={handleSaveEditBrand} className="p-5 space-y-4 max-h-[80vh] overflow-y-auto">
                 <div className="space-y-1">
                   <label className="text-[10px] uppercase font-bold text-slate-400">Tên Thương Hiệu</label>
                   <input
@@ -840,36 +1072,141 @@ export default function CategoryManagement({
                   />
                 </div>
 
-                <div className="grid grid-cols-2 gap-3">
-                  <div className="space-y-1">
-                    <label className="text-[10px] uppercase font-bold text-slate-400">Chiết suất mặc định</label>
-                    <select
-                      value={newBrandCX}
-                      onChange={(e) => setNewBrandCX(e.target.value)}
-                      className="w-full text-xs font-semibold text-slate-700 bg-slate-50 border border-slate-100 rounded-lg p-2 focus:outline-hidden"
+                {/* Phần Chiết suất */}
+                <div className="space-y-1.5 border-t border-slate-50 pt-2">
+                  <label className="text-[10px] uppercase font-bold text-slate-400">Danh sách Chiết suất</label>
+                  <div className="flex gap-1.5">
+                    <input
+                      type="text"
+                      placeholder="Nhập chiết suất..."
+                      value={chietXuatInput}
+                      onChange={(e) => setChietXuatInput(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') {
+                          e.preventDefault();
+                          handleAddChietXuat();
+                        }
+                      }}
+                      className="flex-1 text-xs font-semibold text-slate-700 bg-slate-50 border border-slate-100 rounded-lg p-2 focus:outline-hidden focus:ring-2 focus:ring-blue-500/10 font-mono"
+                    />
+                    <button
+                      type="button"
+                      onClick={handleAddChietXuat}
+                      className="py-2 px-3 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold rounded-lg cursor-pointer transition-all shrink-0"
                     >
-                      <option value="1.56">1.56</option>
-                      <option value="1.60">1.60</option>
-                      <option value="1.61">1.61</option>
-                      <option value="1.67">1.67</option>
-                      <option value="1.74">1.74</option>
-                    </select>
+                      Thêm
+                    </button>
                   </div>
-
-                  <div className="space-y-1">
-                    <label className="text-[10px] uppercase font-bold text-slate-400">Tính năng mặc định</label>
-                    <select
-                      value={newBrandTN}
-                      onChange={(e) => setNewBrandTN(e.target.value)}
-                      className="w-full text-xs font-semibold text-slate-700 bg-slate-50 border border-slate-100 rounded-lg p-2 focus:outline-hidden"
-                    >
-                      <option value="ĐM">Đổi màu (ĐM)</option>
-                      <option value="ASX">Ánh sáng xanh (ASX)</option>
-                    </select>
+                  {/* Gợi ý nhanh */}
+                  <div className="flex flex-wrap gap-1 items-center">
+                    <span className="text-[10px] text-slate-400 mr-1">Gợi ý:</span>
+                    {['1.56', '1.60', '1.61', '1.67', '1.74'].map(cx => (
+                      <button
+                        key={cx}
+                        type="button"
+                        onClick={() => {
+                          if (!newBrandChietXuats.includes(cx)) {
+                            setNewBrandChietXuats(p => [...p, cx]);
+                          }
+                        }}
+                        className="text-[10px] font-mono font-bold text-slate-500 bg-slate-50 hover:bg-slate-100 border border-slate-200/60 px-1.5 py-0.5 rounded cursor-pointer transition-colors"
+                      >
+                        +{cx}
+                      </button>
+                    ))}
+                  </div>
+                  {/* Danh sách chips chiết suất */}
+                  <div className="flex flex-wrap gap-1.5 mt-2 min-h-[30px] p-2 bg-slate-50/50 rounded-lg border border-dashed border-slate-100">
+                    {newBrandChietXuats.length === 0 ? (
+                      <span className="text-[10px] text-slate-400 italic">Chưa thêm chiết suất nào...</span>
+                    ) : (
+                      newBrandChietXuats.map(cx => (
+                        <span
+                          key={cx}
+                          className="inline-flex items-center gap-1 bg-blue-50 text-blue-600 font-bold px-2 py-0.5 rounded text-[11px] border border-blue-100 font-mono"
+                        >
+                          {cx}
+                          <button
+                            type="button"
+                            onClick={() => handleRemoveChietXuat(cx)}
+                            className="text-blue-400 hover:text-blue-600 font-bold font-sans cursor-pointer"
+                          >
+                            ✕
+                          </button>
+                        </span>
+                      ))
+                    )}
                   </div>
                 </div>
 
-                <div className="flex gap-2.5 pt-2">
+                {/* Phần Tính năng */}
+                <div className="space-y-1.5 border-t border-slate-50 pt-2">
+                  <label className="text-[10px] uppercase font-bold text-slate-400">Danh sách Tính năng</label>
+                  <div className="flex gap-1.5">
+                    <input
+                      type="text"
+                      placeholder="Nhập tính năng..."
+                      value={featureInput}
+                      onChange={(e) => setFeatureInput(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') {
+                          e.preventDefault();
+                          handleAddFeature();
+                        }
+                      }}
+                      className="flex-1 text-xs font-semibold text-slate-700 bg-slate-50 border border-slate-100 rounded-lg p-2 focus:outline-hidden focus:ring-2 focus:ring-blue-500/10"
+                    />
+                    <button
+                      type="button"
+                      onClick={handleAddFeature}
+                      className="py-2 px-3 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold rounded-lg cursor-pointer transition-all shrink-0"
+                    >
+                      Thêm
+                    </button>
+                  </div>
+                  {/* Gợi ý nhanh */}
+                  <div className="flex flex-wrap gap-1 items-center">
+                    <span className="text-[10px] text-slate-400 mr-1">Gợi ý:</span>
+                    {['ĐM', 'ASX', 'Chống trầy', 'Mỏng'].map(fn => (
+                      <button
+                        key={fn}
+                        type="button"
+                        onClick={() => {
+                          if (!newBrandFeatures.some(f => f.toLowerCase() === fn.toLowerCase())) {
+                            setNewBrandFeatures(p => [...p, fn]);
+                          }
+                        }}
+                        className="text-[10px] font-bold text-slate-500 bg-slate-50 hover:bg-slate-100 border border-slate-200/60 px-1.5 py-0.5 rounded cursor-pointer transition-colors"
+                      >
+                        +{fn}
+                      </button>
+                    ))}
+                  </div>
+                  {/* Danh sách chips tính năng */}
+                  <div className="flex flex-wrap gap-1.5 mt-2 min-h-[30px] p-2 bg-slate-50/50 rounded-lg border border-dashed border-slate-100">
+                    {newBrandFeatures.length === 0 ? (
+                      <span className="text-[10px] text-slate-400 italic">Chưa thêm tính năng nào...</span>
+                    ) : (
+                      newBrandFeatures.map(fn => (
+                        <span
+                          key={fn}
+                          className="inline-flex items-center gap-1 bg-emerald-50 text-emerald-600 font-bold px-2 py-0.5 rounded text-[11px] border border-emerald-100"
+                        >
+                          {fn}
+                          <button
+                            type="button"
+                            onClick={() => handleRemoveFeature(fn)}
+                            className="text-emerald-400 hover:text-emerald-600 font-bold cursor-pointer"
+                          >
+                            ✕
+                          </button>
+                        </span>
+                      ))
+                    )}
+                  </div>
+                </div>
+
+                <div className="flex gap-2.5 pt-2 border-t border-slate-50">
                   <button
                     type="button"
                     onClick={handleCancelEditBrand}

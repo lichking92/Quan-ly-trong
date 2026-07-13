@@ -19,7 +19,7 @@ import {
   ArrowRight
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { SanPham } from '../types';
+import { SanPham, ThươngHieu } from '../types';
 import { generateSKUString, formatDop } from '../data/mockData';
 
 /**
@@ -35,10 +35,11 @@ interface ProductManagementProps {
   onAddProduct: (newProduct: SanPham) => void;
   onUpdateProduct?: (sku: string, updatedFields: Partial<SanPham>) => void;
   thuongHieus: string[];
+  brandList?: ThươngHieu[];
   currentUser: any;
 }
 
-export default function ProductManagement({ sanPhams = [], onAddProduct, onUpdateProduct, thuongHieus = [], currentUser }: ProductManagementProps) {
+export default function ProductManagement({ sanPhams = [], onAddProduct, onUpdateProduct, thuongHieus = [], brandList = [], currentUser }: ProductManagementProps) {
   // --- 1. QUẢN LÝ TRẠNG THÁI HIỂN THỊ & TÌM KIẾM ---
   const [searchTerm, setSearchTerm] = useState<string>('');
   const [filterBrand, setFilterBrand] = useState<string>('Tất cả');
@@ -118,22 +119,99 @@ export default function ProductManagement({ sanPhams = [], onAddProduct, onUpdat
   const [formError, setFormError] = useState<string>('');
 
   // --- 3. ĐỒNG BỘ ĐỘNG THEO QUY TẮC NGHIỆP VỤ (RULE 1, 2) KHI THAY ĐỔI THƯƠNG HIỆU ---
+  const availableFeatures = useMemo(() => {
+    if (!brandList || brandList.length === 0) return ['ĐM', 'ASX'];
+    const featuresSet = new Set<string>();
+    brandList
+      .filter(b => b.THUONG_HIEU.trim() === formBrand.trim())
+      .forEach(b => {
+        const valStr = b.TINH_NANG_MAC_DINH || b.TINH_NANG || '';
+        if (valStr) {
+          valStr.split(',').map(s => s.trim()).filter(Boolean).forEach(f => featuresSet.add(f));
+        }
+      });
+    const result = Array.from(featuresSet);
+    return result.length > 0 ? result : ['ĐM', 'ASX'];
+  }, [brandList, formBrand]);
+
+  const availableChietXuats = useMemo(() => {
+    if (!brandList || brandList.length === 0) return ['1.56', '1.60', '1.61', '1.67', '1.74'];
+    const cxSet = new Set<string>();
+    brandList
+      .filter(b => b.THUONG_HIEU.trim() === formBrand.trim())
+      .forEach(b => {
+        const valStr = b.CHIET_XUAT_MAC_DINH || '';
+        if (valStr) {
+          valStr.split(',').map(s => s.trim()).filter(Boolean).forEach(cx => cxSet.add(cx));
+        }
+      });
+    const result = Array.from(cxSet);
+    return result.length > 0 ? result : ['1.56', '1.60', '1.61', '1.67', '1.74'];
+  }, [brandList, formBrand]);
+
+  React.useEffect(() => {
+    if (availableFeatures && availableFeatures.length > 0 && !availableFeatures.includes(formTinhNang)) {
+      setFormTinhNang(availableFeatures[0]);
+    }
+  }, [availableFeatures, formTinhNang]);
+
+  React.useEffect(() => {
+    if (availableChietXuats && availableChietXuats.length > 0 && !availableChietXuats.includes(formChietXuat)) {
+      setFormChietXuat(availableChietXuats[0]);
+    }
+  }, [availableChietXuats, formChietXuat]);
+
   const handleBrandChange = (brand: string) => {
     setFormBrand(brand);
     
-    // Quy tắc 1: Nếu Thương hiệu là Blick, Element, Nikki thì TÍNH NĂNG sẽ là ĐM. Còn lại sẽ là ASX.
-    const isDM = ['Blick', 'Element', 'Nikki'].includes(brand);
-    const newTinhNang = isDM ? 'ĐM' : 'ASX';
-    setFormTinhNang(newTinhNang);
+    let nextFeature = '';
+    let nextChietXuat = '';
 
-    // Quy tắc 2: Nếu Thương hiệu là Blick, Zeiss Clear, Essilor Pre, Essilor Rock thì Chiết suất là 1.56.
-    // Zeiss Blue chiết suất sẽ là 1.60. Còn lại thì sẽ cho lựa chọn dropdown 1.56, 1.61, 1.67, 1.74.
-    if (['Blick', 'Zeiss Clear', 'Essilor Pre', 'Essilor Rock'].includes(brand)) {
-      setFormChietXuat('1.56');
-    } else if (brand === 'Zeiss Blue') {
-      setFormChietXuat('1.60');
+    if (brandList && brandList.length > 0) {
+      const matchedBrands = brandList.filter(b => b.THUONG_HIEU.trim() === brand.trim());
+      
+      const featuresSet = new Set<string>();
+      const cxSet = new Set<string>();
+
+      matchedBrands.forEach(b => {
+        const fStr = b.TINH_NANG_MAC_DINH || b.TINH_NANG || '';
+        if (fStr) {
+          fStr.split(',').map(s => s.trim()).filter(Boolean).forEach(f => featuresSet.add(f));
+        }
+        const cxStr = b.CHIET_XUAT_MAC_DINH || '';
+        if (cxStr) {
+          cxStr.split(',').map(s => s.trim()).filter(Boolean).forEach(cx => cxSet.add(cx));
+        }
+      });
+
+      const fList = Array.from(featuresSet);
+      const cxList = Array.from(cxSet);
+
+      if (fList.length > 0) {
+        nextFeature = fList[0];
+      }
+      if (cxList.length > 0) {
+        nextChietXuat = cxList[0];
+      }
+    }
+
+    if (nextFeature) {
+      setFormTinhNang(nextFeature);
     } else {
-      setFormChietXuat('1.61'); // Giá trị mặc định cho dropdown tùy chọn
+      const isDM = ['Blick', 'Element', 'Nikki'].includes(brand);
+      setFormTinhNang(isDM ? 'ĐM' : 'ASX');
+    }
+
+    if (nextChietXuat) {
+      setFormChietXuat(nextChietXuat);
+    } else {
+      if (['Blick', 'Zeiss Clear', 'Essilor Pre', 'Essilor Rock'].includes(brand)) {
+        setFormChietXuat('1.56');
+      } else if (brand === 'Zeiss Blue') {
+        setFormChietXuat('1.60');
+      } else {
+        setFormChietXuat('1.61');
+      }
     }
   };
 
@@ -817,7 +895,7 @@ export default function ProductManagement({ sanPhams = [], onAddProduct, onUpdat
                     </select>
                   </div>
 
-                  {/* Tính năng (Chỉ có 2 lựa chọn ĐM hoặc ASX) */}
+                  {/* Tính năng (Sử dụng danh sách tính năng động theo thương hiệu) */}
                   <div className="space-y-1">
                     <label className="text-[11px] font-bold text-slate-500 uppercase flex items-center gap-1">
                       Tính Năng
@@ -827,35 +905,26 @@ export default function ProductManagement({ sanPhams = [], onAddProduct, onUpdat
                       onChange={(e) => setFormTinhNang(e.target.value)}
                       className="w-full text-base md:text-xs font-semibold text-slate-700 bg-slate-50 border border-slate-100 rounded-lg p-2.5 focus:outline-hidden"
                     >
-                      <option value="ĐM">Đổi màu (ĐM)</option>
-                      <option value="ASX">Ánh sáng xanh (ASX)</option>
+                      {availableFeatures.map(f => (
+                        <option key={f} value={f}>{f === 'ĐM' ? 'Đổi màu (ĐM)' : f === 'ASX' ? 'Ánh sáng xanh (ASX)' : f}</option>
+                      ))}
                     </select>
                   </div>
                 </div>
 
                 <div className="grid grid-cols-2 gap-4">
-                  {/* Chiết suất (Tự động hoặc Dropdown tùy loại thương hiệu) */}
+                  {/* Chiết suất (Tải động từ cấu hình thương hiệu) */}
                   <div className="space-y-1">
                     <label className="text-[11px] font-bold text-slate-500 uppercase">Chiết Suất</label>
-                    {['Blick', 'Zeiss Clear', 'Zeiss Blue', 'Essilor Pre', 'Essilor Rock'].includes(formBrand) ? (
-                      <input
-                        type="text"
-                        value={formChietXuat}
-                        disabled
-                        className="w-full text-base md:text-xs font-bold text-slate-500 bg-slate-100 border border-slate-100 rounded-lg p-2.5"
-                      />
-                    ) : (
-                      <select
-                        value={formChietXuat}
-                        onChange={(e) => setFormChietXuat(e.target.value)}
-                        className="w-full text-base md:text-xs font-semibold text-slate-700 bg-slate-50 border border-slate-100 rounded-lg p-2.5 animate-pulse"
-                      >
-                        <option value="1.56">1.56</option>
-                        <option value="1.61">1.61</option>
-                        <option value="1.67">1.67</option>
-                        <option value="1.74">1.74</option>
-                      </select>
-                    )}
+                    <select
+                      value={formChietXuat}
+                      onChange={(e) => setFormChietXuat(e.target.value)}
+                      className="w-full text-base md:text-xs font-semibold text-slate-700 bg-slate-50 border border-slate-100 rounded-lg p-2.5 font-mono"
+                    >
+                      {availableChietXuats.map(cx => (
+                        <option key={cx} value={cx}>{cx}</option>
+                      ))}
+                    </select>
                   </div>
 
                   {/* Loại độ */}

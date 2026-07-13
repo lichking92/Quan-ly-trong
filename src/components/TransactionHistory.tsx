@@ -66,6 +66,26 @@ export default function TransactionHistory({
   const [sortBy, setSortBy] = useState<'HOA_DON' | 'NGAY'>('NGAY');
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc');
 
+  // Gộp nhóm theo ngày & Sắp xếp cột
+  const [isGroupedByDate, setIsGroupedByDate] = useState<boolean>(false);
+  const [expandedDates, setExpandedDates] = useState<Record<string, boolean>>({});
+  const [columnOrder, setColumnOrder] = useState<string[]>(() => {
+    const saved = localStorage.getItem(`${currentUser.username}_HISTORY_COLUMN_ORDER`);
+    return saved ? JSON.parse(saved) : ['invoiceNo', 'type', 'datetime', 'branch', 'creator', 'totalQty', 'note'];
+  });
+
+  const handleMoveColumn = (index: number, direction: 'up' | 'down') => {
+    const nextOrder = [...columnOrder];
+    const targetIndex = direction === 'up' ? index - 1 : index + 1;
+    if (targetIndex >= 0 && targetIndex < nextOrder.length) {
+      const temp = nextOrder[index];
+      nextOrder[index] = nextOrder[targetIndex];
+      nextOrder[targetIndex] = temp;
+      setColumnOrder(nextOrder);
+      localStorage.setItem(`${currentUser.username}_HISTORY_COLUMN_ORDER`, JSON.stringify(nextOrder));
+    }
+  };
+
   // Column Customization States
   const [showColumnChooser, setShowColumnChooser] = useState(false);
   const [visibleColumns, setVisibleColumns] = useState<Record<string, boolean>>(() => {
@@ -130,6 +150,18 @@ export default function TransactionHistory({
 
     return list;
   }, [nhapXuats, historyTypeFilter, searchQuery, sortBy, sortOrder]);
+
+  const groupedInvoicesByDate = useMemo(() => {
+    const groups: Record<string, NhapXuat[]> = {};
+    filteredInvoices.forEach(h => {
+      const dateStr = h.NGAY || (h.TG_TAO ? h.TG_TAO.split(' ')[0] : 'Chưa rõ');
+      if (!groups[dateStr]) {
+        groups[dateStr] = [];
+      }
+      groups[dateStr].push(h);
+    });
+    return groups;
+  }, [filteredInvoices]);
 
   // Chi tiết sản phẩm của hóa đơn đang chọn (Lazy loading)
   const activeDetails = useMemo(() => {
@@ -611,6 +643,178 @@ export default function TransactionHistory({
     }, 0);
   }, [columnWidths, visibleColumns]);
 
+  const colDefinitions: Record<string, {
+    label: string;
+    defaultWidth: number;
+    renderHeader: (width: number, onMouseDown: (e: React.MouseEvent) => void, onDoubleClick: () => void) => React.ReactNode;
+    renderCell: (h: NhapXuat, isSelected: boolean, badgeColor: string) => React.ReactNode;
+  }> = {
+    invoiceNo: {
+      label: 'Số phiếu',
+      defaultWidth: 140,
+      renderHeader: (width, onMouseDown, onDoubleClick) => (
+        <th 
+          key="invoiceNo"
+          style={{ width, minWidth: width, maxWidth: width }}
+          className="py-2.5 px-3 relative sticky left-0 bg-slate-50 z-20 shadow-[2px_0_5px_rgba(0,0,0,0.04)] border-r border-slate-200 font-bold uppercase tracking-wider text-[10px]"
+        >
+          Số phiếu
+          <div 
+            onMouseDown={onMouseDown}
+            onDoubleClick={onDoubleClick}
+            className="absolute right-0 top-0 bottom-0 w-1.5 cursor-col-resize hover:bg-red-500/40 active:bg-red-600 z-30"
+            title="Kéo rộng / Click đúp khôi phục"
+          />
+        </th>
+      ),
+      renderCell: (h) => (
+        <td key="invoiceNo" className="py-3 px-3 font-mono font-bold text-slate-800 sticky left-0 bg-white z-10 shadow-[2px_0_5px_rgba(0,0,0,0.04)] border-r border-slate-200">
+          {h.HOA_DON}
+        </td>
+      )
+    },
+    type: {
+      label: 'Loại',
+      defaultWidth: 110,
+      renderHeader: (width, onMouseDown, onDoubleClick) => (
+        <th 
+          key="type"
+          style={{ width, minWidth: width, maxWidth: width }}
+          className="py-2.5 px-3 relative font-bold uppercase tracking-wider text-[10px]"
+        >
+          Loại
+          <div 
+            onMouseDown={onMouseDown}
+            onDoubleClick={onDoubleClick}
+            className="absolute right-0 top-0 bottom-0 w-1.5 cursor-col-resize hover:bg-red-500/40 active:bg-red-600 z-25"
+          />
+        </th>
+      ),
+      renderCell: (h, isSelected, badgeColor) => (
+        <td key="type" className="py-3 px-3">
+          <span className={`text-[9px] font-bold py-0.5 px-2 rounded-full border uppercase tracking-wider ${badgeColor}`}>
+            {h.LOAI}
+          </span>
+        </td>
+      )
+    },
+    datetime: {
+      label: 'Ngày giờ tạo',
+      defaultWidth: 170,
+      renderHeader: (width, onMouseDown, onDoubleClick) => (
+        <th 
+          key="datetime"
+          style={{ width, minWidth: width, maxWidth: width }}
+          className="py-2.5 px-3 relative font-bold uppercase tracking-wider text-[10px]"
+        >
+          Ngày giờ tạo
+          <div 
+            onMouseDown={onMouseDown}
+            onDoubleClick={onDoubleClick}
+            className="absolute right-0 top-0 bottom-0 w-1.5 cursor-col-resize hover:bg-red-500/40 active:bg-red-600 z-25"
+          />
+        </th>
+      ),
+      renderCell: (h) => (
+        <td key="datetime" className="py-3 px-3 font-mono text-slate-500">
+          {formatDateTime(h.TG_TAO || h.NGAY)}
+        </td>
+      )
+    },
+    branch: {
+      label: 'Chi nhánh',
+      defaultWidth: 160,
+      renderHeader: (width, onMouseDown, onDoubleClick) => (
+        <th 
+          key="branch"
+          style={{ width, minWidth: width, maxWidth: width }}
+          className="py-2.5 px-3 relative font-bold uppercase tracking-wider text-[10px]"
+        >
+          Chi nhánh
+          <div 
+            onMouseDown={onMouseDown}
+            onDoubleClick={onDoubleClick}
+            className="absolute right-0 top-0 bottom-0 w-1.5 cursor-col-resize hover:bg-red-500/40 active:bg-red-600 z-25"
+          />
+        </th>
+      ),
+      renderCell: (h) => (
+        <td key="branch" className="py-3 px-3 text-slate-700 font-semibold truncate" title={h.CHI_NHANH}>
+          {h.CHI_NHANH}
+        </td>
+      )
+    },
+    creator: {
+      label: 'Người tạo phiếu',
+      defaultWidth: 160,
+      renderHeader: (width, onMouseDown, onDoubleClick) => (
+        <th 
+          key="creator"
+          style={{ width, minWidth: width, maxWidth: width }}
+          className="py-2.5 px-3 relative font-bold uppercase tracking-wider text-[10px]"
+        >
+          Người tạo phiếu
+          <div 
+            onMouseDown={onMouseDown}
+            onDoubleClick={onDoubleClick}
+            className="absolute right-0 top-0 bottom-0 w-1.5 cursor-col-resize hover:bg-red-500/40 active:bg-red-600 z-25"
+          />
+        </th>
+      ),
+      renderCell: (h) => (
+        <td key="creator" className="py-3 px-3 text-slate-600 font-medium truncate" title={h.TEN_NGUOI_TAO}>
+          {h.TEN_NGUOI_TAO}
+        </td>
+      )
+    },
+    totalQty: {
+      label: 'Tổng SL',
+      defaultWidth: 90,
+      renderHeader: (width, onMouseDown, onDoubleClick) => (
+        <th 
+          key="totalQty"
+          style={{ width, minWidth: width, maxWidth: width }}
+          className="py-2.5 px-3 text-right relative font-bold uppercase tracking-wider text-[10px]"
+        >
+          Tổng SL
+          <div 
+            onMouseDown={onMouseDown}
+            onDoubleClick={onDoubleClick}
+            className="absolute right-0 top-0 bottom-0 w-1.5 cursor-col-resize hover:bg-red-500/40 active:bg-red-600 z-25"
+          />
+        </th>
+      ),
+      renderCell: (h) => (
+        <td key="totalQty" className="py-3 px-3 text-right font-mono font-bold text-slate-700">
+          {h.TONG_SL}
+        </td>
+      )
+    },
+    note: {
+      label: 'Ghi chú',
+      defaultWidth: 200,
+      renderHeader: (width, onMouseDown, onDoubleClick) => (
+        <th 
+          key="note"
+          style={{ width, minWidth: width, maxWidth: width }}
+          className="py-2.5 px-3 relative font-bold uppercase tracking-wider text-[10px]"
+        >
+          Ghi chú tổng quan
+          <div 
+            onMouseDown={onMouseDown}
+            onDoubleClick={onDoubleClick}
+            className="absolute right-0 top-0 bottom-0 w-1.5 cursor-col-resize hover:bg-red-500/40 active:bg-red-600 z-25"
+          />
+        </th>
+      ),
+      renderCell: (h) => (
+        <td key="note" className="py-3 px-3 text-slate-500 truncate" title={h.GHI_CHU}>
+          {h.GHI_CHU}
+        </td>
+      )
+    }
+  };
+
   return (
     <div className="space-y-6">
       
@@ -657,6 +861,20 @@ export default function TransactionHistory({
               <RefreshCw className="w-4 h-4" />
             </button>
 
+            {/* Group by Date Button */}
+            <button
+              onClick={() => setIsGroupedByDate(!isGroupedByDate)}
+              className={`flex items-center gap-1.5 py-2 px-3 text-xs font-bold rounded-xl border transition-all cursor-pointer ${
+                isGroupedByDate 
+                  ? 'bg-red-50 text-red-650 border-red-200' 
+                  : 'bg-white hover:bg-slate-50 text-slate-500 border-slate-150'
+              }`}
+              title="Gộp các phiếu theo ngày tạo"
+            >
+              <Calendar className="w-3.5 h-3.5" />
+              {isGroupedByDate ? 'Bỏ gộp nhóm' : 'Gộp nhóm theo ngày'}
+            </button>
+
             {/* Column Chooser Button */}
             <div className="relative">
               <button
@@ -668,7 +886,7 @@ export default function TransactionHistory({
                 }`}
               >
                 <SlidersHorizontal className="w-3.5 h-3.5" />
-                Cột hiển thị
+                Sắp xếp & Ẩn hiện cột
               </button>
 
               <AnimatePresence>
@@ -679,29 +897,48 @@ export default function TransactionHistory({
                       initial={{ opacity: 0, y: 5 }}
                       animate={{ opacity: 1, y: 0 }}
                       exit={{ opacity: 0, y: 5 }}
-                      className="absolute right-0 mt-2 w-56 bg-white border border-slate-150 rounded-xl shadow-lg z-40 p-3 space-y-2 text-xs"
+                      className="absolute right-0 mt-2 w-64 bg-white border border-slate-150 rounded-xl shadow-lg z-40 p-3 space-y-2 text-xs"
                     >
-                      <h4 className="font-bold text-slate-700 border-b border-slate-100 pb-1.5 mb-1.5 uppercase tracking-wider text-[9px]">Ẩn / hiện cột dữ liệu</h4>
-                      <div className="space-y-2 max-h-56 overflow-y-auto">
-                        {[
-                          { key: 'invoiceNo', label: 'Số phiếu' },
-                          { key: 'type', label: 'Loại' },
-                          { key: 'datetime', label: 'Ngày giờ tạo' },
-                          { key: 'branch', label: 'Chi nhánh' },
-                          { key: 'creator', label: 'Người tạo phiếu' },
-                          { key: 'totalQty', label: 'Tổng số lượng' },
-                          { key: 'note', label: 'Ghi chú' }
-                        ].map(col => (
-                          <label key={col.key} className="flex items-center gap-2 cursor-pointer font-semibold text-slate-600 hover:text-slate-800">
-                            <input 
-                              type="checkbox" 
-                              checked={visibleColumns[col.key] !== false}
-                              onChange={() => toggleColumnVisibility(col.key)}
-                              className="rounded border-slate-300 text-blue-600 focus:ring-blue-500 w-3.5 h-3.5 cursor-pointer"
-                            />
-                            <span>{col.label}</span>
-                          </label>
-                        ))}
+                      <h4 className="font-bold text-slate-700 border-b border-slate-100 pb-1.5 mb-1.5 uppercase tracking-wider text-[9px] flex justify-between items-center">
+                        <span>Cấu hình cột hiển thị</span>
+                        <span className="text-[8px] text-slate-400 normal-case font-medium">Bấm ↑ ↓ để xếp lại</span>
+                      </h4>
+                      <div className="space-y-1.5 max-h-72 overflow-y-auto">
+                        {columnOrder.map((colKey, index) => {
+                          const colDef = colDefinitions[colKey];
+                          if (!colDef) return null;
+                          return (
+                            <div key={colKey} className="flex items-center justify-between p-1 hover:bg-slate-50 rounded-lg gap-2">
+                              <label className="flex items-center gap-2 cursor-pointer font-semibold text-slate-600 hover:text-slate-800 grow truncate">
+                                <input 
+                                  type="checkbox" 
+                                  checked={visibleColumns[colKey] !== false}
+                                  onChange={() => toggleColumnVisibility(colKey)}
+                                  className="rounded border-slate-300 text-blue-600 focus:ring-blue-500 w-3.5 h-3.5 cursor-pointer"
+                                />
+                                <span className="truncate">{colDef.label}</span>
+                              </label>
+                              <div className="flex items-center gap-0.5 shrink-0">
+                                <button
+                                  disabled={index === 0}
+                                  onClick={() => handleMoveColumn(index, 'up')}
+                                  className="p-1 hover:bg-slate-200 text-slate-500 hover:text-slate-800 disabled:opacity-30 rounded transition-all cursor-pointer"
+                                  title="Di chuyển lên trước"
+                                >
+                                  ▲
+                                </button>
+                                <button
+                                  disabled={index === columnOrder.length - 1}
+                                  onClick={() => handleMoveColumn(index, 'down')}
+                                  className="p-1 hover:bg-slate-200 text-slate-500 hover:text-slate-800 disabled:opacity-30 rounded transition-all cursor-pointer"
+                                  title="Di chuyển ra sau"
+                                >
+                                  ▼
+                                </button>
+                              </div>
+                            </div>
+                          );
+                        })}
                       </div>
                     </motion.div>
                   </>
@@ -770,172 +1007,149 @@ export default function TransactionHistory({
             )}
           </div>
 
-          {/* TABLE RENDER (RESIZABLE & FIXED STICKY COLUMNS) */}
+          {/* TABLE RENDER (RESIZABLE & FIXED STICKY COLUMNS & GROUPING BY DATE) */}
           <div className="overflow-y-auto max-h-[600px] bg-slate-50/25">
             {filteredInvoices.length > 0 ? (
-              <div className="overflow-x-auto">
-                <table 
-                  className="w-full text-left text-xs border-collapse table-layout-fixed" 
-                  style={{ minWidth: tableMinWidth }}
-                >
-                  <thead>
-                    <tr className="bg-slate-50 border-b border-slate-200 text-slate-400 text-[10px] uppercase font-bold select-none">
-                      {visibleColumns.invoiceNo !== false && (
-                        <th 
-                          style={{ width: columnWidths.invoiceNo, minWidth: columnWidths.invoiceNo, maxWidth: columnWidths.invoiceNo }}
-                          className="py-2.5 px-3 relative sticky left-0 bg-slate-50 z-20 shadow-[2px_0_5px_rgba(0,0,0,0.04)] border-r border-slate-200"
-                        >
-                          Số phiếu
-                          <div 
-                            onMouseDown={(e) => handleMouseDown('invoiceNo', e)}
-                            onDoubleClick={() => handleDoubleClick('invoiceNo', 140)}
-                            className="absolute right-0 top-0 bottom-0 w-1.5 cursor-col-resize hover:bg-red-500/40 active:bg-red-600 z-30"
-                            title="Kéo rộng / Click đúp khôi phục"
-                          />
-                        </th>
-                      )}
-                      {visibleColumns.type !== false && (
-                        <th 
-                          style={{ width: columnWidths.type, minWidth: columnWidths.type, maxWidth: columnWidths.type }}
-                          className="py-2.5 px-3 relative"
-                        >
-                          Loại
-                          <div 
-                            onMouseDown={(e) => handleMouseDown('type', e)}
-                            onDoubleClick={() => handleDoubleClick('type', 110)}
-                            className="absolute right-0 top-0 bottom-0 w-1.5 cursor-col-resize hover:bg-red-500/40 active:bg-red-600 z-25"
-                          />
-                        </th>
-                      )}
-                      {visibleColumns.datetime !== false && (
-                        <th 
-                          style={{ width: columnWidths.datetime, minWidth: columnWidths.datetime, maxWidth: columnWidths.datetime }}
-                          className="py-2.5 px-3 relative"
-                        >
-                          Ngày giờ tạo
-                          <div 
-                            onMouseDown={(e) => handleMouseDown('datetime', e)}
-                            onDoubleClick={() => handleDoubleClick('datetime', 170)}
-                            className="absolute right-0 top-0 bottom-0 w-1.5 cursor-col-resize hover:bg-red-500/40 active:bg-red-600 z-25"
-                          />
-                        </th>
-                      )}
-                      {visibleColumns.branch !== false && (
-                        <th 
-                          style={{ width: columnWidths.branch, minWidth: columnWidths.branch, maxWidth: columnWidths.branch }}
-                          className="py-2.5 px-3 relative"
-                        >
-                          Chi nhánh
-                          <div 
-                            onMouseDown={(e) => handleMouseDown('branch', e)}
-                            onDoubleClick={() => handleDoubleClick('branch', 160)}
-                            className="absolute right-0 top-0 bottom-0 w-1.5 cursor-col-resize hover:bg-red-500/40 active:bg-red-600 z-25"
-                          />
-                        </th>
-                      )}
-                      {visibleColumns.creator !== false && (
-                        <th 
-                          style={{ width: columnWidths.creator, minWidth: columnWidths.creator, maxWidth: columnWidths.creator }}
-                          className="py-2.5 px-3 relative"
-                        >
-                          Người tạo phiếu
-                          <div 
-                            onMouseDown={(e) => handleMouseDown('creator', e)}
-                            onDoubleClick={() => handleDoubleClick('creator', 160)}
-                            className="absolute right-0 top-0 bottom-0 w-1.5 cursor-col-resize hover:bg-red-500/40 active:bg-red-600 z-25"
-                          />
-                        </th>
-                      )}
-                      {visibleColumns.totalQty !== false && (
-                        <th 
-                          style={{ width: columnWidths.totalQty, minWidth: columnWidths.totalQty, maxWidth: columnWidths.totalQty }}
-                          className="py-2.5 px-3 text-right relative"
-                        >
-                          Tổng SL
-                          <div 
-                            onMouseDown={(e) => handleMouseDown('totalQty', e)}
-                            onDoubleClick={() => handleDoubleClick('totalQty', 90)}
-                            className="absolute right-0 top-0 bottom-0 w-1.5 cursor-col-resize hover:bg-red-500/40 active:bg-red-600 z-25"
-                          />
-                        </th>
-                      )}
-                      {visibleColumns.note !== false && (
-                        <th 
-                          style={{ width: columnWidths.note, minWidth: columnWidths.note, maxWidth: columnWidths.note }}
-                          className="py-2.5 px-3 relative"
-                        >
-                          Ghi chú tổng quan
-                          <div 
-                            onMouseDown={(e) => handleMouseDown('note', e)}
-                            onDoubleClick={() => handleDoubleClick('note', 200)}
-                            className="absolute right-0 top-0 bottom-0 w-1.5 cursor-col-resize hover:bg-red-500/40 active:bg-red-600 z-25"
-                          />
-                        </th>
-                      )}
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-100 bg-white">
-                    {filteredInvoices.map((h) => {
-                      const isSelected = h.HOA_DON === selectedInvoice;
-                      let badgeColor = 'bg-emerald-50 text-emerald-700 border-emerald-100';
-                      if (h.LOAI === 'XUẤT') badgeColor = 'bg-rose-50 text-rose-700 border-rose-100';
-                      if (h.LOAI === 'KIỂM KHO') badgeColor = 'bg-blue-50 text-blue-700 border-blue-100';
+              isGroupedByDate ? (
+                <div className="space-y-4 p-4">
+                  {Object.entries(groupedInvoicesByDate).map(([dateStr, anyInvoices]) => {
+                    const invoices = anyInvoices as NhapXuat[];
+                    const isExpanded = expandedDates[dateStr] !== false;
+                    const totalInvoices = invoices.length;
+                    const totalQty = invoices.reduce((sum, h) => sum + h.TONG_SL, 0);
 
-                      return (
-                        <tr
-                          key={h.HOA_DON}
-                          onClick={() => {
-                            setSelectedInvoice(h.HOA_DON);
-                            handleCancelEditRow();
-                            setShowAddRowForm(false);
-                          }}
-                          className={`cursor-pointer hover:bg-slate-50/75 transition-colors ${
-                            isSelected ? 'bg-blue-50/40 font-bold' : ''
-                          }`}
+                    // Format date to local standard DD/MM/YYYY
+                    const parts = dateStr.split('-');
+                    const formattedDate = parts.length === 3 ? `${parts[2]}/${parts[1]}/${parts[0]}` : dateStr;
+
+                    return (
+                      <div key={dateStr} className="border border-slate-150 rounded-xl overflow-hidden bg-white shadow-2xs">
+                        <button
+                          onClick={() => setExpandedDates(prev => ({ ...prev, [dateStr]: !isExpanded }))}
+                          className="w-full flex items-center justify-between bg-slate-50 hover:bg-slate-100/80 px-4 py-3 border-b border-slate-150 transition-all text-xs font-bold text-slate-700 cursor-pointer text-left"
                         >
-                          {visibleColumns.invoiceNo !== false && (
-                            <td className="py-3 px-3 font-mono font-bold text-slate-800 sticky left-0 bg-white z-10 shadow-[2px_0_5px_rgba(0,0,0,0.04)] border-r border-slate-200">
-                              {h.HOA_DON}
-                            </td>
-                          )}
-                          {visibleColumns.type !== false && (
-                            <td className="py-3 px-3">
-                              <span className={`text-[9px] font-bold py-0.5 px-2 rounded-full border uppercase tracking-wider ${badgeColor}`}>
-                                {h.LOAI}
-                              </span>
-                            </td>
-                          )}
-                          {visibleColumns.datetime !== false && (
-                            <td className="py-3 px-3 font-mono text-slate-500">
-                              {formatDateTime(h.TG_TAO || h.NGAY)}
-                            </td>
-                          )}
-                          {visibleColumns.branch !== false && (
-                            <td className="py-3 px-3 text-slate-700 font-semibold truncate" title={h.CHI_NHANH}>
-                              {h.CHI_NHANH}
-                            </td>
-                          )}
-                          {visibleColumns.creator !== false && (
-                            <td className="py-3 px-3 text-slate-600 font-medium truncate" title={h.TEN_NGUOI_TAO}>
-                              {h.TEN_NGUOI_TAO}
-                            </td>
-                          )}
-                          {visibleColumns.totalQty !== false && (
-                            <td className="py-3 px-3 text-right font-mono font-bold text-slate-750">
-                              {h.TONG_SL}
-                            </td>
-                          )}
-                          {visibleColumns.note !== false && (
-                            <td className="py-3 px-3 text-slate-400 italic truncate" title={h.GHI_CHU}>
-                              {h.GHI_CHU || '—'}
-                            </td>
-                          )}
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
+                          <div className="flex items-center gap-3">
+                            <span className="text-blue-600 font-extrabold text-xs font-mono">📅 Ngày {formattedDate}</span>
+                            <span className="bg-slate-200/80 text-slate-700 px-2 py-0.5 rounded-full text-[10px]">
+                              {totalInvoices} phiếu
+                            </span>
+                            <span className="bg-emerald-50 text-emerald-700 border border-emerald-150 px-2 py-0.5 rounded-full text-[10px]">
+                              Tổng {totalQty} SP
+                            </span>
+                          </div>
+                          <span className="text-slate-400 font-extrabold text-xs">
+                            {isExpanded ? '▲ Thu gọn' : '▼ Mở rộng'}
+                          </span>
+                        </button>
+
+                        {isExpanded && (
+                          <div className="overflow-x-auto">
+                            <table 
+                              className="w-full text-left text-xs border-collapse table-layout-fixed" 
+                              style={{ minWidth: tableMinWidth }}
+                            >
+                              <thead>
+                                <tr className="bg-slate-50 border-b border-slate-200 text-slate-400 text-[10px] uppercase font-bold select-none">
+                                  {columnOrder.map(colKey => {
+                                    if (visibleColumns[colKey] === false) return null;
+                                    const colDef = colDefinitions[colKey];
+                                    if (!colDef) return null;
+                                    return colDef.renderHeader(
+                                      columnWidths[colKey] || colDef.defaultWidth,
+                                      (e) => handleMouseDown(colKey, e),
+                                      () => handleDoubleClick(colKey, colDef.defaultWidth)
+                                    );
+                                  })}
+                                </tr>
+                              </thead>
+                              <tbody className="divide-y divide-slate-100 bg-white">
+                                {invoices.map((h) => {
+                                  const isSelected = h.HOA_DON === selectedInvoice;
+                                  let badgeColor = 'bg-emerald-50 text-emerald-700 border-emerald-100';
+                                  if (h.LOAI === 'XUẤT') badgeColor = 'bg-rose-50 text-rose-700 border-rose-100';
+                                  if (h.LOAI === 'KIỂM KHO') badgeColor = 'bg-blue-50 text-blue-700 border-blue-100';
+
+                                  return (
+                                    <tr
+                                      key={h.HOA_DON}
+                                      onClick={() => {
+                                        setSelectedInvoice(h.HOA_DON);
+                                        handleCancelEditRow();
+                                        setShowAddRowForm(false);
+                                      }}
+                                      className={`cursor-pointer hover:bg-slate-50/75 transition-colors ${
+                                        isSelected ? 'bg-blue-50/40 font-bold' : ''
+                                      }`}
+                                    >
+                                      {columnOrder.map(colKey => {
+                                        if (visibleColumns[colKey] === false) return null;
+                                        const colDef = colDefinitions[colKey];
+                                        if (!colDef) return null;
+                                        return colDef.renderCell(h, isSelected, badgeColor);
+                                      })}
+                                    </tr>
+                                  );
+                                })}
+                              </tbody>
+                            </table>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table 
+                    className="w-full text-left text-xs border-collapse table-layout-fixed" 
+                    style={{ minWidth: tableMinWidth }}
+                  >
+                    <thead>
+                      <tr className="bg-slate-50 border-b border-slate-200 text-slate-400 text-[10px] uppercase font-bold select-none">
+                        {columnOrder.map(colKey => {
+                          if (visibleColumns[colKey] === false) return null;
+                          const colDef = colDefinitions[colKey];
+                          if (!colDef) return null;
+                          return colDef.renderHeader(
+                            columnWidths[colKey] || colDef.defaultWidth,
+                            (e) => handleMouseDown(colKey, e),
+                            () => handleDoubleClick(colKey, colDef.defaultWidth)
+                          );
+                        })}
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100 bg-white">
+                      {filteredInvoices.map((h) => {
+                        const isSelected = h.HOA_DON === selectedInvoice;
+                        let badgeColor = 'bg-emerald-50 text-emerald-700 border-emerald-100';
+                        if (h.LOAI === 'XUẤT') badgeColor = 'bg-rose-50 text-rose-700 border-rose-100';
+                        if (h.LOAI === 'KIỂM KHO') badgeColor = 'bg-blue-50 text-blue-700 border-blue-100';
+
+                        return (
+                          <tr
+                            key={h.HOA_DON}
+                            onClick={() => {
+                              setSelectedInvoice(h.HOA_DON);
+                              handleCancelEditRow();
+                              setShowAddRowForm(false);
+                            }}
+                            className={`cursor-pointer hover:bg-slate-50/75 transition-colors ${
+                              isSelected ? 'bg-blue-50/40 font-bold' : ''
+                            }`}
+                          >
+                            {columnOrder.map(colKey => {
+                              if (visibleColumns[colKey] === false) return null;
+                              const colDef = colDefinitions[colKey];
+                              if (!colDef) return null;
+                              return colDef.renderCell(h, isSelected, badgeColor);
+                            })}
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )
             ) : (
               <div className="py-24 text-center text-xs text-slate-400 font-mono italic">
                 <FileText className="w-10 h-10 text-slate-200 mx-auto mb-2" />
