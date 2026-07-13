@@ -15,7 +15,8 @@ import { SanPham, NhapXuat, NhapXuatCT, KiemKho, ThươngHieu, ChiNhanh, NhanVie
 
 // 1. Khởi tạo danh mục Thương hiệu mặc định
 export const MOCK_THUONG_HIEU: ThươngHieu[] = [
-  { THUONG_HIEU: 'Blick', CHIET_XUAT_MAC_DINH: '1.56', TINH_NANG_MAC_DINH: 'ĐM', TINH_NANG: 'ĐM' },
+  { THUONG_HIEU: 'Blick', CHIET_XUAT_MAC_DINH: '1.56', TINH_NANG_MAC_DINH: 'ĐM', TINH_NANG: 'ĐM', SPH_TU: 0.00, SPH_DEN: -5.00, BUOC_NHAY: 0.25 },
+  { THUONG_HIEU: 'BLE', CHIET_XUAT_MAC_DINH: '1.56', TINH_NANG_MAC_DINH: 'ĐM', TINH_NANG: 'ĐM', SPH_TU: 0.00, SPH_DEN: -4.00, BUOC_NHAY: 0.25 },
   { THUONG_HIEU: 'Element', CHIET_XUAT_MAC_DINH: '1.56', TINH_NANG_MAC_DINH: 'ĐM', TINH_NANG: 'ĐM' },
   { THUONG_HIEU: 'Element', CHIET_XUAT_MAC_DINH: '1.56', TINH_NANG_MAC_DINH: 'ASX', TINH_NANG: 'ASX' },
   { THUONG_HIEU: 'Nikki', CHIET_XUAT_MAC_DINH: '1.56', TINH_NANG_MAC_DINH: 'ĐM', TINH_NANG: 'ĐM' },
@@ -88,9 +89,89 @@ export const MOCK_NHAN_VIEN: NhanVien[] = [
 
 // Hàm phụ để định dạng số thập phân độ cận/viễn/loạn thành dạng chuỗi hiển thị chuyên nghiệp (vd: -2.00, +1.25)
 export const formatDop = (val: number): string => {
-  if (val === 0) return '-0.00';
-  return val.toFixed(2);
+  if (val === 0 || Math.abs(val) < 0.0001) return '-0.00';
+  const fixed = val.toFixed(2);
+  if (fixed === '0.00' || fixed === '-0.00') return '-0.00';
+  if (val > 0) return `+${fixed}`;
+  return fixed;
 };
+
+/**
+ * Hàm sinh danh sách các tùy chọn SPH dựa trên phạm vi khai báo của thương hiệu / chiết suất
+ */
+export function generateSphOptions(
+  brandName: string,
+  chietXuat: string,
+  brandList: ThươngHieu[] = [],
+  diopterType: 'CẬN' | 'VIỄN' = 'CẬN'
+): number[] {
+  // 1. Tìm bản ghi thương hiệu khớp chính xác nhất
+  let matchedBrand = brandList.find(b => 
+    b.THUONG_HIEU.trim().toLowerCase() === brandName.trim().toLowerCase() &&
+    b.CHIET_XUAT_MAC_DINH && b.CHIET_XUAT_MAC_DINH.split(',').map(s => s.trim()).includes(chietXuat)
+  );
+  
+  if (!matchedBrand) {
+    matchedBrand = brandList.find(b => b.THUONG_HIEU.trim().toLowerCase() === brandName.trim().toLowerCase());
+  }
+
+  let range = { min: 0.00, max: -8.00, step: 0.25 };
+  let hasConfig = false;
+
+  if (matchedBrand && matchedBrand.SPH_TU !== undefined && matchedBrand.SPH_DEN !== undefined && matchedBrand.SPH_TU !== null && matchedBrand.SPH_DEN !== null) {
+    range = {
+      min: matchedBrand.SPH_TU,
+      max: matchedBrand.SPH_DEN,
+      step: matchedBrand.BUOC_NHAY ?? 0.25
+    };
+    hasConfig = true;
+  } else if (chietXuat === '1.56') {
+    range = { min: 0.00, max: -5.00, step: 0.25 };
+    hasConfig = true;
+  } else if (brandName.toUpperCase() === 'BLE') {
+    range = { min: 0.00, max: -4.00, step: 0.25 };
+    hasConfig = true;
+  }
+
+  if (hasConfig) {
+    const options: number[] = [];
+    const step = Math.abs(range.step || 0.25);
+    const start = range.min;
+    const end = range.max;
+    
+    if (start <= end) {
+      for (let s = start; s <= end + 0.0001; s += step) {
+        options.push(Number(s.toFixed(2)));
+      }
+    } else {
+      for (let s = start; s >= end - 0.0001; s -= step) {
+        options.push(Number(s.toFixed(2)));
+      }
+    }
+
+    // Lọc theo loại độ CẬN / VIỄN
+    if (diopterType === 'CẬN') {
+      const filtered = options.filter(v => v <= 0);
+      return filtered.length > 0 ? filtered : [0.00];
+    } else {
+      const filtered = options.filter(v => v > 0);
+      return filtered.length > 0 ? filtered : [0.75];
+    }
+  }
+
+  // Fallback mặc định chung hệ thống nếu không có cấu hình cụ thể nào
+  const options: number[] = [];
+  if (diopterType === 'CẬN') {
+    for (let s = 0.00; s >= -8.00; s -= 0.25) {
+      options.push(Number(s.toFixed(2)));
+    }
+  } else {
+    for (let s = 0.75; s <= 4.00; s += 0.25) {
+      options.push(Number(s.toFixed(2)));
+    }
+  }
+  return options;
+}
 
 /**
  * Hàm sinh mã SKU tự động chuẩn hóa dựa trên các tham số cấu thành tròng kính

@@ -158,6 +158,22 @@ export async function tryCreateColumnsOnSupabase() {
       EXCEPTION WHEN others THEN NULL;
       END;
 
+      -- Thêm các cột cho b_thuonghieu
+      BEGIN
+        ALTER TABLE b_thuonghieu ADD COLUMN IF NOT EXISTS "SPH_TU" numeric;
+      EXCEPTION WHEN others THEN NULL;
+      END;
+
+      BEGIN
+        ALTER TABLE b_thuonghieu ADD COLUMN IF NOT EXISTS "SPH_DEN" numeric;
+      EXCEPTION WHEN others THEN NULL;
+      END;
+
+      BEGIN
+        ALTER TABLE b_thuonghieu ADD COLUMN IF NOT EXISTS "BUOC_NHAY" numeric DEFAULT 0.25;
+      EXCEPTION WHEN others THEN NULL;
+      END;
+
       -- Tạo bảng b_emaillog nếu chưa có để lưu nhật ký email gửi đi
       BEGIN
         CREATE TABLE IF NOT EXISTS public.b_emaillog (
@@ -504,7 +520,10 @@ export async function fetchAllUserData(userId: string): Promise<UserDataPayload>
     THUONG_HIEU: item.THUONG_HIEU,
     CHIET_XUAT_MAC_DINH: item.CHIET_XUAT_MAC_DINH,
     TINH_NANG_MAC_DINH: item.TINH_NANG_MAC_DINH,
-    TINH_NANG: item.TINH_NANG_MAC_DINH || ''
+    TINH_NANG: item.TINH_NANG_MAC_DINH || '',
+    SPH_TU: item.SPH_TU !== null && item.SPH_TU !== undefined ? Number(item.SPH_TU) : undefined,
+    SPH_DEN: item.SPH_DEN !== null && item.SPH_DEN !== undefined ? Number(item.SPH_DEN) : undefined,
+    BUOC_NHAY: item.BUOC_NHAY !== null && item.BUOC_NHAY !== undefined ? Number(item.BUOC_NHAY) : undefined
   }));
 
   const chiNhanhs: ChiNhanh[] = (resChiNhanhs.data || []).map(item => ({
@@ -838,6 +857,9 @@ export async function syncThuongHieu(t: ThươngHieu, userId: string) {
       "THUONG_HIEU": t.THUONG_HIEU,
       "CHIET_XUAT_MAC_DINH": t.CHIET_XUAT_MAC_DINH,
       "TINH_NANG_MAC_DINH": t.TINH_NANG_MAC_DINH,
+      "SPH_TU": t.SPH_TU !== undefined ? t.SPH_TU : null,
+      "SPH_DEN": t.SPH_DEN !== undefined ? t.SPH_DEN : null,
+      "BUOC_NHAY": t.BUOC_NHAY !== undefined ? t.BUOC_NHAY : null,
       user_id: userId
     };
 

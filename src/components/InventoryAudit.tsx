@@ -25,7 +25,7 @@ import {
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { SanPham, KiemKho, User as UserType, ThươngHieu } from '../types';
-import { generateSKUString, formatDop, getVietnamDateString, getVietnamDateTimeString } from '../data/mockData';
+import { generateSKUString, formatDop, getVietnamDateString, getVietnamDateTimeString, generateSphOptions } from '../data/mockData';
 
 /**
  * FILE: InventoryAudit.tsx
@@ -209,28 +209,24 @@ export default function InventoryAudit({
     }
   };
 
-  // Tính toán SPH options (Cận hoặc Viễn)
+  // Tính toán SPH options dựa trên phạm vi đã cấu hình của thương hiệu / chiết suất đang chọn
   const sphOptions = useMemo(() => {
-    const opts: number[] = [];
-    if (selectDoSphType === 'CẬN') {
-      for (let i = 0; i >= -8.00; i -= 0.25) {
-        opts.push(Number(i.toFixed(2)));
-      }
-    } else {
-      for (let i = 0.75; i <= 4.00; i += 0.25) {
-        opts.push(Number(i.toFixed(2)));
-      }
-    }
-    return opts;
-  }, [selectDoSphType]);
+    return generateSphOptions(selectBrand, selectChietXuat, brandList || [], selectDoSphType);
+  }, [selectBrand, selectChietXuat, brandList, selectDoSphType]);
 
   useEffect(() => {
-    if (selectDoSphType === 'CẬN') {
-      setSelectDoSph(-2.00);
-    } else {
-      setSelectDoSph(1.50);
+    if (sphOptions.length > 0) {
+      if (!sphOptions.includes(selectDoSph)) {
+        if (selectDoSphType === 'CẬN' && sphOptions.includes(-2.00)) {
+          setSelectDoSph(-2.00);
+        } else if (selectDoSphType === 'VIỄN' && sphOptions.includes(1.50)) {
+          setSelectDoSph(1.50);
+        } else {
+          setSelectDoSph(sphOptions[0]);
+        }
+      }
     }
-  }, [selectDoSphType]);
+  }, [sphOptions, selectDoSph, selectDoSphType]);
 
   // Tính toán CYL options
   const cylOptions = useMemo(() => {
@@ -629,7 +625,7 @@ export default function InventoryAudit({
                   className="w-full text-xs font-bold text-slate-700 bg-slate-50 border border-slate-150 p-2.5 rounded-lg font-mono focus:outline-hidden"
                 >
                   {sphOptions.map((v) => (
-                    <option key={v} value={v}>{v > 0 ? `+${v.toFixed(2)}` : v.toFixed(2)}</option>
+                    <option key={v} value={v}>{formatDop(v)}</option>
                   ))}
                 </select>
               </div>
@@ -643,7 +639,7 @@ export default function InventoryAudit({
                   className="w-full text-xs font-bold text-slate-700 bg-slate-50 border border-slate-150 p-2.5 rounded-lg font-mono focus:outline-hidden"
                 >
                   {cylOptions.map((v) => (
-                    <option key={v} value={v}>{v.toFixed(2)}</option>
+                    <option key={v} value={v}>{formatDop(v)}</option>
                   ))}
                 </select>
               </div>

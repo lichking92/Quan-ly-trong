@@ -25,7 +25,8 @@ import {
   Palette,
   ChevronLeft,
   ChevronRight,
-  RefreshCw
+  RefreshCw,
+  LayoutGrid
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 
@@ -70,6 +71,7 @@ import InventoryAudit from './components/InventoryAudit';
 import TransactionHistory from './components/TransactionHistory';
 import CategoryManagement from './components/CategoryManagement';
 import ThemeSettings from './components/ThemeSettings';
+import DiopterMatrix from './components/DiopterMatrix';
 
 
 /**
@@ -1193,7 +1195,10 @@ export default function App() {
 
   const handleUpdateThuongHieu = async (oldName: string, oldFeature: string, brand: ThươngHieu) => {
     const brandFeature = brand.TINH_NANG || brand.TINH_NANG_MAC_DINH || '';
-    setThuongHieus(prev => prev.map(t => (t.THUONG_HIEU === oldName && (t.TINH_NANG || t.TINH_NANG_MAC_DINH || '') === oldFeature) ? brand : t));
+    setThuongHieus(prev => {
+      const filtered = prev.filter(t => t.THUONG_HIEU !== oldName);
+      return [...filtered, brand];
+    });
     
     // Cập nhật sản phẩm nếu thương hiệu hoặc tính năng thay đổi
     if (oldName !== brand.THUONG_HIEU || oldFeature !== brandFeature) {
@@ -1720,6 +1725,18 @@ export default function App() {
             {!sidebarCollapsed && <span>Sản phẩm</span>}
           </button>
 
+          {/* TAB 4B: BẢNG ĐỘ */}
+          <button
+            onClick={() => selectTabOnMobile('MATRIX')}
+            className={`w-full py-2.5 px-3.5 text-xs font-bold rounded-xl transition-all flex items-center gap-2.5 cursor-pointer ${sidebarCollapsed ? 'justify-center px-0' : ''} ${
+              activeTab === 'MATRIX' ? activeButtonClass : sidebarStyle.navDefault
+            }`}
+            title={sidebarCollapsed ? "Bảng Độ" : undefined}
+          >
+            <LayoutGrid className="w-4 h-4 shrink-0 text-rose-500" /> 
+            {!sidebarCollapsed && <span>Bảng Độ (Ma Trận)</span>}
+          </button>
+
           {/* TAB 5: KIỂM KHO */}
           {currentUser.role !== 'NHAN_VIEN' && (
             <button
@@ -1932,6 +1949,19 @@ export default function App() {
                   currentUser={currentUser}
                   sanPhams={sanPhams}
                   onAddProduct={handleAddProduct}
+                  thuongHieus={listBrandNames}
+                  brandList={thuongHieus}
+                />
+              )}
+
+              {activeTab === 'MATRIX' && (
+                <DiopterMatrix 
+                  currentUser={currentUser}
+                  sanPhams={sanPhams}
+                  nhapXuats={nhapXuats}
+                  nhapXuatCTs={nhapXuatCTs}
+                  kiemKhos={kiemKhos}
+                  chiNhanhs={listBranchNames}
                   thuongHieus={listBrandNames}
                   brandList={thuongHieus}
                 />

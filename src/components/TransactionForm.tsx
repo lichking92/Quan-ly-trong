@@ -27,7 +27,7 @@ import {
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { SanPham, NhapXuat, NhapXuatCT, LoaiPhieu, User as UserType, ThươngHieu } from '../types';
-import { generateSKUString, formatDop, getVietnamDateString, getVietnamDateTimeString } from '../data/mockData';
+import { generateSKUString, formatDop, getVietnamDateString, getVietnamDateTimeString, generateSphOptions } from '../data/mockData';
 
 /**
  * FILE: TransactionForm.tsx
@@ -255,28 +255,25 @@ export default function TransactionForm({
     }
   };
 
-  // Độ cận: -0.00 đến -8.00 | Độ viễn: +0.75 đến +4.00 (bước nhảy 0.25)
+  // Độ cầu SPH: Lấy theo cấu hình phạm vi của thương hiệu / chiết suất đang chọn
   const sphOptions = useMemo(() => {
-    const opts: number[] = [];
-    if (selectDoSphType === 'CẬN') {
-      for (let i = 0; i >= -8.00; i -= 0.25) {
-        opts.push(Number(i.toFixed(2)));
-      }
-    } else {
-      for (let i = 0.75; i <= 4.00; i += 0.25) {
-        opts.push(Number(i.toFixed(2)));
-      }
-    }
-    return opts;
-  }, [selectDoSphType]);
+    return generateSphOptions(selectBrand, selectChietXuat, brandList || [], selectDoSphType);
+  }, [selectBrand, selectChietXuat, brandList, selectDoSphType]);
 
   useEffect(() => {
-    if (selectDoSphType === 'CẬN') {
-      setSelectDoSph(-2.00);
-    } else {
-      setSelectDoSph(1.50);
+    if (sphOptions.length > 0) {
+      if (!sphOptions.includes(selectDoSph)) {
+        // Mặc định chọn phần tử có sẵn phù hợp hoặc phần tử đầu tiên
+        if (selectDoSphType === 'CẬN' && sphOptions.includes(-2.00)) {
+          setSelectDoSph(-2.00);
+        } else if (selectDoSphType === 'VIỄN' && sphOptions.includes(1.50)) {
+          setSelectDoSph(1.50);
+        } else {
+          setSelectDoSph(sphOptions[0]);
+        }
+      }
     }
-  }, [selectDoSphType]);
+  }, [sphOptions, selectDoSph, selectDoSphType]);
 
   // Độ loạn: -0.00 đến -2.00 (bước nhảy 0.25)
   const cylOptions = useMemo(() => {

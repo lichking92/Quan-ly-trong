@@ -22,6 +22,7 @@ import {
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { ThươngHieu, ChiNhanh, NhanVien, UserRole, EmailLog } from '../types';
+import { formatDop } from '../data/mockData';
 
 /**
  * FILE: CategoryManagement.tsx
@@ -70,14 +71,24 @@ export default function CategoryManagement({
   const [viewingEmailLog, setViewingEmailLog] = useState<EmailLog | null>(null);
   
   const consolidatedBrandsList = useMemo(() => {
-    const mergedMap = new Map<string, { chietXuats: Set<string>; features: Set<string> }>();
+    const mergedMap = new Map<string, { chietXuats: Set<string>; features: Set<string>; SPH_TU?: number; SPH_DEN?: number; BUOC_NHAY?: number }>();
     thuongHieus.forEach(b => {
       const key = b.THUONG_HIEU.trim();
       if (!mergedMap.has(key)) {
-        mergedMap.set(key, { chietXuats: new Set(), features: new Set() });
+        mergedMap.set(key, { 
+          chietXuats: new Set(), 
+          features: new Set(),
+          SPH_TU: b.SPH_TU,
+          SPH_DEN: b.SPH_DEN,
+          BUOC_NHAY: b.BUOC_NHAY
+        });
       }
       const val = mergedMap.get(key)!;
       
+      if (b.SPH_TU !== undefined) val.SPH_TU = b.SPH_TU;
+      if (b.SPH_DEN !== undefined) val.SPH_DEN = b.SPH_DEN;
+      if (b.BUOC_NHAY !== undefined) val.BUOC_NHAY = b.BUOC_NHAY;
+
       if (b.CHIET_XUAT_MAC_DINH) {
         b.CHIET_XUAT_MAC_DINH.split(',').map(s => s.trim()).filter(Boolean).forEach(c => val.chietXuats.add(c));
       }
@@ -94,7 +105,10 @@ export default function CategoryManagement({
         THUONG_HIEU: name,
         CHIET_XUAT_MAC_DINH: cxList.length > 0 ? cxList.join(',') : '1.56',
         TINH_NANG_MAC_DINH: fnList.length > 0 ? fnList.join(',') : 'ASX',
-        TINH_NANG: fnList.length > 0 ? fnList.join(',') : 'ASX'
+        TINH_NANG: fnList.length > 0 ? fnList.join(',') : 'ASX',
+        SPH_TU: val.SPH_TU,
+        SPH_DEN: val.SPH_DEN,
+        BUOC_NHAY: val.BUOC_NHAY
       };
     });
   }, [thuongHieus]);
@@ -152,6 +166,9 @@ export default function CategoryManagement({
   const [newBrandChietXuats, setNewBrandChietXuats] = useState<string[]>([]);
   const [featureInput, setFeatureInput] = useState<string>('');
   const [chietXuatInput, setChietXuatInput] = useState<string>('');
+  const [newBrandSphTu, setNewBrandSphTu] = useState<string>('');
+  const [newBrandSphDen, setNewBrandSphDen] = useState<string>('');
+  const [newBrandBuocNhay, setNewBrandBuocNhay] = useState<string>('0.25');
 
   // Form Chi nhánh
   const [newBranchName, setNewBranchName] = useState<string>('');
@@ -233,7 +250,10 @@ export default function CategoryManagement({
       THUONG_HIEU: newBrandName.trim(),
       CHIET_XUAT_MAC_DINH: newBrandChietXuats.join(','),
       TINH_NANG_MAC_DINH: newBrandFeatures.join(','),
-      TINH_NANG: newBrandFeatures.join(',')
+      TINH_NANG: newBrandFeatures.join(','),
+      SPH_TU: newBrandSphTu.trim() !== '' ? Number(newBrandSphTu) : undefined,
+      SPH_DEN: newBrandSphDen.trim() !== '' ? Number(newBrandSphDen) : undefined,
+      BUOC_NHAY: newBrandBuocNhay.trim() !== '' ? Number(newBrandBuocNhay) : 0.25
     };
 
     onAddThuongHieu(brandRecord);
@@ -260,6 +280,9 @@ export default function CategoryManagement({
     setNewBrandName(brand.THUONG_HIEU);
     setNewBrandFeatures(features);
     setNewBrandChietXuats(chietXuats);
+    setNewBrandSphTu(brand.SPH_TU !== undefined && brand.SPH_TU !== null ? String(brand.SPH_TU) : '');
+    setNewBrandSphDen(brand.SPH_DEN !== undefined && brand.SPH_DEN !== null ? String(brand.SPH_DEN) : '');
+    setNewBrandBuocNhay(brand.BUOC_NHAY !== undefined && brand.BUOC_NHAY !== null ? String(brand.BUOC_NHAY) : '0.25');
     setFeatureInput('');
     setChietXuatInput('');
   };
@@ -289,7 +312,10 @@ export default function CategoryManagement({
       THUONG_HIEU: newBrandName.trim(),
       CHIET_XUAT_MAC_DINH: newBrandChietXuats.join(','),
       TINH_NANG_MAC_DINH: newBrandFeatures.join(','),
-      TINH_NANG: newBrandFeatures.join(',')
+      TINH_NANG: newBrandFeatures.join(','),
+      SPH_TU: newBrandSphTu.trim() !== '' ? Number(newBrandSphTu) : undefined,
+      SPH_DEN: newBrandSphDen.trim() !== '' ? Number(newBrandSphDen) : undefined,
+      BUOC_NHAY: newBrandBuocNhay.trim() !== '' ? Number(newBrandBuocNhay) : 0.25
     };
 
     onUpdateThuongHieu(editingBrand.oldName, editingBrand.oldFeature, updatedBrand);
@@ -303,6 +329,9 @@ export default function CategoryManagement({
     setNewBrandName('');
     setNewBrandFeatures([]);
     setNewBrandChietXuats([]);
+    setNewBrandSphTu('');
+    setNewBrandSphDen('');
+    setNewBrandBuocNhay('0.25');
     setFeatureInput('');
     setChietXuatInput('');
   };
@@ -732,6 +761,46 @@ export default function CategoryManagement({
                     </div>
                   </div>
 
+                  {/* Cấu hình phạm vi độ cầu (SPH) */}
+                  <div className="space-y-1.5 border-t border-slate-50 pt-2">
+                    <label className="text-[10px] uppercase font-bold text-slate-400">Phạm vi Độ cầu (SPH)</label>
+                    <div className="grid grid-cols-3 gap-2">
+                      <div className="space-y-1">
+                        <span className="text-[9px] text-slate-400 font-bold block">Độ cầu từ</span>
+                        <input
+                          type="number"
+                          step="0.25"
+                          placeholder="ví dụ: 0.00"
+                          value={newBrandSphTu}
+                          onChange={(e) => setNewBrandSphTu(e.target.value)}
+                          className="w-full text-xs font-semibold text-slate-700 bg-slate-50 border border-slate-100 rounded-lg p-2 font-mono focus:outline-hidden focus:ring-2 focus:ring-blue-500/10"
+                        />
+                      </div>
+                      <div className="space-y-1">
+                        <span className="text-[9px] text-slate-400 font-bold block">Độ cầu đến</span>
+                        <input
+                          type="number"
+                          step="0.25"
+                          placeholder="ví dụ: -4.00"
+                          value={newBrandSphDen}
+                          onChange={(e) => setNewBrandSphDen(e.target.value)}
+                          className="w-full text-xs font-semibold text-slate-700 bg-slate-50 border border-slate-100 rounded-lg p-2 font-mono focus:outline-hidden focus:ring-2 focus:ring-blue-500/10"
+                        />
+                      </div>
+                      <div className="space-y-1">
+                        <span className="text-[9px] text-slate-400 font-bold block">Bước nhảy</span>
+                        <input
+                          type="number"
+                          step="0.01"
+                          placeholder="mặc định 0.25"
+                          value={newBrandBuocNhay}
+                          onChange={(e) => setNewBrandBuocNhay(e.target.value)}
+                          className="w-full text-xs font-semibold text-slate-700 bg-slate-50 border border-slate-100 rounded-lg p-2 font-mono focus:outline-hidden focus:ring-2 focus:ring-blue-500/10"
+                        />
+                      </div>
+                    </div>
+                  </div>
+
                   <div className="flex gap-2 border-t border-slate-50 pt-3">
                     {editingBrand ? (
                       <>
@@ -789,7 +858,14 @@ export default function CategoryManagement({
                       return (
                         <tr key={`${b.THUONG_HIEU}-${index}`} className="hover:bg-slate-50/50 transition-colors">
                           <td className="py-3 px-4 font-mono text-slate-400">{index + 1}</td>
-                          <td className="py-3 px-4 font-bold text-slate-700">{b.THUONG_HIEU}</td>
+                          <td className="py-3 px-4">
+                            <div className="font-bold text-slate-700">{b.THUONG_HIEU}</div>
+                            {b.SPH_TU !== undefined && b.SPH_DEN !== undefined && (
+                              <div className="text-[10px] text-slate-400 font-mono mt-0.5">
+                                SPH: {formatDop(b.SPH_TU)} → {formatDop(b.SPH_DEN)} (bước {b.BUOC_NHAY ?? 0.25})
+                              </div>
+                            )}
+                          </td>
                           <td className="py-3 px-4 text-center">
                             <div className="flex flex-wrap justify-center gap-1">
                               {chietXuats.map(cx => (

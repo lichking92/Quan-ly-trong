@@ -99,6 +99,9 @@ export interface ThươngHieu {
   CHIET_XUAT_MAC_DINH?: string; // Cấu hình chiết suất mặc định cho thương hiệu này
   TINH_NANG_MAC_DINH?: string;  // Cấu hình tính năng mặc định cho thương hiệu này
   TINH_NANG?: string;           // Tính năng riêng biệt của dòng thương hiệu này (Ví dụ: ĐM, ASX, Đổi màu)
+  SPH_TU?: number;              // Độ cầu từ
+  SPH_DEN?: number;             // Độ cầu đến
+  BUOC_NHAY?: number;           // Bước nhảy (mặc định 0.25)
 }
 
 // B_CHINHANH: Danh mục chi nhánh / kho hàng trực thuộc hệ thống cửa hàng
