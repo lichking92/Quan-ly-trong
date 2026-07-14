@@ -26,7 +26,8 @@ import {
   ChevronLeft,
   ChevronRight,
   RefreshCw,
-  LayoutGrid
+  LayoutGrid,
+  MessageSquare
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 
@@ -74,6 +75,7 @@ import TransactionHistory from './components/TransactionHistory';
 import CategoryManagement from './components/CategoryManagement';
 import ThemeSettings from './components/ThemeSettings';
 import DiopterMatrix from './components/DiopterMatrix';
+import OrderParser from './components/OrderParser';
 
 
 
@@ -476,6 +478,7 @@ export default function App() {
   const [successToast, setSuccessToast] = useState<{ message: string } | null>(null);
   const [sidebarCollapsed, setSidebarCollapsed] = useState<boolean>(false);
   const [prefilledSku, setPrefilledSku] = useState<string | null>(null);
+  const [prefilledCartItems, setPrefilledCartItems] = useState<{ sku: string; soLuong: number; }[] | null>(null);
 
   useEffect(() => {
     if (currentUser) {
@@ -1909,6 +1912,18 @@ export default function App() {
         {/* CÁC TABS ĐIỀU HƯỚNG DỌC (Nav Tab bên trái) */}
         <nav className="flex-1 px-3 space-y-1 overflow-y-auto">
           
+          {/* TAB 0: KIỂM TRA ĐƠN TIN NHẮN */}
+          <button
+            onClick={() => selectTabOnMobile('ORDER_PARSER')}
+            className={`w-full py-2.5 px-3.5 text-xs font-bold rounded-xl transition-all flex items-center gap-2.5 cursor-pointer ${sidebarCollapsed ? 'justify-center px-0' : ''} ${
+              activeTab === 'ORDER_PARSER' ? activeButtonClass : sidebarStyle.navDefault
+            }`}
+            title={sidebarCollapsed ? "Kiểm Tra Đơn" : undefined}
+          >
+            <MessageSquare className="w-4 h-4 shrink-0 text-indigo-500" /> 
+            {!sidebarCollapsed && <span>Kiểm Tra Đơn</span>}
+          </button>
+
           {/* TAB 1: LẬP PHIẾU XUẤT */}
           <button
             onClick={() => selectTabOnMobile('TRANSACTION_XUAT')}
@@ -2202,6 +2217,17 @@ export default function App() {
                 />
               )}
 
+              {activeTab === 'ORDER_PARSER' && (
+                <OrderParser 
+                  sanPhams={sanPhams}
+                  brandList={thuongHieus}
+                  onCreateXuatPhieu={(items) => {
+                    setPrefilledCartItems(items);
+                    setActiveTab('TRANSACTION_XUAT');
+                  }}
+                />
+              )}
+
               {activeTab === 'TRANSACTION_XUAT' && (
                 <TransactionForm 
                   currentUser={currentUser}
@@ -2212,6 +2238,8 @@ export default function App() {
                   loaiPhieuMacDinh="XUẤT"
                   prefilledSku={prefilledSku || undefined}
                   onClearPrefilledSku={() => setPrefilledSku(null)}
+                  prefilledCartItems={prefilledCartItems || undefined}
+                  onClearPrefilledCartItems={() => setPrefilledCartItems(null)}
                   onSaveTransaction={handleSaveTransaction}
                   onNavigateToHistory={() => setActiveTab('HISTORY')}
                 />

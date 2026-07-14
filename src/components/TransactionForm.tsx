@@ -46,6 +46,8 @@ interface TransactionFormProps {
   loaiPhieuMacDinh: 'NHẬP' | 'XUẤT';
   prefilledSku?: string;
   onClearPrefilledSku?: () => void;
+  prefilledCartItems?: { sku: string; soLuong: number; }[];
+  onClearPrefilledCartItems?: () => void;
   onSaveTransaction: (header: NhapXuat, details: NhapXuatCT[]) => void;
   onNavigateToHistory: () => void;
   onTriggerToast?: (message: string) => void;
@@ -75,6 +77,8 @@ export default function TransactionForm({
   loaiPhieuMacDinh,
   prefilledSku,
   onClearPrefilledSku,
+  prefilledCartItems,
+  onClearPrefilledCartItems,
   onSaveTransaction,
   onNavigateToHistory,
   onTriggerToast
@@ -148,6 +152,41 @@ export default function TransactionForm({
       }
     }
   }, [prefilledSku, sanPhams, onClearPrefilledSku]);
+
+  // Tự động điền hàng loạt sản phẩm khi được chuyển từ "Kiểm tra đơn hàng"
+  useEffect(() => {
+    if (prefilledCartItems && prefilledCartItems.length > 0) {
+      const newItems: CartItem[] = [];
+      prefilledCartItems.forEach((item, idx) => {
+        const found = sanPhams.find(p => p.SKU.toUpperCase() === item.sku.toUpperCase());
+        if (found) {
+          newItems.push({
+            id: `CART_${Date.now()}_${idx}_${Math.random().toString(36).substr(2, 5)}`,
+            sku: found.SKU,
+            tenSp: found.TEN_SAN_PHAM,
+            thuongHieu: found.THUONG_HIEU,
+            chietXuat: found.CHIET_XUAT,
+            tinhNang: found.TINH_NANG,
+            sph: found.CAN,
+            cyl: found.LOAN,
+            soLuong: item.soLuong,
+            dvt: found.DVT,
+            ghiChu: 'Phân tích tự động từ tin nhắn'
+          });
+        }
+      });
+      if (newItems.length > 0) {
+        setCart(newItems);
+        setLoaiPhieu('XUẤT'); // Luôn chuyển sang phiếu xuất theo yêu cầu nghiệp vụ
+        setErrorMsg('');
+        setSuccessMsg(`Đã tự động thêm ${newItems.length} sản phẩm từ đơn hàng tin nhắn vào Phiếu Xuất.`);
+        setTimeout(() => setSuccessMsg(''), 6000);
+      }
+      if (onClearPrefilledCartItems) {
+        onClearPrefilledCartItems();
+      }
+    }
+  }, [prefilledCartItems, sanPhams, onClearPrefilledCartItems]);
 
   // Chế độ tìm kiếm nhanh / Quét barcode giả lập
   const [isBarcodeMode, setIsBarcodeMode] = useState<boolean>(false);
@@ -410,6 +449,32 @@ export default function TransactionForm({
     setCart(prev => prev.filter(item => item.id !== id));
   };
 
+  // Cập nhật số lượng cho dòng sản phẩm trong giỏ hàng chờ trực tiếp
+  const handleUpdateCartItemQty = (id: string, newQty: number) => {
+    const finalQty = Math.max(1, newQty);
+    setCart(prev => prev.map(item => {
+      if (item.id === id) {
+        return { ...item, soLuong: finalQty };
+      }
+      return item;
+    }));
+  };
+
+  // Phân tích lỗi vượt tồn kho cho từng dòng sản phẩm
+  const cartItemStockErrors = useMemo(() => {
+    const errors: Record<string, string> = {};
+    cart.forEach(item => {
+      if (loaiPhieu === 'XUẤT') {
+        const prod = sanPhams.find(p => p.SKU.toUpperCase() === item.sku.toUpperCase());
+        const stock = prod ? prod.TON_CUOI : 0;
+        if (item.soLuong > stock) {
+          errors[item.id] = `Yêu cầu (${item.soLuong} miếng) vượt quá tồn kho hiện có (${stock} miếng).`;
+        }
+      }
+    });
+    return errors;
+  }, [cart, sanPhams, loaiPhieu]);
+
   // --- 8. NGHIỆP VỤ LƯU TOÀN BỘ PHIẾU GIAO DỊCH (HOÀN THÀNH & LƯU) ---
   const handleCompleteTransaction = () => {
     setErrorMsg('');
@@ -426,6 +491,15 @@ export default function TransactionForm({
     if (cart.length === 0) {
       setErrorMsg('Lỗi: Bạn chưa chọn bất kỳ sản phẩm nào để tạo phiếu.');
       return;
+    }
+
+    // Kiểm tra không cho xuất âm kho dồn dính
+    if (loaiPhieu === 'XUẤT') {
+      const hasErrors = Object.keys(cartItemStockErrors).length > 0;
+      if (hasErrors) {
+        setErrorMsg('Lỗi nghiêm trọng (Rule 1): Có sản phẩm trong phiếu xuất vượt quá tồn kho thực tế khả dụng. Vui lòng điều chỉnh lại số lượng trước khi lưu phiếu.');
+        return;
+      }
     }
 
     // Giả lập khóa LockService bằng Code xử lý bất đồng bộ
@@ -950,23 +1024,38 @@ export default function TransactionForm({
                           <p className="text-[9px] font-mono font-bold text-slate-400">{idx + 1}. {item.sku}</p>
                           <p className="text-xs font-bold text-slate-700 truncate">{item.tenSp}</p>
                           <p className="text-[10px] text-slate-400 italic">Ghi chú: {item.ghiChu}</p>
+                          {cartItemStockErrors[item.id] && (
+                            <p className="text-[10px] text-rose-600 font-bold flex items-center gap-1 animate-pulse">
+                              <AlertCircle className="w-3 h-3 shrink-0" />
+                              {cartItemStockErrors[item.id]}
+                            </p>
+                          )}
                         </div>
                         <div className="flex items-center gap-2">
                           <div className="flex items-center gap-1 bg-white border border-slate-200 rounded-lg p-1 scale-90">
                             <button
                               type="button"
                               onClick={() => {
-                                setCart(prev => prev.map(c => c.id === item.id ? { ...c, soLuong: Math.max(1, c.soLuong - 1) } : c));
+                                handleUpdateCartItemQty(item.id, item.soLuong - 1);
                               }}
                               className="w-5 h-5 flex items-center justify-center text-xs font-bold text-slate-500"
                             >
                               -
                             </button>
-                            <span className="text-xs font-bold font-mono text-slate-700 px-1.5">{item.soLuong}</span>
+                            <input
+                              type="number"
+                              min={1}
+                              value={item.soLuong}
+                              onChange={(e) => {
+                                const val = parseInt(e.target.value, 10);
+                                handleUpdateCartItemQty(item.id, isNaN(val) ? 1 : val);
+                              }}
+                              className="w-10 text-center text-xs font-bold text-slate-700 bg-transparent font-mono focus:outline-hidden [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                            />
                             <button
                               type="button"
                               onClick={() => {
-                                setCart(prev => prev.map(c => c.id === item.id ? { ...c, soLuong: c.soLuong + 1 } : c));
+                                handleUpdateCartItemQty(item.id, item.soLuong + 1);
                               }}
                               className="w-5 h-5 flex items-center justify-center text-xs font-bold text-slate-500"
                             >
@@ -1571,9 +1660,44 @@ export default function TransactionForm({
                         {item.sku}
                       </span>
                     </td>
-                    <td className="py-3 px-4 text-xs font-semibold text-slate-800">{item.tenSp}</td>
-                    <td className="py-3 px-4 text-center font-bold text-xs text-blue-600 font-mono">
-                      {item.soLuong} {item.dvt}
+                    <td className="py-3 px-4">
+                      <div className="space-y-1">
+                        <div className="text-xs font-semibold text-slate-800">{item.tenSp}</div>
+                        {cartItemStockErrors[item.id] && (
+                          <div className="text-[10px] text-rose-600 font-bold flex items-center gap-1 animate-pulse">
+                            <AlertCircle className="w-3.5 h-3.5 shrink-0" />
+                            {cartItemStockErrors[item.id]}
+                          </div>
+                        )}
+                      </div>
+                    </td>
+                    <td className="py-3 px-4 text-center">
+                      <div className="inline-flex items-center justify-center gap-1.5 bg-slate-50 border border-slate-200/80 rounded-xl p-1 shadow-2xs">
+                        <button
+                          type="button"
+                          onClick={() => handleUpdateCartItemQty(item.id, item.soLuong - 1)}
+                          className="w-6 h-6 flex items-center justify-center bg-white border border-slate-200 text-slate-600 rounded-lg hover:bg-slate-100 font-bold text-xs cursor-pointer transition-colors"
+                        >
+                          -
+                        </button>
+                        <input
+                          type="number"
+                          min={1}
+                          value={item.soLuong}
+                          onChange={(e) => {
+                            const val = parseInt(e.target.value, 10);
+                            handleUpdateCartItemQty(item.id, isNaN(val) ? 1 : val);
+                          }}
+                          className="w-12 text-center text-xs font-bold text-slate-700 bg-transparent font-mono focus:outline-hidden [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => handleUpdateCartItemQty(item.id, item.soLuong + 1)}
+                          className="w-6 h-6 flex items-center justify-center bg-white border border-slate-200 text-slate-600 rounded-lg hover:bg-slate-100 font-bold text-xs cursor-pointer transition-colors"
+                        >
+                          +
+                        </button>
+                      </div>
                     </td>
                     <td className="py-3 px-4 text-xs text-slate-500 font-medium italic">{item.ghiChu}</td>
                     <td className="py-3 px-4 text-center">
