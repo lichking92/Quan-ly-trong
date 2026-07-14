@@ -280,8 +280,8 @@ export default function CategoryManagement({
     setNewBrandName(brand.THUONG_HIEU);
     setNewBrandFeatures(features);
     setNewBrandChietXuats(chietXuats);
-    setNewBrandSphTu(brand.SPH_TU !== undefined && brand.SPH_TU !== null ? String(brand.SPH_TU) : '');
-    setNewBrandSphDen(brand.SPH_DEN !== undefined && brand.SPH_DEN !== null ? String(brand.SPH_DEN) : '');
+    setNewBrandSphTu(brand.SPH_TU !== undefined && brand.SPH_TU !== null ? String(brand.SPH_TU) : '0');
+    setNewBrandSphDen(brand.SPH_DEN !== undefined && brand.SPH_DEN !== null ? String(brand.SPH_DEN) : '-8');
     setNewBrandBuocNhay(brand.BUOC_NHAY !== undefined && brand.BUOC_NHAY !== null ? String(brand.BUOC_NHAY) : '0.25');
     setFeatureInput('');
     setChietXuatInput('');
@@ -1569,6 +1569,46 @@ export default function CategoryManagement({
                         </span>
                       ))
                     )}
+                  </div>
+                </div>
+
+                {/* Cấu hình phạm vi độ cầu (SPH) */}
+                <div className="space-y-1.5 border-t border-slate-50 pt-2">
+                  <label className="text-[10px] uppercase font-bold text-slate-400">Phạm vi Độ cầu (SPH)</label>
+                  <div className="grid grid-cols-3 gap-2">
+                    <div className="space-y-1">
+                      <span className="text-[9px] text-slate-400 font-bold block">Độ cầu từ</span>
+                      <input
+                        type="number"
+                        step="0.25"
+                        placeholder="ví dụ: 0.00"
+                        value={newBrandSphTu}
+                        onChange={(e) => setNewBrandSphTu(e.target.value)}
+                        className="w-full text-xs font-semibold text-slate-700 bg-slate-50 border border-slate-100 rounded-lg p-2 font-mono focus:outline-hidden focus:ring-2 focus:ring-blue-500/10"
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <span className="text-[9px] text-slate-400 font-bold block">Độ cầu đến</span>
+                      <input
+                        type="number"
+                        step="0.25"
+                        placeholder="ví dụ: -4.00"
+                        value={newBrandSphDen}
+                        onChange={(e) => setNewBrandSphDen(e.target.value)}
+                        className="w-full text-xs font-semibold text-slate-700 bg-slate-50 border border-slate-100 rounded-lg p-2 font-mono focus:outline-hidden focus:ring-2 focus:ring-blue-500/10"
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <span className="text-[9px] text-slate-400 font-bold block">Bước nhảy</span>
+                      <input
+                        type="number"
+                        step="0.01"
+                        placeholder="mặc định 0.25"
+                        value={newBrandBuocNhay}
+                        onChange={(e) => setNewBrandBuocNhay(e.target.value)}
+                        className="w-full text-xs font-semibold text-slate-700 bg-slate-50 border border-slate-100 rounded-lg p-2 font-mono focus:outline-hidden focus:ring-2 focus:ring-blue-500/10"
+                      />
+                    </div>
                   </div>
                 </div>
 
