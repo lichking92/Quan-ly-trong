@@ -1100,7 +1100,7 @@ export async function syncEmailLog(log: EmailLog, userId: string) {
                              res.error.message?.includes('b_emaillog') || 
                              res.error.message?.includes('schema cache');
       if (isMissingTable) {
-        console.log("[EMAIL LOG] Bảng b_emaillog chưa tồn tại trên Supabase khi gửi email. Sử dụng LocalStorage làm fallback.");
+        console.log(`[EMAIL LOG] Bảng b_emaillog gặp lỗi trên Supabase khi gửi email (Chi tiết: ${res.error.message}, Code: ${res.error.code}). Sử dụng LocalStorage làm fallback.`);
       } else {
         console.warn("Lỗi syncEmailLog lên Supabase (sử dụng lưu trữ cục bộ fallback):", res.error.message);
       }
@@ -1142,7 +1142,7 @@ export async function fetchEmailLogs(userId: string): Promise<EmailLog[]> {
                              error.message?.includes('b_emaillog') || 
                              error.message?.includes('schema cache');
       if (isMissingTable) {
-        console.log("[EMAIL LOG] Bảng b_emaillog chưa tồn tại trên Supabase. Hệ thống tự động kích hoạt chế độ lưu trữ cục bộ LocalStorage.");
+        console.log(`[EMAIL LOG] Bảng b_emaillog gặp lỗi hoặc chưa sẵn sàng trên Supabase (Chi tiết: ${error.message}, Code: ${error.code}). Hệ thống tự động kích hoạt chế độ lưu trữ cục bộ LocalStorage.`);
       } else {
         console.warn("Lỗi fetchEmailLogs từ Supabase:", error.message);
       }

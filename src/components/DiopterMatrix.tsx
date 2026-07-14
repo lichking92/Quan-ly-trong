@@ -33,6 +33,13 @@ interface DiopterMatrixProps {
   thuongHieus: string[];
   brandList?: ThươngHieu[];
   currentUser: any;
+  onUpdateMatrixCell?: (
+    sku: string,
+    newTonToiThieu: number,
+    newTonThucTe: number,
+    currentSystemTon: number,
+    branchName: string
+  ) => Promise<void>;
 }
 
 export default function DiopterMatrix({
@@ -43,7 +50,8 @@ export default function DiopterMatrix({
   chiNhanhs = [],
   thuongHieus = [],
   brandList = [],
-  currentUser
+  currentUser,
+  onUpdateMatrixCell
 }: DiopterMatrixProps) {
   // --- 1. QUẢN LÝ BỘ LỌC CHUYÊN BIỆT ---
   const [selectedBrand, setSelectedBrand] = useState<string>(() => {
@@ -120,6 +128,59 @@ export default function DiopterMatrix({
     status: 'Hết hàng' | 'Nguy cấp' | 'Thấp' | 'Đạt yêu cầu' | 'An toàn';
     product?: SanPham;
   } | null>(null);
+
+  // Trạng thái chỉnh sửa trực tiếp trong modal chi tiết ô
+  const [editTonToiThieu, setEditTonToiThieu] = useState<string>('');
+  const [editTonThucTe, setEditTonThucTe] = useState<string>('');
+  const [modalErrorMsg, setModalErrorMsg] = useState<string>('');
+  const [isSaving, setIsSaving] = useState<boolean>(false);
+
+  React.useEffect(() => {
+    if (selectedCellDetail) {
+      setEditTonToiThieu(String(selectedCellDetail.tonToiThieu));
+      setEditTonThucTe(String(selectedCellDetail.tonCuoi));
+      setModalErrorMsg('');
+    } else {
+      setEditTonToiThieu('');
+      setEditTonThucTe('');
+      setModalErrorMsg('');
+    }
+  }, [selectedCellDetail]);
+
+  const handleSaveCellUpdate = async () => {
+    if (!selectedCellDetail || !onUpdateMatrixCell) return;
+    
+    const minStock = parseInt(editTonToiThieu, 10);
+    const actualStock = parseInt(editTonThucTe, 10);
+
+    if (isNaN(minStock) || minStock < 0) {
+      setModalErrorMsg('Vui lòng nhập Tồn tối thiểu hợp lệ (số nguyên >= 0).');
+      return;
+    }
+
+    if (isNaN(actualStock) || actualStock < 0) {
+      setModalErrorMsg('Vui lòng nhập Tồn thực tế hợp lệ (số nguyên >= 0).');
+      return;
+    }
+
+    try {
+      setIsSaving(true);
+      setModalErrorMsg('');
+      await onUpdateMatrixCell(
+        selectedCellDetail.sku,
+        minStock,
+        actualStock,
+        selectedCellDetail.tonCuoi,
+        selectedBranch === 'Tất cả' ? 'Kho Trung Tâm' : selectedBranch
+      );
+      setSelectedCellDetail(null);
+    } catch (error: any) {
+      console.error('Lỗi khi cập nhật ô độ:', error);
+      setModalErrorMsg(error?.message || 'Có lỗi xảy ra khi cập nhật.');
+    } finally {
+      setIsSaving(false);
+    }
+  };
 
   // --- 2. XÁC ĐỊNH TRỤC SPH (Y) VÀ CYL (X) ---
   const sphList = useMemo(() => {
@@ -602,80 +663,140 @@ export default function DiopterMatrix({
                   )}
                 </div>
 
-                {/* Các thuộc tính quang học cốt lõi */}
-                <div className="grid grid-cols-2 gap-3">
-                  <div className="p-3 bg-slate-50/50 rounded-xl border border-slate-100 text-center">
-                    <div className="text-[9px] uppercase font-bold text-slate-400">Độ Cầu (SPH)</div>
-                    <div className="text-sm font-mono font-bold text-slate-800 mt-1">
-                      {formatDop(selectedCellDetail.sph)}
-                    </div>
-                  </div>
-                  <div className="p-3 bg-slate-50/50 rounded-xl border border-slate-100 text-center">
-                    <div className="text-[9px] uppercase font-bold text-slate-400">Độ Loạn (CYL)</div>
-                    <div className="text-sm font-mono font-bold text-slate-800 mt-1">
-                      {formatDop(selectedCellDetail.cyl)}
-                    </div>
-                  </div>
-                </div>
-
-                {/* Phân nhóm thuộc tính danh mục */}
+                      {/* Phân nhóm thuộc tính danh mục */}
                 <div className="grid grid-cols-3 gap-2 text-center text-xs">
-                  <div className="bg-slate-50/40 border p-2 rounded-lg">
+                  <div className="bg-slate-50/40 border border-slate-100 p-2 rounded-lg">
                     <div className="text-[8px] uppercase font-bold text-slate-400">Thương hiệu</div>
                     <div className="font-bold text-slate-700 truncate mt-0.5">{selectedBrand}</div>
                   </div>
-                  <div className="bg-slate-50/40 border p-2 rounded-lg">
+                  <div className="bg-slate-50/40 border border-slate-100 p-2 rounded-lg">
                     <div className="text-[8px] uppercase font-bold text-slate-400">Tính năng</div>
                     <div className="font-bold text-slate-700 truncate mt-0.5">{selectedFeature}</div>
                   </div>
-                  <div className="bg-slate-50/40 border p-2 rounded-lg">
+                  <div className="bg-slate-50/40 border border-slate-100 p-2 rounded-lg">
                     <div className="text-[8px] uppercase font-bold text-slate-400">Chiết suất</div>
                     <div className="font-bold text-slate-700 truncate mt-0.5">{selectedChietXuat}</div>
                   </div>
                 </div>
 
-                {/* Tồn kho chi tiết */}
-                <div className="bg-slate-50/50 p-4 rounded-xl border border-slate-150 space-y-3">
-                  
+                {/* Tồn kho chi tiết & Chỉnh sửa trực tiếp */}
+                <div className="bg-slate-50/50 p-4 rounded-xl border border-slate-150 space-y-4">
                   {/* Trạng thái tồn */}
                   <div className="flex items-center justify-between pb-2 border-b border-slate-200/60">
-                    <span className="text-xs font-bold text-slate-500">Trạng thái kho:</span>
+                    <span className="text-xs font-bold text-slate-500">Trạng thái hiện tại:</span>
                     <span className={`text-[10px] font-extrabold py-0.5 px-2 rounded-full ${getStatusBadgeClass(selectedCellDetail.status)}`}>
                       {getStatusLabel(selectedCellDetail.status)}
                     </span>
                   </div>
 
-                  {/* Số lượng */}
-                  <div className="grid grid-cols-2 gap-4 pt-1">
+                  {/* Hiển thị tồn kho hiện tại hệ thống */}
+                  <div className="p-3 bg-white rounded-lg border border-slate-150 flex justify-between items-center">
                     <div>
-                      <div className="text-[9px] uppercase font-bold text-slate-400">Tồn kho hiện tại</div>
-                      <div className="text-base font-mono font-extrabold text-slate-850 mt-1">
+                      <span className="text-[10px] uppercase font-bold text-slate-400 block">Tồn hệ thống</span>
+                      <span className="text-sm font-mono font-extrabold text-slate-800">
                         {selectedCellDetail.tonCuoi} <span className="text-[10px] text-slate-400 font-medium">miếng</span>
-                      </div>
-                      <div className="text-[8px] text-slate-400 font-medium font-sans mt-0.5">Kho: {selectedBranch}</div>
+                      </span>
                     </div>
-
-                    <div>
-                      <div className="text-[9px] uppercase font-bold text-slate-400 font-sans">Tồn tối thiểu đặt ra</div>
-                      <div className="text-base font-mono font-extrabold text-slate-600 mt-1">
-                        {selectedCellDetail.tonToiThieu} <span className="text-[10px] text-slate-400 font-medium">miếng</span>
-                      </div>
-                      <div className="text-[8px] text-slate-400 font-medium font-sans mt-0.5">Ngưỡng cảnh báo</div>
+                    <div className="text-right">
+                      <span className="text-[10px] uppercase font-bold text-slate-400 block">Kho lưu trữ</span>
+                      <span className="text-xs font-semibold text-slate-600 font-mono">
+                        {selectedBranch === 'Tất cả' ? 'Tổng kho' : selectedBranch}
+                      </span>
                     </div>
                   </div>
+
+                  {/* Ô nhập chỉnh sửa nếu có quyền */}
+                  {selectedCellDetail.exists && currentUser.writeAccess !== false ? (
+                    <div className="space-y-3.5 pt-1">
+                      <div className="grid grid-cols-2 gap-3">
+                        <div className="space-y-1">
+                          <label className="text-[10px] uppercase font-bold text-slate-500 block">Tồn tối thiểu (sửa)</label>
+                          <input
+                            type="number"
+                            min="0"
+                            value={editTonToiThieu}
+                            onChange={(e) => {
+                              setEditTonToiThieu(e.target.value);
+                              setModalErrorMsg('');
+                            }}
+                            className="w-full text-xs font-semibold text-slate-850 bg-white border border-slate-200 rounded-lg p-2 font-mono focus:outline-hidden focus:ring-2 focus:ring-blue-500/10"
+                            placeholder="Ví dụ: 10"
+                          />
+                        </div>
+
+                        <div className="space-y-1">
+                          <label className="text-[10px] uppercase font-bold text-slate-500 block">Tồn thực tế (nhập)</label>
+                          <input
+                            type="number"
+                            min="0"
+                            value={editTonThucTe}
+                            onChange={(e) => {
+                              setEditTonThucTe(e.target.value);
+                              setModalErrorMsg('');
+                            }}
+                            className="w-full text-xs font-semibold text-slate-850 bg-white border border-slate-200 rounded-lg p-2 font-mono focus:outline-hidden focus:ring-2 focus:ring-blue-500/10"
+                            placeholder="Ví dụ: 25"
+                          />
+                        </div>
+                      </div>
+
+                      {/* Thông báo tự động bù trừ nếu có chênh lệch */}
+                      {editTonThucTe.trim() !== '' && !isNaN(parseInt(editTonThucTe, 10)) && parseInt(editTonThucTe, 10) !== selectedCellDetail.tonCuoi && (
+                        <div className="p-2.5 bg-amber-50 rounded-lg border border-amber-100/70 flex items-start gap-1.5 text-[10px] text-amber-700 leading-normal">
+                          <AlertTriangle className="w-3.5 h-3.5 shrink-0 mt-0.5 text-amber-500" />
+                          <span>
+                            Phát hiện chênh lệch đếm thực tế! Hệ thống sẽ <strong>tự động tạo phiếu kiểm kho</strong> {parseInt(editTonThucTe, 10) > selectedCellDetail.tonCuoi ? 'NHẬP BÙ' : 'XUẤT BÙ'} (<strong>{parseInt(editTonThucTe, 10) > selectedCellDetail.tonCuoi ? 'PNK' : 'PXK'}xxxxx</strong>) lệch {parseInt(editTonThucTe, 10) - selectedCellDetail.tonCuoi > 0 ? '+' : ''}{parseInt(editTonThucTe, 10) - selectedCellDetail.tonCuoi} cái để bù trừ kho.
+                          </span>
+                        </div>
+                      )}
+                    </div>
+                  ) : (
+                    <div className="p-3 bg-slate-50/80 rounded-lg border border-slate-100 text-[10px] text-slate-400 italic">
+                      {!selectedCellDetail.exists ? 'Không thể cập nhật sản phẩm chưa được khai báo.' : 'Tài khoản không có quyền ghi để chỉnh sửa tồn kho.'}
+                    </div>
+                  )}
                 </div>
+
+                {/* Local Modal Error Message */}
+                {modalErrorMsg && (
+                  <div className="p-2.5 bg-red-50 text-red-600 text-[10px] font-semibold rounded-lg border border-red-100 flex items-center gap-1.5">
+                    <AlertTriangle className="w-3.5 h-3.5 shrink-0 text-red-500" />
+                    <span>{modalErrorMsg}</span>
+                  </div>
+                )}
 
               </div>
 
               {/* Footer Modal */}
-              <div className="p-3 bg-slate-50 border-t border-slate-150 flex justify-end">
+              <div className="p-3 bg-slate-50 border-t border-slate-150 flex justify-end gap-2">
                 <button
                   type="button"
                   onClick={() => setSelectedCellDetail(null)}
-                  className="px-4 py-2 bg-slate-850 hover:bg-slate-900 active:bg-slate-950 text-white font-bold text-xs rounded-xl transition-all shadow-xs cursor-pointer"
+                  className="px-4 py-2 bg-slate-200 hover:bg-slate-300 text-slate-700 font-bold text-xs rounded-xl transition-all cursor-pointer"
+                  disabled={isSaving}
                 >
-                  Đóng chi tiết
+                  Đóng
                 </button>
+                {selectedCellDetail.exists && currentUser.writeAccess !== false && (
+                  <button
+                    type="button"
+                    onClick={handleSaveCellUpdate}
+                    className="px-4 py-2 bg-blue-600 hover:bg-blue-700 active:bg-blue-800 text-white font-bold text-xs rounded-xl transition-all shadow-xs cursor-pointer flex items-center gap-1.5"
+                    disabled={isSaving}
+                  >
+                    {isSaving ? (
+                      <>
+                        <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                        Đang lưu...
+                      </>
+                    ) : (
+                      <>
+                        <CheckCircle className="w-3.5 h-3.5" />
+                        Lưu thay đổi
+                      </>
+                    )}
+                  </button>
+                )}
               </div>
 
             </motion.div>

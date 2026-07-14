@@ -39,7 +39,9 @@ import {
   MOCK_KIEM_KHO, 
   MOCK_THUONG_HIEU, 
   MOCK_CHI_NHANH, 
-  MOCK_NHAN_VIEN 
+  MOCK_NHAN_VIEN,
+  getVietnamDateString,
+  getVietnamDateTimeString
 } from './data/mockData';
 
 // Import Supabase
@@ -672,6 +674,207 @@ export default function App() {
       }
     }
     setSuccessToast({ message: `Đã thêm thành công sản phẩm tròng kính: ${newProduct.SKU}` });
+  };
+
+  /**
+   * Cập nhật thông tin ô tròng kính trực tiếp từ Ma trận độ:
+   * 1. Lưu trực tiếp Tồn tối thiểu vào Sản phẩm
+   * 2. Nếu Tồn thực tế khác Tồn hệ thống:
+   *    - Tự động sinh phiếu kiểm kho bù trừ (PKKxxxxx)
+   *    - Thiếu hàng -> Tạo PXKxxxxx điều chỉnh xuất
+   *    - Thừa hàng -> Tạo PNKxxxxx điều chỉnh nhập
+   *    - Tái tính toán tồn kho sản phẩm ngay lập tức
+   * 3. Đồng bộ dữ liệu với Sản phẩm, Kiểm kê kho, và Nhập/Xuất
+   */
+  const handleUpdateMatrixCell = async (
+    sku: string,
+    newTonToiThieu: number,
+    newTonThucTe: number,
+    currentSystemTon: number,
+    branchName: string
+  ) => {
+    // 1. Xác định lệch
+    const lech = newTonThucTe - currentSystemTon;
+    const timeNow = getVietnamDateTimeString();
+    const dateNow = getVietnamDateString();
+
+    // 2. Tạo bản cập nhật sản phẩm trước
+    let updatedProducts = sanPhams.map(p => {
+      if (p.SKU === sku) {
+        return {
+          ...p,
+          TON_TOI_THIEU: newTonToiThieu
+        };
+      }
+      return p;
+    });
+
+    let newKiemKhos = [...kiemKhos];
+    let newHeaders = [...nhapXuats];
+    let newDetails = [...nhapXuatCTs];
+    
+    let createdAudit: KiemKho | null = null;
+    let createdAdjHeader: NhapXuat | null = null;
+    let createdAdjDetail: NhapXuatCT | null = null;
+
+    if (lech !== 0) {
+      // Sinh mã PKK tự động
+      let maxPKKNum = 0;
+      kiemKhos.forEach(k => {
+        if (k.MA_PHIEU.startsWith('PKK')) {
+          const numPart = parseInt(k.MA_PHIEU.substring(3), 10);
+          if (!isNaN(numPart) && numPart > maxPKKNum) {
+            maxPKKNum = numPart;
+          }
+        }
+      });
+      const newAuditId = `PKK${String(maxPKKNum + 1).padStart(6, '0')}`;
+
+      createdAudit = {
+        MA_PHIEU: newAuditId,
+        SKU: sku,
+        TON_HE_THONG: currentSystemTon,
+        TON_THUC_TE: newTonThucTe,
+        LECH: lech,
+        LOAI_BU: lech > 0 ? 'NHẬP BÙ' : 'XUẤT BÙ',
+        NGUOI_KIEM: currentUser?.username || 'admin',
+        THOI_DIEM: timeNow,
+        KHO: branchName || currentUser?.branch || 'Kho Trung Tâm',
+        MA_NV: currentUser?.id,
+        TEN_DANG_NHAP: currentUser?.username
+      };
+
+      // Tự động sinh phiếu điều chỉnh kho liên kết (PNK hoặc PXK)
+      const isPositive = lech > 0;
+      let maxPNKNum = 0;
+      let maxPXKNum = 0;
+      nhapXuats.forEach(h => {
+        if (h.HOA_DON.startsWith('PNK')) {
+          const numPart = parseInt(h.HOA_DON.substring(3), 10);
+          if (!isNaN(numPart) && numPart > maxPNKNum) {
+            maxPNKNum = numPart;
+          }
+        } else if (h.HOA_DON.startsWith('PXK')) {
+          const numPart = parseInt(h.HOA_DON.substring(3), 10);
+          if (!isNaN(numPart) && numPart > maxPXKNum) {
+            maxPXKNum = numPart;
+          }
+        }
+      });
+
+      let newAdjInvoiceId = '';
+      if (isPositive) {
+        newAdjInvoiceId = `PNK${String(maxPNKNum + 1).padStart(7, '0')}`;
+      } else {
+        newAdjInvoiceId = `PXK${String(maxPXKNum + 1).padStart(7, '0')}`;
+      }
+
+      const matchedP = updatedProducts.find(p => p.SKU === sku);
+      if (matchedP) {
+        createdAdjHeader = {
+          HOA_DON: newAdjInvoiceId,
+          CHI_NHANH: branchName || currentUser?.branch || 'Kho Trung Tâm',
+          NGAY: dateNow,
+          LOAI: isPositive ? 'NHẬP' : 'XUẤT',
+          TONG_SL: Math.abs(lech),
+          NGUOI_TAO: currentUser?.username || 'admin',
+          TEN_NGUOI_TAO: currentUser?.fullName || 'Người dùng',
+          TG_TAO: timeNow,
+          GHI_CHU: `Phiếu điều chỉnh kiểm kê nhanh từ ma trận độ ${newAuditId}. SKU: ${sku}, Tồn HT: ${currentSystemTon}, Tồn TT: ${newTonThucTe}, Lệch: ${lech > 0 ? '+' : ''}${lech}`,
+          MA_NV: currentUser?.id,
+          TEN_DANG_NHAP: currentUser?.username
+        };
+
+        createdAdjDetail = {
+          ID: `CT_ADJ_MATRIX_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+          HOA_DON: newAdjInvoiceId,
+          SKU: sku,
+          TEN_SP: matchedP.TEN_SAN_PHAM,
+          THUONG_HIEU: matchedP.THUONG_HIEU,
+          CHIET_XUAT: matchedP.CHIET_XUAT,
+          TINH_NANG: matchedP.TINH_NANG,
+          SPH: matchedP.CAN,
+          CYL: matchedP.LOAN,
+          SO_LUONG: Math.abs(lech),
+          DVT: matchedP.DVT,
+          GHI_CHU: `Điều chỉnh kiểm kê nhanh từ ma trận độ ${newAuditId}`,
+          LOAI: isPositive ? 'NHẬP' : 'XUẤT',
+          NGAY: dateNow
+        };
+
+        newKiemKhos = [...newKiemKhos, createdAudit];
+        newHeaders = [...newHeaders, createdAdjHeader];
+        newDetails = [...newDetails, createdAdjDetail];
+      }
+    }
+
+    // 3. Tái tính toán và cập nhật lại tồn kho sản phẩm
+    updatedProducts = updatedProducts.map(p => {
+      if (p.SKU === sku) {
+        const updatedP = recalculateProductState(sku, updatedProducts, newDetails, newKiemKhos);
+        return updatedP ? updatedP : p;
+      }
+      return p;
+    });
+
+    // Cập nhật State
+    setSanPhams(updatedProducts);
+    setKiemKhos(newKiemKhos);
+    if (createdAdjHeader) {
+      setNhapXuats(newHeaders);
+      setNhapXuatCTs(newDetails);
+    }
+
+    setSuccessToast({ message: `Đã cập nhật ô độ ${sku} thành công!` });
+
+    // Đồng bộ Supabase
+    if (currentUser) {
+      ignoreRealtimeRef.current = true;
+      try {
+        const uId = await getUserId();
+        if (uId) {
+          const promises: Promise<any>[] = [];
+          
+          // Sync sản phẩm bị ảnh hưởng
+          const targetProd = updatedProducts.find(p => p.SKU === sku);
+          if (targetProd) {
+            promises.push(syncSanPham(targetProd, uId));
+          }
+
+          // Sync phiếu PKK nếu có
+          if (createdAudit) {
+            promises.push(syncKiemKho(createdAudit, uId));
+          }
+
+          // Sync phiếu điều chỉnh nếu có
+          if (createdAdjHeader && createdAdjDetail) {
+            promises.push(syncNhapXuat(createdAdjHeader, uId));
+            promises.push(syncNhapXuatCTs([createdAdjDetail], uId));
+          }
+
+          const results = await Promise.all(promises);
+          const error = results.find(r => r && r.error)?.error;
+          if (error) {
+            setSyncError({
+              table: 'b_sanpham / b_kiemkho / b_nhapxuat',
+              action: 'Cập nhật từ ma trận độ',
+              message: error.message || JSON.stringify(error)
+            });
+          }
+        }
+      } catch (err: any) {
+        console.error('Lỗi sync từ ma trận độ:', err);
+        setSyncError({
+          table: 'b_sanpham / b_kiemkho / b_nhapxuat',
+          action: 'Cập nhật từ ma trận độ',
+          message: err.message || JSON.stringify(err)
+        });
+      } finally {
+        setTimeout(() => {
+          ignoreRealtimeRef.current = false;
+        }, 3000);
+      }
+    }
   };
 
   /**
@@ -1964,6 +2167,7 @@ export default function App() {
                   chiNhanhs={listBranchNames}
                   thuongHieus={listBrandNames}
                   brandList={thuongHieus}
+                  onUpdateMatrixCell={handleUpdateMatrixCell}
                 />
               )}
 
