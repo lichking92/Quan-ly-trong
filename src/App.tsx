@@ -76,6 +76,12 @@ import ThemeSettings from './components/ThemeSettings';
 import DiopterMatrix from './components/DiopterMatrix';
 
 
+
+const cleanSKU = (sku: string | undefined | null): string => {
+  if (!sku) return '';
+  return sku.trim().replace(/\s+/g, ' ').toUpperCase();
+};
+
 /**
  * FILE: App.tsx
  * TÁC GIẢ: Lão làng Lập trình Hệ thống (30+ năm kinh nghiệm)
@@ -699,8 +705,9 @@ export default function App() {
     const dateNow = getVietnamDateString();
 
     // 2. Tạo bản cập nhật sản phẩm trước
+    const normSku = cleanSKU(sku);
     let updatedProducts = sanPhams.map(p => {
-      if (p.SKU === sku) {
+      if (cleanSKU(p.SKU) === normSku) {
         return {
           ...p,
           TON_TOI_THIEU: newTonToiThieu
@@ -769,7 +776,7 @@ export default function App() {
         newAdjInvoiceId = `PXK${String(maxPXKNum + 1).padStart(7, '0')}`;
       }
 
-      const matchedP = updatedProducts.find(p => p.SKU === sku);
+      const matchedP = updatedProducts.find(p => cleanSKU(p.SKU) === normSku);
       if (matchedP) {
         createdAdjHeader = {
           HOA_DON: newAdjInvoiceId,
@@ -810,7 +817,7 @@ export default function App() {
 
     // 3. Tái tính toán và cập nhật lại tồn kho sản phẩm
     updatedProducts = updatedProducts.map(p => {
-      if (p.SKU === sku) {
+      if (cleanSKU(p.SKU) === normSku) {
         const updatedP = recalculateProductState(sku, updatedProducts, newDetails, newKiemKhos);
         return updatedP ? updatedP : p;
       }
@@ -836,7 +843,7 @@ export default function App() {
           const promises: Promise<any>[] = [];
           
           // Sync sản phẩm bị ảnh hưởng
-          const targetProd = updatedProducts.find(p => p.SKU === sku);
+          const targetProd = updatedProducts.find(p => cleanSKU(p.SKU) === normSku);
           if (targetProd) {
             promises.push(syncSanPham(targetProd, uId));
           }
@@ -886,34 +893,52 @@ export default function App() {
     currentDetails: NhapXuatCT[],
     currentKiemKhos: KiemKho[]
   ): SanPham | null => {
-    const product = currentProducts.find(p => p.SKU === sku);
-    if (!product) return null;
+    const normSku = cleanSKU(sku);
+    const product = currentProducts.find(p => cleanSKU(p.SKU) === normSku);
+    if (!product) {
+      console.error(`[KIỂM TRA TỒN KHO THẤT BẠI] Lỗi: Không thể tìm thấy SKU [${sku}] trong danh mục sản phẩm để tái tính toán.`);
+      return null;
+    }
 
     // 1. Tính tổng Nhập từ nhapXuatCTs (gồm PN, PNK...)
     const totalNhap = currentDetails
-      .filter(d => d.SKU === sku && d.LOAI === 'NHẬP')
-      .reduce((sum, d) => sum + d.SO_LUONG, 0);
+      .filter(d => cleanSKU(d.SKU) === normSku && d.LOAI === 'NHẬP')
+      .reduce((sum, d) => sum + (Number(d.SO_LUONG) || 0), 0);
 
     // 2. Tính tổng Xuất từ nhapXuatCTs (gồm PX, PXK...)
     const totalXuat = currentDetails
-      .filter(d => d.SKU === sku && d.LOAI === 'XUẤT')
-      .reduce((sum, d) => sum + d.SO_LUONG, 0);
+      .filter(d => cleanSKU(d.SKU) === normSku && d.LOAI === 'XUẤT')
+      .reduce((sum, d) => sum + (Number(d.SO_LUONG) || 0), 0);
 
     // 3. Tính tổng lượng Nhập bù từ lịch sử Kiểm kho (chỉ những phiếu kiểm kho CHƯA có phiếu điều chỉnh PNK trong chi tiết)
     const totalAuditNhapBu = currentKiemKhos
-      .filter(k => k.SKU === sku && k.LOAI_BU === 'NHẬP BÙ')
-      .filter(k => !currentDetails.some(d => d.SKU === sku && (d.GHI_CHU || '').includes(k.MA_PHIEU)))
-      .reduce((sum, k) => sum + k.LECH, 0);
+      .filter(k => cleanSKU(k.SKU) === normSku && k.LOAI_BU === 'NHẬP BÙ')
+      .filter(k => !currentDetails.some(d => cleanSKU(d.SKU) === normSku && (d.GHI_CHU || '').includes(k.MA_PHIEU)))
+      .reduce((sum, k) => sum + (Number(k.LECH) || 0), 0);
 
     // 4. Tính tổng lượng Xuất bù từ lịch sử Kiểm kho (chỉ những phiếu kiểm kho CHƯA có phiếu điều chỉnh PXK trong chi tiết)
     const totalAuditXuatBu = currentKiemKhos
-      .filter(k => k.SKU === sku && k.LOAI_BU === 'XUẤT BÙ')
-      .filter(k => !currentDetails.some(d => d.SKU === sku && (d.GHI_CHU || '').includes(k.MA_PHIEU)))
-      .reduce((sum, k) => sum + Math.abs(k.LECH), 0);
+      .filter(k => cleanSKU(k.SKU) === normSku && k.LOAI_BU === 'XUẤT BÙ')
+      .filter(k => !currentDetails.some(d => cleanSKU(d.SKU) === normSku && (d.GHI_CHU || '').includes(k.MA_PHIEU)))
+      .reduce((sum, k) => sum + Math.abs(Number(k.LECH) || 0), 0);
 
+    const tonDau = Number(product.TON_DAU) || 0;
     const finalNhap = totalNhap + totalAuditNhapBu;
     const finalXuat = totalXuat + totalAuditXuatBu;
-    const finalTonCuoi = product.TON_DAU + finalNhap - finalXuat;
+    const finalTonCuoi = tonDau + finalNhap - finalXuat;
+
+    // Hiển thị trace log kiểm tra chi tiết theo yêu cầu của hệ thống
+    console.group(`[NHẬT KÝ KIỂM TRA TỒN KHO] SKU: ${product.SKU}`);
+    console.log(`- Tồn đầu (TON_DAU): ${tonDau}`);
+    console.log(`- Tồn trước recalculate (TON_CUOI cũ): ${product.TON_CUOI}`);
+    console.log(`- Tổng Nhập thực tế từ hóa đơn (totalNhap): ${totalNhap}`);
+    console.log(`- Nhập bù kiểm kho tự động (totalAuditNhapBu): ${totalAuditNhapBu}`);
+    console.log(`- TỔNG NHẬP SAU CÙNG (finalNhap): ${finalNhap}`);
+    console.log(`- Tổng Xuất thực tế từ hóa đơn (totalXuat): ${totalXuat}`);
+    console.log(`- Xuất bù kiểm kho tự động (totalAuditXuatBu): ${totalAuditXuatBu}`);
+    console.log(`- TỔNG XUẤT SAU CÙNG (finalXuat): ${finalXuat}`);
+    console.log(`=> TỒN CUỐI SAU CÙNG (finalTonCuoi): ${finalTonCuoi}`);
+    console.groupEnd();
 
     return {
       ...product,
@@ -966,9 +991,10 @@ export default function App() {
     setSuccessToast({ message: toastMsg });
 
     // Cập nhật số lượng nhập, xuất, và tồn cuối trực tiếp vào bảng sản phẩm ngay lập tức
-    const affectedSKUs = Array.from(new Set(finalizedDetails.map(d => d.SKU)));
+    const affectedSKUs = Array.from(new Set(finalizedDetails.map(d => cleanSKU(d.SKU))));
     const updatedProductsList = sanPhams.map(p => {
-      if (affectedSKUs.includes(p.SKU)) {
+      const pSkuNorm = cleanSKU(p.SKU);
+      if (affectedSKUs.includes(pSkuNorm)) {
         const updatedP = recalculateProductState(p.SKU, sanPhams, updatedDetails, kiemKhos);
         return updatedP ? updatedP : p;
       }
@@ -986,7 +1012,7 @@ export default function App() {
           const [res1, res2, res3] = await Promise.all([
             syncNhapXuat(finalizedHeader, uId),
             syncNhapXuatCTs(finalizedDetails, uId),
-            syncSanPhams(updatedProductsList.filter(p => affectedSKUs.includes(p.SKU)), uId)
+            syncSanPhams(updatedProductsList.filter(p => affectedSKUs.includes(cleanSKU(p.SKU))), uId)
           ]);
           const error = res1.error || res2.error || res3.error;
           if (error) {
@@ -1082,7 +1108,7 @@ export default function App() {
           newAdjInvoiceId = `PXK${String(currentPXKNum).padStart(7, '0')}`;
         }
 
-        const matchedP = sanPhams.find(p => p.SKU === finalizedAudit.SKU);
+        const matchedP = sanPhams.find(p => cleanSKU(p.SKU) === cleanSKU(finalizedAudit.SKU));
         if (matchedP) {
           const adjHeader: NhapXuat = {
             HOA_DON: newAdjInvoiceId,
@@ -1133,9 +1159,10 @@ export default function App() {
     }
 
     // Tính toán và cập nhật lại tồn kho sản phẩm hoàn toàn chính xác
-    const affectedSKUs = Array.from(new Set(finalizedAudits.map(a => a.SKU)));
+    const affectedSKUs = Array.from(new Set(finalizedAudits.map(a => cleanSKU(a.SKU))));
     const updatedProductsList = sanPhams.map(p => {
-      if (affectedSKUs.includes(p.SKU)) {
+      const pSkuNorm = cleanSKU(p.SKU);
+      if (affectedSKUs.includes(pSkuNorm)) {
         const updatedP = recalculateProductState(p.SKU, sanPhams, updatedDetails, updatedKiemKhos);
         return updatedP ? updatedP : p;
       }
@@ -1158,7 +1185,7 @@ export default function App() {
           });
 
           // Sync sản phẩm bị ảnh hưởng
-          promises.push(syncSanPhams(updatedProductsList.filter(p => affectedSKUs.includes(p.SKU)), uId));
+          promises.push(syncSanPhams(updatedProductsList.filter(p => affectedSKUs.includes(cleanSKU(p.SKU))), uId));
 
           // Sync phiếu điều chỉnh nếu có
           if (newHeadersToSave.length > 0) {
@@ -1209,8 +1236,10 @@ export default function App() {
     setNhapXuatCTs(updatedDetails);
 
     // 3. Tái tính toán cục bộ cho các SKU bị ảnh hưởng
+    const normSkusToRecalc = skusToRecalc.map(s => cleanSKU(s));
     const updatedProductsList = sanPhams.map(p => {
-      if (skusToRecalc.includes(p.SKU)) {
+      const pSkuNorm = cleanSKU(p.SKU);
+      if (normSkusToRecalc.includes(pSkuNorm)) {
         const updatedP = recalculateProductState(p.SKU, sanPhams, updatedDetails, kiemKhos);
         return updatedP ? updatedP : p;
       }
@@ -1231,7 +1260,7 @@ export default function App() {
           ]);
           const [res2, res3] = await Promise.all([
             syncNhapXuatCTs(updatedDetails.filter(d => d.HOA_DON === updatedHeader.HOA_DON), uId),
-            syncSanPhams(updatedProductsList.filter(p => skusToRecalc.includes(p.SKU)), uId)
+            syncSanPhams(updatedProductsList.filter(p => normSkusToRecalc.includes(cleanSKU(p.SKU))), uId)
           ]);
           const error = res1.error || resDel.error || res2.error || res3.error;
           if (error) {
@@ -1270,8 +1299,10 @@ export default function App() {
     setNhapXuatCTs(remainingDetails);
 
     // 3. Tái tính toán khôi phục kho cho các SKU bị ảnh hưởng (Rollback hoàn toàn)
+    const normSkusToRecalc = skusToRecalc.map(s => cleanSKU(s));
     const updatedProductsList = sanPhams.map(p => {
-      if (skusToRecalc.includes(p.SKU)) {
+      const pSkuNorm = cleanSKU(p.SKU);
+      if (normSkusToRecalc.includes(pSkuNorm)) {
         const updatedP = recalculateProductState(p.SKU, sanPhams, remainingDetails, kiemKhos);
         return updatedP ? updatedP : p;
       }
@@ -1288,7 +1319,7 @@ export default function App() {
         if (uId) {
           const [resDel, resSync] = await Promise.all([
             deleteNhapXuatAndDetails(hoaDonId),
-            syncSanPhams(updatedProductsList.filter(p => skusToRecalc.includes(p.SKU)), uId)
+            syncSanPhams(updatedProductsList.filter(p => normSkusToRecalc.includes(cleanSKU(p.SKU))), uId)
           ]);
           const error = resDel.error || resSync.error;
           if (error) {

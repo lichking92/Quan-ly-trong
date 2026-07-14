@@ -184,10 +184,12 @@ export const generateSKUString = (
   sph: number,
   cyl: number
 ): string => {
-  const brandPart = thuongHieu.toUpperCase();
+  const brandPart = (thuongHieu || '').toUpperCase().trim();
+  const chietPart = (chietXuat || '').trim();
+  const tinhPart = (tinhNang || '').trim();
   const sphPart = formatDop(sph);
   const cylPart = formatDop(cyl);
-  return `${brandPart} ${chietXuat} ${tinhNang} ${sphPart} ${cylPart}`;
+  return `${brandPart} ${chietPart} ${tinhPart} ${sphPart} ${cylPart}`.replace(/\s+/g, ' ').trim();
 };
 
 // 4. Khởi tạo danh sách sản phẩm tròng kính ban đầu (B_SANPHAM)
