@@ -40,7 +40,7 @@ export const syncTimeWithSupabase = async () => {
       console.log(`[Time Sync] Đã đồng bộ thời gian thành công! Lệch thời gian (Offset): ${timeOffset}ms, RTT: ${rtt}ms`);
     }
   } catch (error) {
-    console.error("[Time Sync] Lỗi khi đồng bộ thời gian với Supabase server, sử dụng fallback:", error);
+    console.warn("[Time Sync] Cảnh báo khi đồng bộ thời gian với Supabase server, sử dụng fallback:", error);
     // Nếu bị lỗi mạng hoặc chặn CORS, tự động thiết lập một offset nhỏ an toàn là +5000ms 
     // phòng hờ trường hợp giờ máy client chạy chậm hơn server làm lỗi token.
     timeOffset = 5000;

@@ -19,6 +19,8 @@ import {
   AlertCircle, 
   TrendingUp, 
   TrendingDown, 
+  FileUp,
+  FileDown,
   Info,
   CheckCircle,
   Clock,
@@ -1176,7 +1178,7 @@ export default function TransactionForm({
       <div className="flex items-center justify-between border-b border-slate-100 pb-3">
         <div className="flex items-center gap-2.5">
           <div className={`p-2.5 rounded-xl ${loaiPhieu === 'NHẬP' ? 'bg-emerald-50 text-emerald-600' : 'bg-rose-50 text-rose-600'}`}>
-            {loaiPhieu === 'NHẬP' ? <TrendingUp className="w-5.5 h-5.5" /> : <TrendingDown className="w-5.5 h-5.5" />}
+            {loaiPhieu === 'NHẬP' ? <FileDown className="w-5.5 h-5.5" /> : <FileUp className="w-5.5 h-5.5" />}
           </div>
           <div>
             <h2 className="font-sans font-bold text-slate-800 text-base">Lập Phiếu {loaiPhieu} Kho Tròng Kính</h2>

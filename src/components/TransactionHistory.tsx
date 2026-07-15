@@ -1294,7 +1294,7 @@ export default function TransactionHistory({
             ) : (
               <div className="py-24 text-center text-xs text-slate-400 font-mono italic">
                 <FileText className="w-10 h-10 text-slate-200 mx-auto mb-2" />
-                Không tìm thấy dữ liệu hóa đơn nào khớp bộ lọc.
+                {nhapXuats.length === 0 ? "Chưa có dữ liệu" : "Không tìm thấy dữ liệu hóa đơn nào khớp bộ lọc."}
               </div>
             )}
           </div>

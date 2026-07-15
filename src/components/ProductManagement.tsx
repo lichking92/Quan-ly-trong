@@ -757,7 +757,7 @@ export default function ProductManagement({ sanPhams = [], onAddProduct, onUpdat
               ) : (
                 <tr>
                   <td colSpan={9} className="py-12 text-center text-xs text-slate-400 font-mono">
-                    Không tìm thấy tròng kính mắt nào khớp với tiêu chuẩn tìm kiếm.
+                    {sanPhams.length === 0 ? "Chưa có dữ liệu" : "Không tìm thấy tròng kính mắt nào khớp với tiêu chuẩn tìm kiếm."}
                   </td>
                 </tr>
               )}

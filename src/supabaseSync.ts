@@ -1,6 +1,24 @@
 import { supabase } from './supabaseClient';
 import { SanPham, NhapXuat, NhapXuatCT, KiemKho, ThươngHieu, ChiNhanh, NhanVien, EmailLog } from './types';
 
+export let isOfflineMode = false;
+
+export function setOfflineMode(value: boolean) {
+  isOfflineMode = value;
+  console.log(`[Database] Đã thay đổi trạng thái Offline Mode thành: ${value}`);
+}
+
+export function isNetworkError(err: any): boolean {
+  if (!err) return false;
+  const errMsg = String(err.message || err || '').toLowerCase();
+  return errMsg.includes('failed to fetch') || 
+         errMsg.includes('typeerror') || 
+         errMsg.includes('network') ||
+         errMsg.includes('fetch') ||
+         errMsg.includes('load failed') ||
+         errMsg.includes('connection');
+}
+
 export const SHARED_USER_ID = "00000000-0000-0000-0000-000000000000";
 
 export function logDbError(msg: string, err: any) {
@@ -265,20 +283,42 @@ export async function tryCreateColumnsOnSupabase() {
   `;
 
   try {
-    await supabase.rpc('exec_sql', { sql });
-    console.log("Đã kích hoạt cố gắng tạo cột và mở Realtime qua exec_sql");
+    const { error } = await supabase.rpc('exec_sql', { sql });
+    if (error) {
+      if (error.code === 'PGRST202') {
+        // Hàm không tồn tại trong schema cache, hoàn toàn bình thường
+        console.log("Hàm 'exec_sql' không có sẵn trên Supabase (bỏ qua cấu hình tự động qua exec_sql).");
+      } else {
+        console.log("Thông tin cấu hình qua exec_sql:", error.message);
+      }
+    } else {
+      console.log("Đã cấu hình cột và mở Realtime thành công qua exec_sql");
+    }
   } catch (err) {
-    console.warn("Cố gắng cấu hình cột và Realtime qua exec_sql không khả thi:", err);
+    // Bỏ qua lỗi ngoại lệ
   }
+
   try {
-    await supabase.rpc('run_sql', { sql_string: sql });
-    console.log("Đã kích hoạt cố gắng tạo cột và mở Realtime qua run_sql");
+    const { error } = await supabase.rpc('run_sql', { sql_string: sql });
+    if (error) {
+      if (error.code === 'PGRST202') {
+        // Hàm không tồn tại trong schema cache, hoàn toàn bình thường
+        console.log("Hàm 'run_sql' không có sẵn trên Supabase (bỏ qua cấu hình tự động qua run_sql).");
+      } else {
+        console.log("Thông tin cấu hình qua run_sql:", error.message);
+      }
+    } else {
+      console.log("Đã cấu hình cột và mở Realtime thành công qua run_sql");
+    }
   } catch (err) {
-    console.warn("Cố gắng cấu hình cột và Realtime qua run_sql không khả thi:", err);
+    // Bỏ qua lỗi ngoại lệ
   }
 }
 
 export async function ensureUserOnboarded(userId: string): Promise<UserDataPayload> {
+  if (isOfflineMode) {
+    return await fetchAllUserData(userId);
+  }
   userId = await resolveEffectiveUserId();
   try {
     // 1. Cố gắng tự động tạo cột trên Supabase (nếu chưa có)
@@ -335,6 +375,18 @@ export async function ensureUserOnboarded(userId: string): Promise<UserDataPaylo
  */
 export async function fetchAllRows(tableName: string, userId: string): Promise<any[]> {
   userId = await resolveEffectiveUserId();
+  const cacheKey = tableName.toUpperCase(); // e.g. B_SANPHAM, B_NHAPXUAT
+
+  if (isOfflineMode) {
+    const cached = localStorage.getItem(cacheKey);
+    if (cached) {
+      try {
+        return JSON.parse(cached);
+      } catch {}
+    }
+    return [];
+  }
+
   let allData: any[] = [];
   let from = 0;
   const pageSize = 1000;
@@ -350,6 +402,16 @@ export async function fetchAllRows(tableName: string, userId: string): Promise<a
 
       if (error) {
         logDbError(`Lỗi fetchAllRows từ ${tableName}:`, error);
+        if (isNetworkError(error)) {
+          isOfflineMode = true;
+          console.warn(`[Database] Đã tự động kích hoạt chế độ Ngoại tuyến (Offline Mode) cho bảng ${tableName} do lỗi mạng.`);
+          const cached = localStorage.getItem(cacheKey);
+          if (cached) {
+            try {
+              return JSON.parse(cached);
+            } catch {}
+          }
+        }
         break;
       }
 
@@ -365,6 +427,16 @@ export async function fetchAllRows(tableName: string, userId: string): Promise<a
       }
     } catch (err) {
       logDbError(`Lỗi ngoại lệ fetchAllRows từ ${tableName}:`, err);
+      if (isNetworkError(err)) {
+        isOfflineMode = true;
+        console.warn(`[Database] Đã tự động kích hoạt chế độ Ngoại tuyến (Offline Mode) cho bảng ${tableName} do ngoại lệ lỗi mạng.`);
+        const cached = localStorage.getItem(cacheKey);
+        if (cached) {
+          try {
+            return JSON.parse(cached);
+          } catch {}
+        }
+      }
       break;
     }
   }
@@ -376,6 +448,29 @@ export async function fetchAllRows(tableName: string, userId: string): Promise<a
  */
 export async function fetchAllUserData(userId: string): Promise<UserDataPayload> {
   userId = await resolveEffectiveUserId();
+
+  const getCached = (key: string): any[] => {
+    try {
+      const cached = localStorage.getItem(key);
+      return cached ? JSON.parse(cached) : [];
+    } catch {
+      return [];
+    }
+  };
+
+  if (isOfflineMode) {
+    console.log("[Database] Đang tải dữ liệu hoàn toàn từ bộ nhớ cục bộ (Offline Mode)...");
+    return {
+      sanPhams: getCached('B_SANPHAM'),
+      nhapXuats: getCached('B_NHAPXUAT'),
+      nhapXuatCTs: getCached('B_NHAPXUATCT'),
+      kiemKhos: getCached('B_KIEMKHO'),
+      thuongHieus: getCached('B_THUONGHIEU'),
+      chiNhanhs: getCached('B_CHINHANH'),
+      nhanViens: getCached('B_NHANVIEN')
+    };
+  }
+
   let dataSanPhams: any[] = [];
   let dataNhapXuats: any[] = [];
   let dataNhapXuatCTs: any[] = [];
@@ -394,6 +489,21 @@ export async function fetchAllUserData(userId: string): Promise<UserDataPayload>
       supabase.from('b_chinhanh').select('*').eq('user_id', userId),
       supabase.from('b_nhanvien').select('*').eq('user_id', userId)
     ]);
+
+    // Kiểm tra xem có lỗi kết nối mạng nào từ các direct queries không
+    const directQueries = [
+      { name: 'b_kiemkho', res: results[3] },
+      { name: 'b_thuonghieu', res: results[4] },
+      { name: 'b_chinhanh', res: results[5] },
+      { name: 'b_nhanvien', res: results[6] }
+    ];
+
+    for (const q of directQueries) {
+      if (q.res.error && isNetworkError(q.res.error)) {
+        throw q.res.error;
+      }
+    }
+
     dataSanPhams = results[0];
     dataNhapXuats = results[1];
     dataNhapXuatCTs = results[2];
@@ -403,6 +513,19 @@ export async function fetchAllUserData(userId: string): Promise<UserDataPayload>
     resNhanViens = results[6];
   } catch (err) {
     logDbError('Lỗi tải fetchAllUserData từ Supabase:', err);
+    if (isNetworkError(err)) {
+      isOfflineMode = true;
+      console.warn("[Database] Phát hiện lỗi kết nối mạng khi tải dữ liệu. Đã kích hoạt chế độ Ngoại tuyến (Offline Mode)...");
+      return {
+        sanPhams: getCached('B_SANPHAM'),
+        nhapXuats: getCached('B_NHAPXUAT'),
+        nhapXuatCTs: getCached('B_NHAPXUATCT'),
+        kiemKhos: getCached('B_KIEMKHO'),
+        thuongHieus: getCached('B_THUONGHIEU'),
+        chiNhanhs: getCached('B_CHINHANH'),
+        nhanViens: getCached('B_NHANVIEN')
+      };
+    }
   }
 
   const handleLoadError = (table: string, err: any) => {
@@ -521,6 +644,9 @@ export async function fetchAllUserData(userId: string): Promise<UserDataPayload>
  * Đồng bộ hoặc Thêm/Sửa một Sản phẩm
  */
 export async function syncSanPham(p: SanPham, userId: string) {
+  if (isOfflineMode) {
+    return { data: [p], error: null };
+  }
   userId = await resolveEffectiveUserId();
   try {
     const payload = {
@@ -578,6 +704,9 @@ export async function syncSanPham(p: SanPham, userId: string) {
  * Đồng bộ danh sách Sản phẩm (hỗ trợ lưu nhiều sản phẩm cùng lúc)
  */
 export async function syncSanPhams(pList: SanPham[], userId: string) {
+  if (isOfflineMode) {
+    return { data: pList, error: null };
+  }
   userId = await resolveEffectiveUserId();
   try {
     const promises = pList.map(async (p) => {
@@ -637,6 +766,9 @@ export async function syncSanPhams(pList: SanPham[], userId: string) {
  * Đồng bộ hoặc Thêm/Sửa Phiếu xuất nhập
  */
 export async function syncNhapXuat(nx: NhapXuat, userId: string) {
+  if (isOfflineMode) {
+    return { data: [nx], error: null };
+  }
   userId = await resolveEffectiveUserId();
   try {
     const payload = {
@@ -692,6 +824,9 @@ export async function syncNhapXuat(nx: NhapXuat, userId: string) {
  * Đồng bộ danh sách chi tiết hóa đơn
  */
 export async function syncNhapXuatCTs(details: NhapXuatCT[], userId: string) {
+  if (isOfflineMode) {
+    return { data: details, error: null };
+  }
   userId = await resolveEffectiveUserId();
   try {
     const promises = details.map(async (d) => {
@@ -752,6 +887,9 @@ export async function syncNhapXuatCTs(details: NhapXuatCT[], userId: string) {
  * Đồng bộ phiếu kiểm kho
  */
 export async function syncKiemKho(k: KiemKho, userId: string) {
+  if (isOfflineMode) {
+    return { data: [k], error: null };
+  }
   userId = await resolveEffectiveUserId();
   try {
     const payload = {
@@ -808,6 +946,9 @@ export async function syncKiemKho(k: KiemKho, userId: string) {
  * Đồng bộ Thương hiệu
  */
 export async function syncThuongHieu(t: ThươngHieu, userId: string) {
+  if (isOfflineMode) {
+    return { data: [t], error: null };
+  }
   userId = await resolveEffectiveUserId();
   try {
     const payload = {
@@ -916,6 +1057,9 @@ export async function syncThuongHieu(t: ThươngHieu, userId: string) {
  * Đồng bộ Chi nhánh
  */
 export async function syncChiNhanh(c: ChiNhanh, userId: string) {
+  if (isOfflineMode) {
+    return { data: [c], error: null };
+  }
   userId = await resolveEffectiveUserId();
   try {
     const payload = {
@@ -963,6 +1107,9 @@ export async function syncChiNhanh(c: ChiNhanh, userId: string) {
  * Đồng bộ Nhân viên
  */
 export async function syncNhanVien(n: NhanVien, userId: string) {
+  if (isOfflineMode) {
+    return { data: [n], error: null };
+  }
   userId = await resolveEffectiveUserId();
   try {
     const payload = {

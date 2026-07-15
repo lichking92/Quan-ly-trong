@@ -38,6 +38,8 @@ console.error = function (...args) {
 import { 
   TrendingUp, 
   TrendingDown, 
+  FileUp,
+  FileDown,
   Boxes, 
   ClipboardCheck, 
   History, 
@@ -87,7 +89,8 @@ import {
   deleteChiNhanh,
   deleteNhanVien,
   syncEmailLog,
-  fetchEmailLogs
+  fetchEmailLogs,
+  setOfflineMode
 } from './supabaseSync';
 
 // Import Components con
@@ -195,6 +198,7 @@ export default function App() {
       return;
     }
     setIsSyncing(true);
+    setOfflineMode(false);
     try {
       await syncAllDataFromSupabase(currentUser.id, currentUser.username);
       setSuccessToast({ message: "Đồng bộ dữ liệu trực tuyến thành công!" });
@@ -1978,7 +1982,7 @@ export default function App() {
             }`}
             title={sidebarCollapsed ? "Lập Phiếu Xuất" : undefined}
           >
-            <TrendingDown className="w-4 h-4 shrink-0 text-rose-500" /> 
+            <FileUp className="w-4 h-4 shrink-0 text-rose-500" /> 
             {!sidebarCollapsed && <span>Lập Phiếu Xuất</span>}
           </button>
 
@@ -1990,7 +1994,7 @@ export default function App() {
             }`}
             title={sidebarCollapsed ? "Lập Phiếu Nhập" : undefined}
           >
-            <TrendingUp className="w-4 h-4 shrink-0 text-emerald-500" /> 
+            <FileDown className="w-4 h-4 shrink-0 text-emerald-500" /> 
             {!sidebarCollapsed && <span>Lập Phiếu Nhập</span>}
           </button>
 
@@ -2381,7 +2385,7 @@ export default function App() {
             {
               tab: 'TRANSACTION_XUAT',
               label: 'Xuất Kho',
-              icon: TrendingDown
+              icon: FileUp
             },
             {
               tab: 'ORDER_PARSER',
