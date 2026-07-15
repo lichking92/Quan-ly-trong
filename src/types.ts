@@ -99,8 +99,10 @@ export interface ThươngHieu {
   CHIET_XUAT_MAC_DINH?: string; // Cấu hình chiết suất mặc định cho thương hiệu này
   TINH_NANG_MAC_DINH?: string;  // Cấu hình tính năng mặc định cho thương hiệu này
   TINH_NANG?: string;           // Tính năng riêng biệt của dòng thương hiệu này (Ví dụ: ĐM, ASX, Đổi màu)
-  SPH_TU?: number;              // Độ cầu từ
-  SPH_DEN?: number;             // Độ cầu đến
+  SPH_TU?: number;              // Độ cầu cận từ
+  SPH_DEN?: number;             // Độ cầu cận đến
+  SPH_VIEN_TU?: number;         // Độ viễn từ
+  SPH_VIEN_DEN?: number;        // Độ viễn đến
   BUOC_NHAY?: number;           // Bước nhảy (mặc định 0.25)
 }
 

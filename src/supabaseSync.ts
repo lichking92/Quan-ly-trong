@@ -1,16 +1,21 @@
 import { supabase } from './supabaseClient';
 import { SanPham, NhapXuat, NhapXuatCT, KiemKho, ThươngHieu, ChiNhanh, NhanVien, EmailLog } from './types';
-import {
-  MOCK_SAN_PHAM,
-  MOCK_NHAP_XUAT,
-  MOCK_NHAP_XUAT_CT,
-  MOCK_KIEM_KHO,
-  MOCK_THUONG_HIEU,
-  MOCK_CHI_NHANH,
-  MOCK_NHAN_VIEN
-} from './data/mockData';
 
 export const SHARED_USER_ID = "00000000-0000-0000-0000-000000000000";
+
+export function logDbError(msg: string, err: any) {
+  const errMsg = err ? (err.message || String(err)) : '';
+  const isNetwork = errMsg.includes('Failed to fetch') || 
+                    errMsg.includes('TypeError') || 
+                    errMsg.includes('network') ||
+                    errMsg.includes('fetch') ||
+                    (typeof window !== 'undefined' && window.navigator && !window.navigator.onLine);
+  if (isNetwork) {
+    console.warn(`[Network/DB Warning (Demoted)]: ${msg}`, err);
+  } else {
+    console.error(msg, err);
+  }
+}
 
 /**
  * Trả về User ID có hiệu lực của Chủ cửa hàng/Admin (bảo đảm tính nhất quán của Cơ sở dữ liệu và bảo vệ fkey)
@@ -170,6 +175,16 @@ export async function tryCreateColumnsOnSupabase() {
       END;
 
       BEGIN
+        ALTER TABLE b_thuonghieu ADD COLUMN IF NOT EXISTS "SPH_VIEN_TU" numeric;
+      EXCEPTION WHEN others THEN NULL;
+      END;
+
+      BEGIN
+        ALTER TABLE b_thuonghieu ADD COLUMN IF NOT EXISTS "SPH_VIEN_DEN" numeric;
+      EXCEPTION WHEN others THEN NULL;
+      END;
+
+      BEGIN
         ALTER TABLE b_thuonghieu ADD COLUMN IF NOT EXISTS "BUOC_NHAY" numeric DEFAULT 0.25;
       EXCEPTION WHEN others THEN NULL;
       END;
@@ -307,88 +322,8 @@ export async function ensureUserOnboarded(userId: string): Promise<UserDataPaylo
       }
     }
 
-    // 2. Kiểm tra xem đã có sản phẩm nào chưa của user này
-    const { data: existingProducts, error: checkError } = await supabase
-      .from('b_sanpham')
-      .select('SKU')
-      .eq('user_id', userId)
-      .limit(1);
-
-    if (checkError) {
-      console.error('Lỗi kiểm tra Onboarding:', checkError.message);
-    }
-
-    // Nếu chưa có sản phẩm nào, tiến hành ghi dữ liệu mẫu đầu kỳ
-    if (!existingProducts || existingProducts.length === 0) {
-      console.log('Tài khoản mới! Tự động nạp dữ liệu mẫu Onboarding cho User ID:', userId);
-
-      // Thêm Thương hiệu mẫu
-      if (MOCK_THUONG_HIEU.length > 0) {
-        await supabase.from('b_thuonghieu').insert(
-          MOCK_THUONG_HIEU.map(t => ({
-            "THUONG_HIEU": t.THUONG_HIEU,
-            "CHIET_XUAT_MAC_DINH": t.CHIET_XUAT_MAC_DINH,
-            "TINH_NANG_MAC_DINH": t.TINH_NANG_MAC_DINH,
-            user_id: userId
-          }))
-        );
-      }
-
-      // Thêm Chi nhánh mẫu
-      if (MOCK_CHI_NHANH.length > 0) {
-        await supabase.from('b_chinhanh').insert(
-          MOCK_CHI_NHANH.map(c => ({ ...c, user_id: userId }))
-        );
-      }
-
-      // Thêm Nhân viên mẫu
-      if (MOCK_NHAN_VIEN.length > 0) {
-        await supabase.from('b_nhanvien').insert(
-          MOCK_NHAN_VIEN.map(n => ({
-            "MA_NV": n.MA_NV,
-            "HO_TEN": n.HO_TEN,
-            "CHUC_VU": n.CHUC_VU,
-            "BO_PHAN": n.BO_PHAN,
-            "CHI_NHANH": n.CHI_NHANH,
-            "EMAIL": n.EMAIL,
-            "ROLE": n.ROLE,
-            "PERMISSIONS": n.PERMISSIONS,
-            "WRITE_ACCESS": n.WRITE_ACCESS,
-            user_id: userId
-          }))
-        );
-      }
-
-      // Thêm Sản phẩm mẫu
-      if (MOCK_SAN_PHAM.length > 0) {
-        await supabase.from('b_sanpham').insert(
-          MOCK_SAN_PHAM.map(s => ({ ...s, user_id: userId }))
-        );
-      }
-
-      // Thêm Phiếu xuất nhập mẫu
-      if (MOCK_NHAP_XUAT.length > 0) {
-        await supabase.from('b_nhapxuat').insert(
-          MOCK_NHAP_XUAT.map(nx => ({ ...nx, user_id: userId }))
-        );
-      }
-
-      // Thêm Chi tiết phiếu mẫu
-      if (MOCK_NHAP_XUAT_CT.length > 0) {
-        await supabase.from('b_nhapxuatct').insert(
-          MOCK_NHAP_XUAT_CT.map(ct => ({ ...ct, user_id: userId }))
-        );
-      }
-
-      // Thêm Kiểm kho mẫu
-      if (MOCK_KIEM_KHO.length > 0) {
-        await supabase.from('b_kiemkho').insert(
-          MOCK_KIEM_KHO.map(k => ({ ...k, user_id: userId }))
-        );
-      }
-    }
   } catch (err) {
-    console.error('Lỗi ngoài dự kiến khi thực hiện Onboarding:', err);
+    logDbError('Lỗi ngoài dự kiến khi thực hiện Onboarding:', err);
   }
 
   // Tải toàn bộ dữ liệu mới nhất
@@ -406,26 +341,31 @@ export async function fetchAllRows(tableName: string, userId: string): Promise<a
   let hasMore = true;
 
   while (hasMore) {
-    const { data, error } = await supabase
-      .from(tableName)
-      .select('*')
-      .eq('user_id', userId)
-      .range(from, from + pageSize - 1);
+    try {
+      const { data, error } = await supabase
+        .from(tableName)
+        .select('*')
+        .eq('user_id', userId)
+        .range(from, from + pageSize - 1);
 
-    if (error) {
-      console.error(`Lỗi fetchAllRows từ ${tableName}:`, error.message);
-      break;
-    }
-
-    if (data && data.length > 0) {
-      allData = [...allData, ...data];
-      if (data.length < pageSize) {
-        hasMore = false;
-      } else {
-        from += pageSize;
+      if (error) {
+        logDbError(`Lỗi fetchAllRows từ ${tableName}:`, error);
+        break;
       }
-    } else {
-      hasMore = false;
+
+      if (data && data.length > 0) {
+        allData = [...allData, ...data];
+        if (data.length < pageSize) {
+          hasMore = false;
+        } else {
+          from += pageSize;
+        }
+      } else {
+        hasMore = false;
+      }
+    } catch (err) {
+      logDbError(`Lỗi ngoại lệ fetchAllRows từ ${tableName}:`, err);
+      break;
     }
   }
   return allData;
@@ -436,28 +376,43 @@ export async function fetchAllRows(tableName: string, userId: string): Promise<a
  */
 export async function fetchAllUserData(userId: string): Promise<UserDataPayload> {
   userId = await resolveEffectiveUserId();
-  const [
-    dataSanPhams,
-    dataNhapXuats,
-    dataNhapXuatCTs,
-    resKiemKhos,
-    resThuongHieus,
-    resChiNhanhs,
-    resNhanViens
-  ] = await Promise.all([
-    fetchAllRows('b_sanpham', userId),
-    fetchAllRows('b_nhapxuat', userId),
-    fetchAllRows('b_nhapxuatct', userId),
-    supabase.from('b_kiemkho').select('*').eq('user_id', userId),
-    supabase.from('b_thuonghieu').select('*').eq('user_id', userId),
-    supabase.from('b_chinhanh').select('*').eq('user_id', userId),
-    supabase.from('b_nhanvien').select('*').eq('user_id', userId)
-  ]);
+  let dataSanPhams: any[] = [];
+  let dataNhapXuats: any[] = [];
+  let dataNhapXuatCTs: any[] = [];
+  let resKiemKhos: any = { data: null, error: null };
+  let resThuongHieus: any = { data: null, error: null };
+  let resChiNhanhs: any = { data: null, error: null };
+  let resNhanViens: any = { data: null, error: null };
 
-  if (resKiemKhos.error) console.error('Lỗi tải b_kiemkho:', resKiemKhos.error.message);
-  if (resThuongHieus.error) console.error('Lỗi tải b_thuonghieu:', resThuongHieus.error.message);
-  if (resChiNhanhs.error) console.error('Lỗi tải b_chinhanh:', resChiNhanhs.error.message);
-  if (resNhanViens.error) console.error('Lỗi tải b_nhanvien:', resNhanViens.error.message);
+  try {
+    const results = await Promise.all([
+      fetchAllRows('b_sanpham', userId),
+      fetchAllRows('b_nhapxuat', userId),
+      fetchAllRows('b_nhapxuatct', userId),
+      supabase.from('b_kiemkho').select('*').eq('user_id', userId),
+      supabase.from('b_thuonghieu').select('*').eq('user_id', userId),
+      supabase.from('b_chinhanh').select('*').eq('user_id', userId),
+      supabase.from('b_nhanvien').select('*').eq('user_id', userId)
+    ]);
+    dataSanPhams = results[0];
+    dataNhapXuats = results[1];
+    dataNhapXuatCTs = results[2];
+    resKiemKhos = results[3];
+    resThuongHieus = results[4];
+    resChiNhanhs = results[5];
+    resNhanViens = results[6];
+  } catch (err) {
+    logDbError('Lỗi tải fetchAllUserData từ Supabase:', err);
+  }
+
+  const handleLoadError = (table: string, err: any) => {
+    logDbError(`Lỗi tải ${table}:`, err);
+  };
+
+  if (resKiemKhos.error) handleLoadError('b_kiemkho', resKiemKhos.error);
+  if (resThuongHieus.error) handleLoadError('b_thuonghieu', resThuongHieus.error);
+  if (resChiNhanhs.error) handleLoadError('b_chinhanh', resChiNhanhs.error);
+  if (resNhanViens.error) handleLoadError('b_nhanvien', resNhanViens.error);
 
   // Ánh xạ dữ liệu trả về từ Postgres thành Interface TypeScript chính xác
   const sanPhams: SanPham[] = (dataSanPhams || []).map(item => ({
@@ -523,6 +478,8 @@ export async function fetchAllUserData(userId: string): Promise<UserDataPayload>
     TINH_NANG: item.TINH_NANG_MAC_DINH || '',
     SPH_TU: item.SPH_TU !== null && item.SPH_TU !== undefined ? Number(item.SPH_TU) : undefined,
     SPH_DEN: item.SPH_DEN !== null && item.SPH_DEN !== undefined ? Number(item.SPH_DEN) : undefined,
+    SPH_VIEN_TU: item.SPH_VIEN_TU !== null && item.SPH_VIEN_TU !== undefined ? Number(item.SPH_VIEN_TU) : undefined,
+    SPH_VIEN_DEN: item.SPH_VIEN_DEN !== null && item.SPH_VIEN_DEN !== undefined ? Number(item.SPH_VIEN_DEN) : undefined,
     BUOC_NHAY: item.BUOC_NHAY !== null && item.BUOC_NHAY !== undefined ? Number(item.BUOC_NHAY) : undefined
   }));
 
@@ -602,17 +559,17 @@ export async function syncSanPham(p: SanPham, userId: string) {
         .eq('SKU', p.SKU)
         .eq('user_id', userId)
         .select();
-      if (res.error) console.error("Lỗi syncSanPham (update):", res.error);
+      if (res.error) logDbError("Lỗi syncSanPham (update):", res.error);
     } else {
       res = await supabase
         .from('b_sanpham')
         .insert(payload)
         .select();
-      if (res.error) console.error("Lỗi syncSanPham (insert):", res.error);
+      if (res.error) logDbError("Lỗi syncSanPham (insert):", res.error);
     }
     return res;
   } catch (err: any) {
-    console.error("Lỗi ngoài dự kiến trong syncSanPham:", err);
+    logDbError("Lỗi ngoài dự kiến trong syncSanPham:", err);
     return { error: err };
   }
 }
@@ -666,12 +623,12 @@ export async function syncSanPhams(pList: SanPham[], userId: string) {
     const results = await Promise.all(promises);
     const failed = results.find(r => r.error);
     if (failed) {
-      console.error("Lỗi syncSanPhams:", failed.error);
+      logDbError("Lỗi syncSanPhams:", failed.error);
       return { error: failed.error };
     }
     return { data: results.map(r => r.data).flat(), error: null };
   } catch (err: any) {
-    console.error("Lỗi ngoài dự kiến trong syncSanPhams:", err);
+    logDbError("Lỗi ngoài dự kiến trong syncSanPhams:", err);
     return { error: err };
   }
 }
@@ -716,17 +673,17 @@ export async function syncNhapXuat(nx: NhapXuat, userId: string) {
         .eq('HOA_DON', nx.HOA_DON)
         .eq('user_id', userId)
         .select();
-      if (res.error) console.error("Lỗi syncNhapXuat (update):", res.error);
+      if (res.error) logDbError("Lỗi syncNhapXuat (update):", res.error);
     } else {
       res = await supabase
         .from('b_nhapxuat')
         .insert(payload)
         .select();
-      if (res.error) console.error("Lỗi syncNhapXuat (insert):", res.error);
+      if (res.error) logDbError("Lỗi syncNhapXuat (insert):", res.error);
     }
     return res;
   } catch (err: any) {
-    console.error("Lỗi ngoài dự kiến trong syncNhapXuat:", err);
+    logDbError("Lỗi ngoài dự kiến trong syncNhapXuat:", err);
     return { error: err };
   }
 }
@@ -781,12 +738,12 @@ export async function syncNhapXuatCTs(details: NhapXuatCT[], userId: string) {
     const results = await Promise.all(promises);
     const failed = results.find(r => r.error);
     if (failed) {
-      console.error("Lỗi syncNhapXuatCTs:", failed.error);
+      logDbError("Lỗi syncNhapXuatCTs:", failed.error);
       return { error: failed.error };
     }
     return { data: results.map(r => r.data).flat(), error: null };
   } catch (err: any) {
-    console.error("Lỗi ngoài dự kiến trong syncNhapXuatCTs:", err);
+    logDbError("Lỗi ngoài dự kiến trong syncNhapXuatCTs:", err);
     return { error: err };
   }
 }
@@ -832,17 +789,17 @@ export async function syncKiemKho(k: KiemKho, userId: string) {
         .eq('SKU', k.SKU)
         .eq('user_id', userId)
         .select();
-      if (res.error) console.error("Lỗi syncKiemKho (update):", res.error);
+      if (res.error) logDbError("Lỗi syncKiemKho (update):", res.error);
     } else {
       res = await supabase
         .from('b_kiemkho')
         .insert(payload)
         .select();
-      if (res.error) console.error("Lỗi syncKiemKho (insert):", res.error);
+      if (res.error) logDbError("Lỗi syncKiemKho (insert):", res.error);
     }
     return res;
   } catch (err: any) {
-    console.error("Lỗi ngoài dự kiến trong syncKiemKho:", err);
+    logDbError("Lỗi ngoài dự kiến trong syncKiemKho:", err);
     return { error: err };
   }
 }
@@ -859,6 +816,8 @@ export async function syncThuongHieu(t: ThươngHieu, userId: string) {
       "TINH_NANG_MAC_DINH": t.TINH_NANG_MAC_DINH,
       "SPH_TU": t.SPH_TU !== undefined ? t.SPH_TU : null,
       "SPH_DEN": t.SPH_DEN !== undefined ? t.SPH_DEN : null,
+      "SPH_VIEN_TU": t.SPH_VIEN_TU !== undefined ? t.SPH_VIEN_TU : null,
+      "SPH_VIEN_DEN": t.SPH_VIEN_DEN !== undefined ? t.SPH_VIEN_DEN : null,
       "BUOC_NHAY": t.BUOC_NHAY !== undefined ? t.BUOC_NHAY : null,
       user_id: userId
     };
@@ -882,17 +841,73 @@ export async function syncThuongHieu(t: ThươngHieu, userId: string) {
         .eq('THUONG_HIEU', t.THUONG_HIEU)
         .eq('user_id', userId)
         .select();
-      if (res.error) console.error("Lỗi syncThuongHieu (update):", res.error);
+
+      if (res.error && (res.error.code === '42703' || String(res.error.message).includes('column'))) {
+        console.warn("Retrying syncThuongHieu (update) without SPH_VIEN columns...");
+        const backupPayload = { ...payload };
+        delete (backupPayload as any)["SPH_VIEN_TU"];
+        delete (backupPayload as any)["SPH_VIEN_DEN"];
+        res = await supabase
+          .from('b_thuonghieu')
+          .update(backupPayload)
+          .eq('THUONG_HIEU', t.THUONG_HIEU)
+          .eq('user_id', userId)
+          .select();
+
+        if (res.error && (res.error.code === '42703' || String(res.error.message).includes('column'))) {
+          console.warn("Retrying syncThuongHieu (update) without SPH_TU/SPH_DEN/BUOC_NHAY columns...");
+          const minimalPayload = {
+            "THUONG_HIEU": t.THUONG_HIEU,
+            "CHIET_XUAT_MAC_DINH": t.CHIET_XUAT_MAC_DINH,
+            "TINH_NANG_MAC_DINH": t.TINH_NANG_MAC_DINH,
+            user_id: userId
+          };
+          res = await supabase
+            .from('b_thuonghieu')
+            .update(minimalPayload)
+            .eq('THUONG_HIEU', t.THUONG_HIEU)
+            .eq('user_id', userId)
+            .select();
+        }
+      }
+
+      if (res.error) logDbError("Lỗi syncThuongHieu (update):", res.error);
     } else {
       res = await supabase
         .from('b_thuonghieu')
         .insert(payload)
         .select();
-      if (res.error) console.error("Lỗi syncThuongHieu (insert):", res.error);
+
+      if (res.error && (res.error.code === '42703' || String(res.error.message).includes('column'))) {
+        console.warn("Retrying syncThuongHieu (insert) without SPH_VIEN columns...");
+        const backupPayload = { ...payload };
+        delete (backupPayload as any)["SPH_VIEN_TU"];
+        delete (backupPayload as any)["SPH_VIEN_DEN"];
+        res = await supabase
+          .from('b_thuonghieu')
+          .insert(backupPayload)
+          .select();
+
+        if (res.error && (res.error.code === '42703' || String(res.error.message).includes('column'))) {
+          console.warn("Retrying syncThuongHieu (insert) without SPH_TU/SPH_DEN/BUOC_NHAY columns...");
+          const minimalPayload = {
+            "THUONG_HIEU": t.THUONG_HIEU,
+            "CHIET_XUAT_MAC_DINH": t.CHIET_XUAT_MAC_DINH,
+            "TINH_NANG_MAC_DINH": t.TINH_NANG_MAC_DINH,
+            user_id: userId
+          };
+          res = await supabase
+            .from('b_thuonghieu')
+            .insert(minimalPayload)
+            .select();
+        }
+      }
+
+      if (res.error) logDbError("Lỗi syncThuongHieu (insert):", res.error);
     }
     return res;
   } catch (err: any) {
-    console.error("Lỗi ngoài dự kiến trong syncThuongHieu:", err);
+    logDbError("Lỗi ngoài dự kiến trong syncThuongHieu:", err);
     return { error: err };
   }
 }
@@ -929,17 +944,17 @@ export async function syncChiNhanh(c: ChiNhanh, userId: string) {
         .eq('CHI_NHANH', c.CHI_NHANH)
         .eq('user_id', userId)
         .select();
-      if (res.error) console.error("Lỗi syncChiNhanh (update):", res.error);
+      if (res.error) logDbError("Lỗi syncChiNhanh (update):", res.error);
     } else {
       res = await supabase
         .from('b_chinhanh')
         .insert(payload)
         .select();
-      if (res.error) console.error("Lỗi syncChiNhanh (insert):", res.error);
+      if (res.error) logDbError("Lỗi syncChiNhanh (insert):", res.error);
     }
     return res;
   } catch (err: any) {
-    console.error("Lỗi ngoài dự kiến trong syncChiNhanh:", err);
+    logDbError("Lỗi ngoài dự kiến trong syncChiNhanh:", err);
     return { error: err };
   }
 }
@@ -988,19 +1003,19 @@ export async function syncNhanVien(n: NhanVien, userId: string) {
         .eq('MA_NV', n.MA_NV)
         .eq('user_id', userId)
         .select();
-      if (res.error) console.error("Lỗi syncNhanVien (update):", res.error);
+      if (res.error) logDbError("Lỗi syncNhanVien (update):", res.error);
     } else {
       // Chưa có -> Thêm mới
       res = await supabase
         .from('b_nhanvien')
         .insert(payload)
         .select();
-      if (res.error) console.error("Lỗi syncNhanVien (insert):", res.error);
+      if (res.error) logDbError("Lỗi syncNhanVien (insert):", res.error);
     }
 
     return res;
   } catch (err: any) {
-    console.error("Lỗi ngoài dự kiến trong syncNhanVien:", err);
+    logDbError("Lỗi ngoài dự kiến trong syncNhanVien:", err);
     return { error: err };
   }
 }
@@ -1013,8 +1028,8 @@ export async function deleteNhapXuatAndDetails(hoaDon: string) {
     supabase.from('b_nhapxuatct').delete().eq('HOA_DON', hoaDon),
     supabase.from('b_nhapxuat').delete().eq('HOA_DON', hoaDon)
   ]);
-  if (res1.error) console.error("Lỗi deleteNhapXuatCT:", res1.error);
-  if (res2.error) console.error("Lỗi deleteNhapXuat:", res2.error);
+  if (res1.error) logDbError("Lỗi deleteNhapXuatCT:", res1.error);
+  if (res2.error) logDbError("Lỗi deleteNhapXuat:", res2.error);
   return { error: res1.error || res2.error };
 }
 
@@ -1024,7 +1039,7 @@ export async function deleteNhapXuatAndDetails(hoaDon: string) {
 export async function deleteThuongHieu(thuongHieu: string, userId: string) {
   userId = await resolveEffectiveUserId();
   const res = await supabase.from('b_thuonghieu').delete().eq('THUONG_HIEU', thuongHieu).eq('user_id', userId);
-  if (res.error) console.error("Lỗi deleteThuongHieu:", res.error);
+  if (res.error) logDbError("Lỗi deleteThuongHieu:", res.error);
   return res;
 }
 
@@ -1034,7 +1049,7 @@ export async function deleteThuongHieu(thuongHieu: string, userId: string) {
 export async function deleteChiNhanh(chiNhanh: string, userId: string) {
   userId = await resolveEffectiveUserId();
   const res = await supabase.from('b_chinhanh').delete().eq('CHI_NHANH', chiNhanh).eq('user_id', userId);
-  if (res.error) console.error("Lỗi deleteChiNhanh:", res.error);
+  if (res.error) logDbError("Lỗi deleteChiNhanh:", res.error);
   return res;
 }
 
@@ -1044,7 +1059,7 @@ export async function deleteChiNhanh(chiNhanh: string, userId: string) {
 export async function deleteNhanVien(email: string, userId: string) {
   userId = await resolveEffectiveUserId();
   const res = await supabase.from('b_nhanvien').delete().eq('EMAIL', email).eq('user_id', userId);
-  if (res.error) console.error("Lỗi deleteNhanVien:", res.error);
+  if (res.error) logDbError("Lỗi deleteNhanVien:", res.error);
   return res;
 }
 

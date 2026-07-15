@@ -71,7 +71,7 @@ export default function CategoryManagement({
   const [viewingEmailLog, setViewingEmailLog] = useState<EmailLog | null>(null);
   
   const consolidatedBrandsList = useMemo(() => {
-    const mergedMap = new Map<string, { chietXuats: Set<string>; features: Set<string>; SPH_TU?: number; SPH_DEN?: number; BUOC_NHAY?: number }>();
+    const mergedMap = new Map<string, { chietXuats: Set<string>; features: Set<string>; SPH_TU?: number; SPH_DEN?: number; SPH_VIEN_TU?: number; SPH_VIEN_DEN?: number; BUOC_NHAY?: number }>();
     thuongHieus.forEach(b => {
       const key = b.THUONG_HIEU.trim();
       if (!mergedMap.has(key)) {
@@ -80,6 +80,8 @@ export default function CategoryManagement({
           features: new Set(),
           SPH_TU: b.SPH_TU,
           SPH_DEN: b.SPH_DEN,
+          SPH_VIEN_TU: b.SPH_VIEN_TU,
+          SPH_VIEN_DEN: b.SPH_VIEN_DEN,
           BUOC_NHAY: b.BUOC_NHAY
         });
       }
@@ -87,6 +89,8 @@ export default function CategoryManagement({
       
       if (b.SPH_TU !== undefined) val.SPH_TU = b.SPH_TU;
       if (b.SPH_DEN !== undefined) val.SPH_DEN = b.SPH_DEN;
+      if (b.SPH_VIEN_TU !== undefined) val.SPH_VIEN_TU = b.SPH_VIEN_TU;
+      if (b.SPH_VIEN_DEN !== undefined) val.SPH_VIEN_DEN = b.SPH_VIEN_DEN;
       if (b.BUOC_NHAY !== undefined) val.BUOC_NHAY = b.BUOC_NHAY;
 
       if (b.CHIET_XUAT_MAC_DINH) {
@@ -108,6 +112,8 @@ export default function CategoryManagement({
         TINH_NANG: fnList.length > 0 ? fnList.join(',') : 'ASX',
         SPH_TU: val.SPH_TU,
         SPH_DEN: val.SPH_DEN,
+        SPH_VIEN_TU: val.SPH_VIEN_TU,
+        SPH_VIEN_DEN: val.SPH_VIEN_DEN,
         BUOC_NHAY: val.BUOC_NHAY
       };
     });
@@ -168,6 +174,8 @@ export default function CategoryManagement({
   const [chietXuatInput, setChietXuatInput] = useState<string>('');
   const [newBrandSphTu, setNewBrandSphTu] = useState<string>('');
   const [newBrandSphDen, setNewBrandSphDen] = useState<string>('');
+  const [newBrandSphVienTu, setNewBrandSphVienTu] = useState<string>('');
+  const [newBrandSphVienDen, setNewBrandSphVienDen] = useState<string>('');
   const [newBrandBuocNhay, setNewBrandBuocNhay] = useState<string>('0.25');
 
   // Form Chi nhánh
@@ -253,6 +261,8 @@ export default function CategoryManagement({
       TINH_NANG: newBrandFeatures.join(','),
       SPH_TU: newBrandSphTu.trim() !== '' ? Number(newBrandSphTu) : undefined,
       SPH_DEN: newBrandSphDen.trim() !== '' ? Number(newBrandSphDen) : undefined,
+      SPH_VIEN_TU: newBrandSphVienTu.trim() !== '' ? Number(newBrandSphVienTu) : undefined,
+      SPH_VIEN_DEN: newBrandSphVienDen.trim() !== '' ? Number(newBrandSphVienDen) : undefined,
       BUOC_NHAY: newBrandBuocNhay.trim() !== '' ? Number(newBrandBuocNhay) : 0.25
     };
 
@@ -282,6 +292,8 @@ export default function CategoryManagement({
     setNewBrandChietXuats(chietXuats);
     setNewBrandSphTu(brand.SPH_TU !== undefined && brand.SPH_TU !== null ? String(brand.SPH_TU) : '0');
     setNewBrandSphDen(brand.SPH_DEN !== undefined && brand.SPH_DEN !== null ? String(brand.SPH_DEN) : '-8');
+    setNewBrandSphVienTu(brand.SPH_VIEN_TU !== undefined && brand.SPH_VIEN_TU !== null ? String(brand.SPH_VIEN_TU) : '0.75');
+    setNewBrandSphVienDen(brand.SPH_VIEN_DEN !== undefined && brand.SPH_VIEN_DEN !== null ? String(brand.SPH_VIEN_DEN) : '4.00');
     setNewBrandBuocNhay(brand.BUOC_NHAY !== undefined && brand.BUOC_NHAY !== null ? String(brand.BUOC_NHAY) : '0.25');
     setFeatureInput('');
     setChietXuatInput('');
@@ -315,6 +327,8 @@ export default function CategoryManagement({
       TINH_NANG: newBrandFeatures.join(','),
       SPH_TU: newBrandSphTu.trim() !== '' ? Number(newBrandSphTu) : undefined,
       SPH_DEN: newBrandSphDen.trim() !== '' ? Number(newBrandSphDen) : undefined,
+      SPH_VIEN_TU: newBrandSphVienTu.trim() !== '' ? Number(newBrandSphVienTu) : undefined,
+      SPH_VIEN_DEN: newBrandSphVienDen.trim() !== '' ? Number(newBrandSphVienDen) : undefined,
       BUOC_NHAY: newBrandBuocNhay.trim() !== '' ? Number(newBrandBuocNhay) : 0.25
     };
 
@@ -331,6 +345,8 @@ export default function CategoryManagement({
     setNewBrandChietXuats([]);
     setNewBrandSphTu('');
     setNewBrandSphDen('');
+    setNewBrandSphVienTu('');
+    setNewBrandSphVienDen('');
     setNewBrandBuocNhay('0.25');
     setFeatureInput('');
     setChietXuatInput('');
@@ -762,40 +778,75 @@ export default function CategoryManagement({
                   </div>
 
                   {/* Cấu hình phạm vi độ cầu (SPH) */}
-                  <div className="space-y-1.5 border-t border-slate-50 pt-2">
-                    <label className="text-[10px] uppercase font-bold text-slate-400">Phạm vi Độ cầu (SPH)</label>
-                    <div className="grid grid-cols-3 gap-2">
-                      <div className="space-y-1">
-                        <span className="text-[9px] text-slate-400 font-bold block">Độ cầu từ</span>
-                        <input
-                          type="number"
-                          step="0.25"
-                          placeholder="ví dụ: 0.00"
-                          value={newBrandSphTu}
-                          onChange={(e) => setNewBrandSphTu(e.target.value)}
-                          className="w-full text-xs font-semibold text-slate-700 bg-slate-50 border border-slate-100 rounded-lg p-2 font-mono focus:outline-hidden focus:ring-2 focus:ring-blue-500/10"
-                        />
+                  <div className="space-y-3 border-t border-slate-50 pt-2">
+                    <label className="text-[10px] uppercase font-bold text-slate-400 block">Cấu hình Phạm vi Độ cầu (SPH)</label>
+                    
+                    <div className="bg-slate-50/50 p-2.5 rounded-lg border border-slate-100 space-y-2">
+                      <span className="text-[10px] font-bold text-slate-500 block">Phạm vi Cận</span>
+                      <div className="grid grid-cols-2 gap-2">
+                        <div className="space-y-1">
+                          <span className="text-[9px] text-slate-400 font-bold block">Từ</span>
+                          <input
+                            type="number"
+                            step="0.25"
+                            placeholder="ví dụ: 0.00"
+                            value={newBrandSphTu}
+                            onChange={(e) => setNewBrandSphTu(e.target.value)}
+                            className="w-full text-xs font-semibold text-slate-700 bg-white border border-slate-100 rounded-lg p-2 font-mono focus:outline-hidden focus:ring-2 focus:ring-blue-500/10"
+                          />
+                        </div>
+                        <div className="space-y-1">
+                          <span className="text-[9px] text-slate-400 font-bold block">Đến</span>
+                          <input
+                            type="number"
+                            step="0.25"
+                            placeholder="ví dụ: -8.00"
+                            value={newBrandSphDen}
+                            onChange={(e) => setNewBrandSphDen(e.target.value)}
+                            className="w-full text-xs font-semibold text-slate-700 bg-white border border-slate-100 rounded-lg p-2 font-mono focus:outline-hidden focus:ring-2 focus:ring-blue-500/10"
+                          />
+                        </div>
                       </div>
-                      <div className="space-y-1">
-                        <span className="text-[9px] text-slate-400 font-bold block">Độ cầu đến</span>
-                        <input
-                          type="number"
-                          step="0.25"
-                          placeholder="ví dụ: -4.00"
-                          value={newBrandSphDen}
-                          onChange={(e) => setNewBrandSphDen(e.target.value)}
-                          className="w-full text-xs font-semibold text-slate-700 bg-slate-50 border border-slate-100 rounded-lg p-2 font-mono focus:outline-hidden focus:ring-2 focus:ring-blue-500/10"
-                        />
+                    </div>
+
+                    <div className="bg-slate-50/50 p-2.5 rounded-lg border border-slate-100 space-y-2">
+                      <span className="text-[10px] font-bold text-slate-500 block">Phạm vi Viễn</span>
+                      <div className="grid grid-cols-2 gap-2">
+                        <div className="space-y-1">
+                          <span className="text-[9px] text-slate-400 font-bold block">Từ</span>
+                          <input
+                            type="number"
+                            step="0.25"
+                            placeholder="ví dụ: +0.75"
+                            value={newBrandSphVienTu}
+                            onChange={(e) => setNewBrandSphVienTu(e.target.value)}
+                            className="w-full text-xs font-semibold text-slate-700 bg-white border border-slate-100 rounded-lg p-2 font-mono focus:outline-hidden focus:ring-2 focus:ring-blue-500/10"
+                          />
+                        </div>
+                        <div className="space-y-1">
+                          <span className="text-[9px] text-slate-400 font-bold block">Đến</span>
+                          <input
+                            type="number"
+                            step="0.25"
+                            placeholder="ví dụ: +4.00"
+                            value={newBrandSphVienDen}
+                            onChange={(e) => setNewBrandSphVienDen(e.target.value)}
+                            className="w-full text-xs font-semibold text-slate-700 bg-white border border-slate-100 rounded-lg p-2 font-mono focus:outline-hidden focus:ring-2 focus:ring-blue-500/10"
+                          />
+                        </div>
                       </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 gap-2">
                       <div className="space-y-1">
-                        <span className="text-[9px] text-slate-400 font-bold block">Bước nhảy</span>
+                        <span className="text-[9px] text-slate-400 font-bold block">Bước nhảy độ (mặc định 0.25)</span>
                         <input
                           type="number"
                           step="0.01"
-                          placeholder="mặc định 0.25"
+                          placeholder="0.25"
                           value={newBrandBuocNhay}
                           onChange={(e) => setNewBrandBuocNhay(e.target.value)}
-                          className="w-full text-xs font-semibold text-slate-700 bg-slate-50 border border-slate-100 rounded-lg p-2 font-mono focus:outline-hidden focus:ring-2 focus:ring-blue-500/10"
+                          className="w-full text-xs font-semibold text-slate-700 bg-white border border-slate-100 rounded-lg p-2 font-mono focus:outline-hidden focus:ring-2 focus:ring-blue-500/10"
                         />
                       </div>
                     </div>
@@ -852,59 +903,77 @@ export default function CategoryManagement({
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-50">
-                    {consolidatedBrandsList.map((b, index) => {
-                      const features = (b.TINH_NANG_MAC_DINH || '').split(',').map(s => s.trim()).filter(Boolean);
-                      const chietXuats = (b.CHIET_XUAT_MAC_DINH || '').split(',').map(s => s.trim()).filter(Boolean);
-                      return (
-                        <tr key={`${b.THUONG_HIEU}-${index}`} className="hover:bg-slate-50/50 transition-colors">
-                          <td className="py-3 px-4 font-mono text-slate-400">{index + 1}</td>
-                          <td className="py-3 px-4">
-                            <div className="font-bold text-slate-700">{b.THUONG_HIEU}</div>
-                            {b.SPH_TU !== undefined && b.SPH_DEN !== undefined && (
-                              <div className="text-[10px] text-slate-400 font-mono mt-0.5">
-                                SPH: {formatDop(b.SPH_TU)} → {formatDop(b.SPH_DEN)} (bước {b.BUOC_NHAY ?? 0.25})
+                    {consolidatedBrandsList.length === 0 ? (
+                      <tr>
+                        <td colSpan={currentUser.writeAccess !== false ? 5 : 4} className="py-12 text-center text-xs text-slate-400 font-mono">
+                          Chưa có dữ liệu thương hiệu nào trên hệ thống.
+                        </td>
+                      </tr>
+                    ) : (
+                      consolidatedBrandsList.map((b, index) => {
+                        const features = (b.TINH_NANG_MAC_DINH || '').split(',').map(s => s.trim()).filter(Boolean);
+                        const chietXuats = (b.CHIET_XUAT_MAC_DINH || '').split(',').map(s => s.trim()).filter(Boolean);
+                        return (
+                          <tr key={`${b.THUONG_HIEU}-${index}`} className="hover:bg-slate-50/50 transition-colors">
+                            <td className="py-3 px-4 font-mono text-slate-400">{index + 1}</td>
+                            <td className="py-3 px-4">
+                              <div className="font-bold text-slate-700">{b.THUONG_HIEU}</div>
+                              <div className="space-y-0.5 mt-1">
+                                {b.SPH_TU !== undefined && b.SPH_DEN !== undefined && (
+                                  <div className="text-[10px] text-slate-500 font-mono">
+                                    Cận: {formatDop(b.SPH_TU)} → {formatDop(b.SPH_DEN)}
+                                  </div>
+                                )}
+                                {b.SPH_VIEN_TU !== undefined && b.SPH_VIEN_DEN !== undefined && (
+                                  <div className="text-[10px] text-rose-600 font-mono">
+                                    Viễn: {formatDop(b.SPH_VIEN_TU)} → {formatDop(b.SPH_VIEN_DEN)}
+                                  </div>
+                                )}
+                                <div className="text-[9px] text-slate-400 font-mono">
+                                  Bước nhảy: 0.25
+                                </div>
                               </div>
-                            )}
-                          </td>
-                          <td className="py-3 px-4 text-center">
-                            <div className="flex flex-wrap justify-center gap-1">
-                              {chietXuats.map(cx => (
-                                <span key={cx} className="bg-blue-50/80 text-blue-600 font-bold py-0.5 px-2 rounded-md text-[10px] font-mono border border-blue-100/50">
-                                  {cx}
-                                </span>
-                              ))}
-                            </div>
-                          </td>
-                          <td className="py-3 px-4 text-center">
-                            <div className="flex flex-wrap justify-center gap-1">
-                              {features.map(f => (
-                                <span key={f} className="bg-emerald-50/80 text-emerald-600 font-bold py-0.5 px-2 rounded-md text-[10px] border border-emerald-100/50">
-                                  {f}
-                                </span>
-                              ))}
-                            </div>
-                          </td>
-                          {currentUser.writeAccess !== false && (
-                            <td className="py-3 px-4 text-right space-x-1.5">
-                              <button
-                                onClick={() => handleStartEditBrand(b)}
-                                className="p-1 text-blue-600 hover:bg-blue-50 rounded-md cursor-pointer transition-colors inline-flex"
-                                title="Sửa"
-                              >
-                                <Edit className="w-3.5 h-3.5" />
-                              </button>
-                              <button
-                                onClick={() => handleDeleteBrandItem(b.THUONG_HIEU, b.TINH_NANG_MAC_DINH || '')}
-                                className="p-1 text-red-600 hover:bg-red-50 rounded-md cursor-pointer transition-colors inline-flex"
-                                title="Xóa"
-                              >
-                                <Trash2 className="w-3.5 h-3.5" />
-                              </button>
                             </td>
-                          )}
-                        </tr>
-                      );
-                    })}
+                            <td className="py-3 px-4 text-center">
+                              <div className="flex flex-wrap justify-center gap-1">
+                                {chietXuats.map(cx => (
+                                  <span key={cx} className="bg-blue-50/80 text-blue-600 font-bold py-0.5 px-2 rounded-md text-[10px] font-mono border border-blue-100/50">
+                                    {cx}
+                                  </span>
+                                ))}
+                              </div>
+                            </td>
+                            <td className="py-3 px-4 text-center">
+                              <div className="flex flex-wrap justify-center gap-1">
+                                {features.map(f => (
+                                  <span key={f} className="bg-emerald-50/80 text-emerald-600 font-bold py-0.5 px-2 rounded-md text-[10px] border border-emerald-100/50">
+                                    {f}
+                                  </span>
+                                ))}
+                              </div>
+                            </td>
+                            {currentUser.writeAccess !== false && (
+                              <td className="py-3 px-4 text-right space-x-1.5">
+                                <button
+                                  onClick={() => handleStartEditBrand(b)}
+                                  className="p-1 text-blue-600 hover:bg-blue-50 rounded-md cursor-pointer transition-colors inline-flex"
+                                  title="Sửa"
+                                >
+                                  <Edit className="w-3.5 h-3.5" />
+                                </button>
+                                <button
+                                  onClick={() => handleDeleteBrandItem(b.THUONG_HIEU, b.TINH_NANG_MAC_DINH || '')}
+                                  className="p-1 text-red-600 hover:bg-red-50 rounded-md cursor-pointer transition-colors inline-flex"
+                                  title="Xóa"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </button>
+                              </td>
+                            )}
+                          </tr>
+                        );
+                      })
+                    )}
                   </tbody>
                 </table>
               </div>
@@ -975,37 +1044,43 @@ export default function CategoryManagement({
                 <span className="text-xs font-bold text-slate-700 uppercase">Danh sách hệ thống chi nhánh</span>
               </div>
               <div className="divide-y divide-slate-50 max-h-[400px] overflow-y-auto">
-                {chiNhanhs.map((c, index) => (
-                  <div key={c.CHI_NHANH} className="p-4 flex items-center justify-between gap-4">
-                    <div className="space-y-1 min-w-0">
-                      <p className="text-xs font-bold text-slate-800">{c.CHI_NHANH}</p>
-                      <p className="text-[11px] text-slate-400 truncate">{c.DIA_CHI || 'Chưa cập nhật địa chỉ'}</p>
-                    </div>
-                    <div className="flex items-center gap-2 shrink-0">
-                      <span className="text-xs font-mono font-bold text-slate-500 bg-slate-50 border border-slate-100 py-1 px-2.5 rounded-md">
-                        {c.SDT || '—'}
-                      </span>
-                      {currentUser.WRITE_ACCESS !== false && (
-                        <div className="flex items-center gap-1">
-                          <button
-                            onClick={() => handleStartEditBranch(c)}
-                            className="p-1 text-blue-600 hover:bg-blue-50 rounded-md cursor-pointer transition-colors inline-flex"
-                            title="Sửa"
-                          >
-                            <Edit className="w-3.5 h-3.5" />
-                          </button>
-                          <button
-                            onClick={() => handleDeleteBranchItem(c.CHI_NHANH)}
-                            className="p-1 text-red-600 hover:bg-red-50 rounded-md cursor-pointer transition-colors inline-flex"
-                            title="Xóa"
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
-                        </div>
-                      )}
-                    </div>
+                {chiNhanhs.length === 0 ? (
+                  <div className="p-8 text-center text-slate-400 font-medium text-xs">
+                    Chưa có chi nhánh nào được đăng ký trên hệ thống.
                   </div>
-                ))}
+                ) : (
+                  chiNhanhs.map((c, index) => (
+                    <div key={c.CHI_NHANH} className="p-4 flex items-center justify-between gap-4">
+                      <div className="space-y-1 min-w-0">
+                        <p className="text-xs font-bold text-slate-800">{c.CHI_NHANH}</p>
+                        <p className="text-[11px] text-slate-400 truncate">{c.DIA_CHI || 'Chưa cập nhật địa chỉ'}</p>
+                      </div>
+                      <div className="flex items-center gap-2 shrink-0">
+                        <span className="text-xs font-mono font-bold text-slate-500 bg-slate-50 border border-slate-100 py-1 px-2.5 rounded-md">
+                          {c.SDT || '—'}
+                        </span>
+                        {currentUser.WRITE_ACCESS !== false && (
+                          <div className="flex items-center gap-1">
+                            <button
+                              onClick={() => handleStartEditBranch(c)}
+                              className="p-1 text-blue-600 hover:bg-blue-50 rounded-md cursor-pointer transition-colors inline-flex"
+                              title="Sửa"
+                            >
+                              <Edit className="w-3.5 h-3.5" />
+                            </button>
+                            <button
+                              onClick={() => handleDeleteBranchItem(c.CHI_NHANH)}
+                              className="p-1 text-red-600 hover:bg-red-50 rounded-md cursor-pointer transition-colors inline-flex"
+                              title="Xóa"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  ))
+                )}
               </div>
             </div>
           </>
@@ -1208,7 +1283,12 @@ export default function CategoryManagement({
                   </span>
                 </div>
                 <div className="divide-y divide-slate-50 max-h-[350px] overflow-y-auto">
-                  {activeStaffs.map((n) => {
+                  {activeStaffs.length === 0 ? (
+                    <div className="p-8 text-center text-slate-400 font-medium text-xs">
+                      Chưa có tài khoản hệ thống nào được kích hoạt.
+                    </div>
+                  ) : (
+                    activeStaffs.map((n) => {
                     let roleColor = 'bg-blue-50 text-blue-700 border-blue-100';
                     if (n.ROLE === 'ADMIN') roleColor = 'bg-rose-50 text-rose-700 border-rose-100';
                     if (n.ROLE === 'KHO') roleColor = 'bg-emerald-50 text-emerald-700 border-emerald-100';
@@ -1318,7 +1398,8 @@ export default function CategoryManagement({
                         </div>
                       </div>
                     );
-                  })}
+                  })
+                )}
                 </div>
               </div>
 
@@ -1573,40 +1654,75 @@ export default function CategoryManagement({
                 </div>
 
                 {/* Cấu hình phạm vi độ cầu (SPH) */}
-                <div className="space-y-1.5 border-t border-slate-50 pt-2">
-                  <label className="text-[10px] uppercase font-bold text-slate-400">Phạm vi Độ cầu (SPH)</label>
-                  <div className="grid grid-cols-3 gap-2">
-                    <div className="space-y-1">
-                      <span className="text-[9px] text-slate-400 font-bold block">Độ cầu từ</span>
-                      <input
-                        type="number"
-                        step="0.25"
-                        placeholder="ví dụ: 0.00"
-                        value={newBrandSphTu}
-                        onChange={(e) => setNewBrandSphTu(e.target.value)}
-                        className="w-full text-xs font-semibold text-slate-700 bg-slate-50 border border-slate-100 rounded-lg p-2 font-mono focus:outline-hidden focus:ring-2 focus:ring-blue-500/10"
-                      />
+                <div className="space-y-3 border-t border-slate-50 pt-2">
+                  <label className="text-[10px] uppercase font-bold text-slate-400 block">Cấu hình Phạm vi Độ cầu (SPH)</label>
+                  
+                  <div className="bg-slate-50/50 p-2.5 rounded-lg border border-slate-100 space-y-2">
+                    <span className="text-[10px] font-bold text-slate-500 block font-sans">Phạm vi Cận</span>
+                    <div className="grid grid-cols-2 gap-2">
+                      <div className="space-y-1">
+                        <span className="text-[9px] text-slate-400 font-bold block">Từ</span>
+                        <input
+                          type="number"
+                          step="0.25"
+                          placeholder="ví dụ: 0.00"
+                          value={newBrandSphTu}
+                          onChange={(e) => setNewBrandSphTu(e.target.value)}
+                          className="w-full text-xs font-semibold text-slate-700 bg-white border border-slate-100 rounded-lg p-2 font-mono focus:outline-hidden focus:ring-2 focus:ring-blue-500/10"
+                        />
+                      </div>
+                      <div className="space-y-1">
+                        <span className="text-[9px] text-slate-400 font-bold block">Đến</span>
+                        <input
+                          type="number"
+                          step="0.25"
+                          placeholder="ví dụ: -8.00"
+                          value={newBrandSphDen}
+                          onChange={(e) => setNewBrandSphDen(e.target.value)}
+                          className="w-full text-xs font-semibold text-slate-700 bg-white border border-slate-100 rounded-lg p-2 font-mono focus:outline-hidden focus:ring-2 focus:ring-blue-500/10"
+                        />
+                      </div>
                     </div>
-                    <div className="space-y-1">
-                      <span className="text-[9px] text-slate-400 font-bold block">Độ cầu đến</span>
-                      <input
-                        type="number"
-                        step="0.25"
-                        placeholder="ví dụ: -4.00"
-                        value={newBrandSphDen}
-                        onChange={(e) => setNewBrandSphDen(e.target.value)}
-                        className="w-full text-xs font-semibold text-slate-700 bg-slate-50 border border-slate-100 rounded-lg p-2 font-mono focus:outline-hidden focus:ring-2 focus:ring-blue-500/10"
-                      />
+                  </div>
+
+                  <div className="bg-slate-50/50 p-2.5 rounded-lg border border-slate-100 space-y-2">
+                    <span className="text-[10px] font-bold text-slate-500 block font-sans">Phạm vi Viễn</span>
+                    <div className="grid grid-cols-2 gap-2">
+                      <div className="space-y-1">
+                        <span className="text-[9px] text-slate-400 font-bold block">Từ</span>
+                        <input
+                          type="number"
+                          step="0.25"
+                          placeholder="ví dụ: +0.75"
+                          value={newBrandSphVienTu}
+                          onChange={(e) => setNewBrandSphVienTu(e.target.value)}
+                          className="w-full text-xs font-semibold text-slate-700 bg-white border border-slate-100 rounded-lg p-2 font-mono focus:outline-hidden focus:ring-2 focus:ring-blue-500/10"
+                        />
+                      </div>
+                      <div className="space-y-1">
+                        <span className="text-[9px] text-slate-400 font-bold block">Đến</span>
+                        <input
+                          type="number"
+                          step="0.25"
+                          placeholder="ví dụ: +4.00"
+                          value={newBrandSphVienDen}
+                          onChange={(e) => setNewBrandSphVienDen(e.target.value)}
+                          className="w-full text-xs font-semibold text-slate-700 bg-white border border-slate-100 rounded-lg p-2 font-mono focus:outline-hidden focus:ring-2 focus:ring-blue-500/10"
+                        />
+                      </div>
                     </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 gap-2">
                     <div className="space-y-1">
-                      <span className="text-[9px] text-slate-400 font-bold block">Bước nhảy</span>
+                      <span className="text-[9px] text-slate-400 font-bold block">Bước nhảy độ (mặc định 0.25)</span>
                       <input
                         type="number"
                         step="0.01"
-                        placeholder="mặc định 0.25"
+                        placeholder="0.25"
                         value={newBrandBuocNhay}
                         onChange={(e) => setNewBrandBuocNhay(e.target.value)}
-                        className="w-full text-xs font-semibold text-slate-700 bg-slate-50 border border-slate-100 rounded-lg p-2 font-mono focus:outline-hidden focus:ring-2 focus:ring-blue-500/10"
+                        className="w-full text-xs font-semibold text-slate-700 bg-white border border-slate-100 rounded-lg p-2 font-mono focus:outline-hidden focus:ring-2 focus:ring-blue-500/10"
                       />
                     </div>
                   </div>

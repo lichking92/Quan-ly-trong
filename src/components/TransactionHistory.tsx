@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { 
   FileText, 
   MapPin, 
@@ -25,7 +25,7 @@ import {
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { NhapXuat, NhapXuatCT, SanPham, LoaiPhieu, User as UserType } from '../types';
-import { formatDop } from '../data/mockData';
+import { formatDop, formatSKUForDisplay, cleanSKU } from '../data/mockData';
 
 /**
  * FILE: TransactionHistory.tsx
@@ -59,16 +59,83 @@ export default function TransactionHistory({
   
   // --- 1. QUẢN LÝ TRẠNG THÁI GIAO DIỆN ---
   const [selectedInvoice, setSelectedInvoice] = useState<string | null>(null);
-  const [searchQuery, setSearchQuery] = useState<string>('');
-  const [historyTypeFilter, setHistoryTypeFilter] = useState<'Tất cả' | 'NHẬP' | 'XUẤT' | 'KIỂM KHO'>('Tất cả');
+  const [searchQuery, setSearchQuery] = useState<string>(() => {
+    return localStorage.getItem(`${currentUser.username}_HISTORY_FILTER_SEARCH`) || '';
+  });
+  const [historyTypeFilter, setHistoryTypeFilter] = useState<'Tất cả' | 'NHẬP' | 'XUẤT' | 'KIỂM KHO'>(() => {
+    return (localStorage.getItem(`${currentUser.username}_HISTORY_FILTER_TYPE`) as any) || 'Tất cả';
+  });
 
   // Sắp xếp
-  const [sortBy, setSortBy] = useState<'HOA_DON' | 'NGAY'>('NGAY');
-  const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc');
+  const [sortBy, setSortBy] = useState<'HOA_DON' | 'NGAY'>(() => {
+    return (localStorage.getItem(`${currentUser.username}_HISTORY_FILTER_SORT_BY`) as any) || 'NGAY';
+  });
+  const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>(() => {
+    return (localStorage.getItem(`${currentUser.username}_HISTORY_FILTER_SORT_ORDER`) as any) || 'desc';
+  });
 
   // Gộp nhóm theo ngày & Sắp xếp cột
-  const [isGroupedByDate, setIsGroupedByDate] = useState<boolean>(false);
+  const [isGroupedByDate, setIsGroupedByDate] = useState<boolean>(() => {
+    return localStorage.getItem(`${currentUser.username}_HISTORY_FILTER_GROUPED`) === 'true';
+  });
   const [expandedDates, setExpandedDates] = useState<Record<string, boolean>>({});
+
+  // Bộ lọc nâng cao: Chi nhánh, Kho, Ngày bắt đầu/kết thúc
+  const [branchFilter, setBranchFilter] = useState<string>(() => {
+    return localStorage.getItem(`${currentUser.username}_HISTORY_FILTER_BRANCH`) || 'Tất cả';
+  });
+  const [warehouseFilter, setWarehouseFilter] = useState<string>(() => {
+    return localStorage.getItem(`${currentUser.username}_HISTORY_FILTER_WAREHOUSE`) || 'Tất cả';
+  });
+  const [fromDate, setFromDate] = useState<string>(() => {
+    return localStorage.getItem(`${currentUser.username}_HISTORY_FILTER_FROM_DATE`) || '';
+  });
+  const [toDate, setToDate] = useState<string>(() => {
+    return localStorage.getItem(`${currentUser.username}_HISTORY_FILTER_TO_DATE`) || '';
+  });
+
+  // Tự động trích xuất danh sách chi nhánh/kho từ dữ liệu giao dịch
+  const uniqueBranches = useMemo(() => {
+    const branches = nhapXuats.map(h => h.CHI_NHANH).filter(Boolean);
+    return Array.from(new Set(branches));
+  }, [nhapXuats]);
+
+  // Đồng bộ hóa trạng thái bộ lọc vào localStorage
+  useEffect(() => {
+    localStorage.setItem(`${currentUser.username}_HISTORY_FILTER_SEARCH`, searchQuery);
+  }, [searchQuery, currentUser]);
+
+  useEffect(() => {
+    localStorage.setItem(`${currentUser.username}_HISTORY_FILTER_TYPE`, historyTypeFilter);
+  }, [historyTypeFilter, currentUser]);
+
+  useEffect(() => {
+    localStorage.setItem(`${currentUser.username}_HISTORY_FILTER_SORT_BY`, sortBy);
+  }, [sortBy, currentUser]);
+
+  useEffect(() => {
+    localStorage.setItem(`${currentUser.username}_HISTORY_FILTER_SORT_ORDER`, sortOrder);
+  }, [sortOrder, currentUser]);
+
+  useEffect(() => {
+    localStorage.setItem(`${currentUser.username}_HISTORY_FILTER_GROUPED`, String(isGroupedByDate));
+  }, [isGroupedByDate, currentUser]);
+
+  useEffect(() => {
+    localStorage.setItem(`${currentUser.username}_HISTORY_FILTER_BRANCH`, branchFilter);
+  }, [branchFilter, currentUser]);
+
+  useEffect(() => {
+    localStorage.setItem(`${currentUser.username}_HISTORY_FILTER_WAREHOUSE`, warehouseFilter);
+  }, [warehouseFilter, currentUser]);
+
+  useEffect(() => {
+    localStorage.setItem(`${currentUser.username}_HISTORY_FILTER_FROM_DATE`, fromDate);
+  }, [fromDate, currentUser]);
+
+  useEffect(() => {
+    localStorage.setItem(`${currentUser.username}_HISTORY_FILTER_TO_DATE`, toDate);
+  }, [toDate, currentUser]);
   const [columnOrder, setColumnOrder] = useState<string[]>(() => {
     const saved = localStorage.getItem(`${currentUser.username}_HISTORY_COLUMN_ORDER`);
     return saved ? JSON.parse(saved) : ['invoiceNo', 'type', 'datetime', 'branch', 'creator', 'totalQty', 'note'];
@@ -135,7 +202,13 @@ export default function TransactionHistory({
                           h.TEN_NGUOI_TAO.toLowerCase().includes(searchQuery.toLowerCase()) ||
                           h.CHI_NHANH.toLowerCase().includes(searchQuery.toLowerCase()) ||
                           (h.GHI_CHU && h.GHI_CHU.toLowerCase().includes(searchQuery.toLowerCase()));
-      return matchType && matchSearch;
+      
+      const matchBranch = branchFilter === 'Tất cả' || h.CHI_NHANH === branchFilter;
+      const matchWarehouse = warehouseFilter === 'Tất cả' || h.CHI_NHANH === warehouseFilter;
+      const matchFromDate = !fromDate || h.NGAY >= fromDate;
+      const matchToDate = !toDate || h.NGAY <= toDate;
+
+      return matchType && matchSearch && matchBranch && matchWarehouse && matchFromDate && matchToDate;
     });
 
     list.sort((a, b) => {
@@ -149,7 +222,7 @@ export default function TransactionHistory({
     });
 
     return list;
-  }, [nhapXuats, historyTypeFilter, searchQuery, sortBy, sortOrder]);
+  }, [nhapXuats, historyTypeFilter, searchQuery, sortBy, sortOrder, branchFilter, warehouseFilter, fromDate, toDate]);
 
   const groupedInvoicesByDate = useMemo(() => {
     const groups: Record<string, NhapXuat[]> = {};
@@ -240,6 +313,13 @@ export default function TransactionHistory({
     setSearchQuery('');
     setHistoryTypeFilter('Tất cả');
     setSelectedInvoice(null);
+    setBranchFilter('Tất cả');
+    setWarehouseFilter('Tất cả');
+    setFromDate('');
+    setToDate('');
+    setSortBy('NGAY');
+    setSortOrder('desc');
+    setIsGroupedByDate(false);
   };
 
   // --- 5. CHỈNH SỬA DÒNG CHI TIẾT ---
@@ -485,7 +565,7 @@ export default function TransactionHistory({
                   >
                     <option value="">-- Chọn tròng kính --</option>
                     {sanPhams.map(p => (
-                      <option key={p.SKU} value={p.SKU}>{p.SKU} (Còn tồn: {p.TON_CUOI})</option>
+                      <option key={p.SKU} value={p.SKU}>{formatSKUForDisplay(p.SKU)} (Còn tồn: {p.TON_CUOI})</option>
                     ))}
                   </select>
                 </div>
@@ -554,7 +634,7 @@ export default function TransactionHistory({
                     <td className="py-3 px-3">
                       <div className="space-y-0.5">
                         <span className="font-mono font-bold text-slate-800 bg-slate-100 py-0.5 px-2 rounded text-[11px]">
-                          {row.SKU}
+                          {formatSKUForDisplay(row.SKU)}
                         </span>
                         <p className="text-[10px] text-slate-400 font-medium">{row.TEN_SP}</p>
                       </div>
@@ -819,25 +899,26 @@ export default function TransactionHistory({
     <div className="space-y-6">
       
       {/* 1. KHU VỰC BỘ LỌC VÀ TÌM KIẾM PHIẾU */}
-      <div className="bg-white rounded-2xl border border-slate-100 p-4 shadow-2xs flex flex-col md:flex-row items-center justify-between gap-4">
+      <div className="bg-white rounded-2xl border border-slate-100 p-4 shadow-2xs space-y-4">
         
-        {/* Tìm kiếm nhanh */}
-        <div className="relative w-full md:w-80">
-          <span className="absolute inset-y-0 left-0 flex items-center pl-3 text-slate-400">
-            <Search className="w-4 h-4" />
-          </span>
-          <input 
-            type="text"
-            placeholder="Tìm theo số phiếu, người tạo, chi nhánh..."
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            className="w-full pl-9 pr-4 py-2 text-xs bg-slate-50 border border-slate-100 rounded-xl focus:outline-hidden text-slate-700 font-semibold"
-          />
-        </div>
+        {/* Row 1: Tìm kiếm nhanh & Loại phiếu */}
+        <div className="flex flex-col lg:flex-row items-center justify-between gap-4">
+          {/* Tìm kiếm nhanh */}
+          <div className="relative w-full lg:w-80">
+            <span className="absolute inset-y-0 left-0 flex items-center pl-3 text-slate-400">
+              <Search className="w-4 h-4" />
+            </span>
+            <input 
+              type="text"
+              placeholder="Tìm theo số phiếu, người tạo, chi nhánh..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="w-full pl-9 pr-4 py-2 text-xs bg-slate-50 border border-slate-100 rounded-xl focus:outline-hidden text-slate-700 font-semibold"
+            />
+          </div>
 
-        {/* Lọc loại phiếu & Chooser */}
-        <div className="flex flex-col sm:flex-row items-center gap-3 w-full md:w-auto justify-end">
-          <div className="flex bg-slate-100 p-1 rounded-xl w-full sm:w-auto overflow-x-auto">
+          {/* Lọc loại phiếu */}
+          <div className="flex bg-slate-100 p-1 rounded-xl w-full lg:w-auto overflow-x-auto">
             {(['Tất cả', 'NHẬP', 'XUẤT', 'KIỂM KHO'] as const).map(type => (
               <button
                 key={type}
@@ -850,15 +931,74 @@ export default function TransactionHistory({
               </button>
             ))}
           </div>
+        </div>
 
-          <div className="flex gap-2 w-full sm:w-auto">
+        {/* Row 2: Bộ lọc chi tiết (Chi nhánh, Kho, Từ ngày, Đến ngày) */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3 pt-2 border-t border-slate-100/60">
+          {/* Chi nhánh */}
+          <div className="space-y-1">
+            <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Chi nhánh</label>
+            <select
+              value={branchFilter}
+              onChange={(e) => { setBranchFilter(e.target.value); setSelectedInvoice(null); }}
+              className="w-full text-xs font-semibold text-slate-700 bg-slate-50 border border-slate-100 rounded-xl px-3 py-2 focus:outline-hidden focus:border-red-200 transition-colors"
+            >
+              <option value="Tất cả">Tất cả chi nhánh</option>
+              {uniqueBranches.map(branch => (
+                <option key={branch} value={branch}>{branch}</option>
+              ))}
+            </select>
+          </div>
+
+          {/* Kho */}
+          <div className="space-y-1">
+            <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Kho</label>
+            <select
+              value={warehouseFilter}
+              onChange={(e) => { setWarehouseFilter(e.target.value); setSelectedInvoice(null); }}
+              className="w-full text-xs font-semibold text-slate-700 bg-slate-50 border border-slate-100 rounded-xl px-3 py-2 focus:outline-hidden focus:border-red-200 transition-colors"
+            >
+              <option value="Tất cả">Tất cả kho</option>
+              {uniqueBranches.map(branch => (
+                <option key={branch} value={branch}>{branch}</option>
+              ))}
+            </select>
+          </div>
+
+          {/* Từ ngày */}
+          <div className="space-y-1">
+            <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Từ ngày</label>
+            <input
+              type="date"
+              value={fromDate}
+              onChange={(e) => { setFromDate(e.target.value); setSelectedInvoice(null); }}
+              className="w-full text-xs font-semibold text-slate-700 bg-slate-50 border border-slate-100 rounded-xl px-3 py-2 focus:outline-hidden focus:border-red-200 transition-colors font-mono"
+            />
+          </div>
+
+          {/* Đến ngày */}
+          <div className="space-y-1">
+            <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Đến ngày</label>
+            <input
+              type="date"
+              value={toDate}
+              onChange={(e) => { setToDate(e.target.value); setSelectedInvoice(null); }}
+              className="w-full text-xs font-semibold text-slate-700 bg-slate-50 border border-slate-100 rounded-xl px-3 py-2 focus:outline-hidden focus:border-red-200 transition-colors font-mono"
+            />
+          </div>
+        </div>
+
+        {/* Row 3: Các tác vụ bổ sung (Gộp nhóm, Sắp xếp cột, Reset) */}
+        <div className="flex flex-wrap items-center justify-between gap-3 pt-2 border-t border-slate-100/60">
+          <div className="flex flex-wrap items-center gap-2">
             {/* Reset Filters */}
             <button
               onClick={handleResetFilters}
-              className="p-2 bg-slate-50 hover:bg-slate-100 border border-slate-150 text-slate-500 hover:text-slate-800 rounded-xl transition-all cursor-pointer"
+              className="flex items-center gap-1.5 py-2 px-3 text-xs font-bold bg-slate-50 hover:bg-slate-100 border border-slate-150 text-slate-600 hover:text-slate-800 rounded-xl transition-all cursor-pointer"
               title="Xóa bộ lọc"
             >
-              <RefreshCw className="w-4 h-4" />
+              <RefreshCw className="w-3.5 h-3.5" />
+              Xóa bộ lọc
             </button>
 
             {/* Group by Date Button */}
@@ -874,79 +1014,80 @@ export default function TransactionHistory({
               <Calendar className="w-3.5 h-3.5" />
               {isGroupedByDate ? 'Bỏ gộp nhóm' : 'Gộp nhóm theo ngày'}
             </button>
+          </div>
 
-            {/* Column Chooser Button */}
-            <div className="relative">
-              <button
-                onClick={() => setShowColumnChooser(!showColumnChooser)}
-                className={`flex items-center gap-1.5 py-2 px-3 text-xs font-bold rounded-xl border transition-all cursor-pointer ${
-                  showColumnChooser 
-                    ? 'bg-blue-50 text-blue-600 border-blue-200' 
-                    : 'bg-white hover:bg-slate-50 text-slate-500 border-slate-150'
-                }`}
-              >
-                <SlidersHorizontal className="w-3.5 h-3.5" />
-                Sắp xếp & Ẩn hiện cột
-              </button>
+          {/* Column Chooser Button */}
+          <div className="relative">
+            <button
+              onClick={() => setShowColumnChooser(!showColumnChooser)}
+              className={`flex items-center gap-1.5 py-2 px-3 text-xs font-bold rounded-xl border transition-all cursor-pointer ${
+                showColumnChooser 
+                  ? 'bg-blue-50 text-blue-600 border-blue-200' 
+                  : 'bg-white hover:bg-slate-50 text-slate-500 border-slate-150'
+              }`}
+            >
+              <SlidersHorizontal className="w-3.5 h-3.5" />
+              Sắp xếp & Ẩn hiện cột
+            </button>
 
-              <AnimatePresence>
-                {showColumnChooser && (
-                  <>
-                    <div className="fixed inset-0 z-30" onClick={() => setShowColumnChooser(false)} />
-                    <motion.div
-                      initial={{ opacity: 0, y: 5 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      exit={{ opacity: 0, y: 5 }}
-                      className="absolute right-0 mt-2 w-64 bg-white border border-slate-150 rounded-xl shadow-lg z-40 p-3 space-y-2 text-xs"
-                    >
-                      <h4 className="font-bold text-slate-700 border-b border-slate-100 pb-1.5 mb-1.5 uppercase tracking-wider text-[9px] flex justify-between items-center">
-                        <span>Cấu hình cột hiển thị</span>
-                        <span className="text-[8px] text-slate-400 normal-case font-medium">Bấm ↑ ↓ để xếp lại</span>
-                      </h4>
-                      <div className="space-y-1.5 max-h-72 overflow-y-auto">
-                        {columnOrder.map((colKey, index) => {
-                          const colDef = colDefinitions[colKey];
-                          if (!colDef) return null;
-                          return (
-                            <div key={colKey} className="flex items-center justify-between p-1 hover:bg-slate-50 rounded-lg gap-2">
-                              <label className="flex items-center gap-2 cursor-pointer font-semibold text-slate-600 hover:text-slate-800 grow truncate">
-                                <input 
-                                  type="checkbox" 
-                                  checked={visibleColumns[colKey] !== false}
-                                  onChange={() => toggleColumnVisibility(colKey)}
-                                  className="rounded border-slate-300 text-blue-600 focus:ring-blue-500 w-3.5 h-3.5 cursor-pointer"
-                                />
-                                <span className="truncate">{colDef.label}</span>
-                              </label>
-                              <div className="flex items-center gap-0.5 shrink-0">
-                                <button
-                                  disabled={index === 0}
-                                  onClick={() => handleMoveColumn(index, 'up')}
-                                  className="p-1 hover:bg-slate-200 text-slate-500 hover:text-slate-800 disabled:opacity-30 rounded transition-all cursor-pointer"
-                                  title="Di chuyển lên trước"
-                                >
-                                  ▲
-                                </button>
-                                <button
-                                  disabled={index === columnOrder.length - 1}
-                                  onClick={() => handleMoveColumn(index, 'down')}
-                                  className="p-1 hover:bg-slate-200 text-slate-500 hover:text-slate-800 disabled:opacity-30 rounded transition-all cursor-pointer"
-                                  title="Di chuyển ra sau"
-                                >
-                                  ▼
-                                </button>
-                              </div>
+            <AnimatePresence>
+              {showColumnChooser && (
+                <>
+                  <div className="fixed inset-0 z-30" onClick={() => setShowColumnChooser(false)} />
+                  <motion.div
+                    initial={{ opacity: 0, y: 5 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0, y: 5 }}
+                    className="absolute right-0 mt-2 w-64 bg-white border border-slate-150 rounded-xl shadow-lg z-40 p-3 space-y-2 text-xs"
+                  >
+                    <h4 className="font-bold text-slate-700 border-b border-slate-100 pb-1.5 mb-1.5 uppercase tracking-wider text-[9px] flex justify-between items-center">
+                      <span>Cấu hình cột hiển thị</span>
+                      <span className="text-[8px] text-slate-400 normal-case font-medium">Bấm ↑ ↓ để xếp lại</span>
+                    </h4>
+                    <div className="space-y-1.5 max-h-72 overflow-y-auto">
+                      {columnOrder.map((colKey, index) => {
+                        const colDef = colDefinitions[colKey];
+                        if (!colDef) return null;
+                        return (
+                          <div key={colKey} className="flex items-center justify-between p-1 hover:bg-slate-50 rounded-lg gap-2">
+                            <label className="flex items-center gap-2 cursor-pointer font-semibold text-slate-600 hover:text-slate-800 grow truncate">
+                              <input 
+                                type="checkbox" 
+                                checked={visibleColumns[colKey] !== false}
+                                onChange={() => toggleColumnVisibility(colKey)}
+                                className="rounded border-slate-300 text-blue-600 focus:ring-blue-500 w-3.5 h-3.5 cursor-pointer"
+                              />
+                              <span className="truncate">{colDef.label}</span>
+                            </label>
+                            <div className="flex items-center gap-0.5 shrink-0">
+                              <button
+                                disabled={index === 0}
+                                onClick={() => handleMoveColumn(index, 'up')}
+                                className="p-1 hover:bg-slate-200 text-slate-500 hover:text-slate-800 disabled:opacity-30 rounded transition-all cursor-pointer"
+                                title="Di chuyển lên trước"
+                              >
+                                ▲
+                              </button>
+                              <button
+                                disabled={index === columnOrder.length - 1}
+                                onClick={() => handleMoveColumn(index, 'down')}
+                                className="p-1 hover:bg-slate-200 text-slate-500 hover:text-slate-800 disabled:opacity-30 rounded transition-all cursor-pointer"
+                                title="Di chuyển ra sau"
+                              >
+                                ▼
+                              </button>
                             </div>
-                          );
-                        })}
-                      </div>
-                    </motion.div>
-                  </>
-                )}
-              </AnimatePresence>
-            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </motion.div>
+                </>
+              )}
+            </AnimatePresence>
           </div>
         </div>
+
       </div>
 
       {successMsg && (

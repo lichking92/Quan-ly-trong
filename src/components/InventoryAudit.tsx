@@ -919,12 +919,12 @@ export default function InventoryAudit({
             {/* KẾT QUẢ TRA CỨU LỊCH SỬ */}
             <div className="space-y-3 max-h-[360px] overflow-y-auto pr-1">
               {filteredKiemKhos.length > 0 ? (
-                filteredKiemKhos.slice().reverse().map((audit) => {
+                filteredKiemKhos.slice().reverse().map((audit, index) => {
                   const isPositive = audit.LECH > 0;
                   const isNegative = audit.LECH < 0;
 
                   return (
-                    <div key={audit.MA_PHIEU + audit.SKU + audit.THOI_DIEM} className="pt-2 pb-3.5 border-b border-slate-100 space-y-1 text-xs">
+                    <div key={`${audit.MA_PHIEU}-${audit.SKU}-${audit.THOI_DIEM}-${index}`} className="pt-2 pb-3.5 border-b border-slate-100 space-y-1 text-xs">
                       <div className="flex items-center justify-between">
                         <span className="font-extrabold text-red-600 font-mono bg-red-50 py-0.5 px-2 rounded-md text-[10px] border border-red-100">
                           {audit.MA_PHIEU}

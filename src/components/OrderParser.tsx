@@ -15,13 +15,7 @@ import {
   Trash2
 } from 'lucide-react';
 import { SanPham } from '../types';
-import { generateSKUString, formatDop } from '../data/mockData';
-
-// Normalized helper to clean SKU strings for comparison
-const cleanSKU = (sku: string | undefined | null): string => {
-  if (!sku) return '';
-  return sku.trim().replace(/\s+/g, ' ').toUpperCase();
-};
+import { generateSKUString, formatDop, formatSKUForDisplay, cleanSKU } from '../data/mockData';
 
 const escapeRegExp = (str: string): string => {
   return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -102,6 +96,8 @@ interface ParsedItem {
   sku: string;
   matchedProduct: SanPham | null;
   error?: string;
+  selected?: boolean;
+  exportQuantity?: number;
 }
 
 export default function OrderParser({ sanPhams, brandList, onCreateXuatPhieu }: OrderParserProps) {
@@ -112,6 +108,118 @@ export default function OrderParser({ sanPhams, brandList, onCreateXuatPhieu }: 
   const [copiedDeficient, setCopiedDeficient] = useState<boolean>(false);
 
   const [selectedBrand, setSelectedBrand] = useState<string>('');
+
+  // Pre-build exact Profiles of Brands from brandList and sanPhams for smart lookup and deduction
+  const brandProfiles = useMemo(() => {
+    const profiles: Record<string, {
+      name: string;
+      defaultChietXuat: string;
+      defaultFeature: string;
+      allChietXuats: string[];
+      allFeatures: string[];
+    }> = {};
+
+    // 1. Gather from brandList
+    brandList.forEach(b => {
+      const bName = (b.THUONG_HIEU || '').trim();
+      if (!bName) return;
+      const bUpper = bName.toUpperCase();
+      
+      if (!profiles[bUpper]) {
+        profiles[bUpper] = {
+          name: bName,
+          defaultChietXuat: '',
+          defaultFeature: '',
+          allChietXuats: [],
+          allFeatures: []
+        };
+      }
+
+      const profile = profiles[bUpper];
+
+      if (b.CHIET_XUAT_MAC_DINH) {
+        const cxs = b.CHIET_XUAT_MAC_DINH.split(',').map((s: string) => s.trim());
+        if (cxs.length > 0 && !profile.defaultChietXuat) {
+          profile.defaultChietXuat = cxs[0];
+        }
+        cxs.forEach((cx: string) => {
+          if (cx && !profile.allChietXuats.includes(cx)) {
+            profile.allChietXuats.push(cx);
+          }
+        });
+      }
+
+      const feat = b.TINH_NANG_MAC_DINH || b.TINH_NANG || '';
+      if (feat) {
+        const featUpper = feat.toUpperCase();
+        let normFeat = feat;
+        if (['ĐM', 'ĐỔI MÀU', 'DOI MAU'].includes(featUpper)) {
+          normFeat = 'ĐM';
+        } else if (['ASX', 'ASG', 'BLUE', 'BLUE CUT'].includes(featUpper)) {
+          normFeat = 'ASX';
+        }
+        
+        if (!profile.defaultFeature) {
+          profile.defaultFeature = normFeat;
+        }
+        if (!profile.allFeatures.includes(normFeat)) {
+          profile.allFeatures.push(normFeat);
+        }
+      }
+    });
+
+    // 2. Complement/enrich from sanPhams
+    sanPhams.forEach(p => {
+      const bName = (p.THUONG_HIEU || '').trim();
+      if (!bName) return;
+      const bUpper = bName.toUpperCase();
+
+      if (!profiles[bUpper]) {
+        profiles[bUpper] = {
+          name: bName,
+          defaultChietXuat: '',
+          defaultFeature: '',
+          allChietXuats: [],
+          allFeatures: []
+        };
+      }
+
+      const profile = profiles[bUpper];
+
+      const cx = (p.CHIET_XUAT || '').trim();
+      if (cx && !profile.allChietXuats.includes(cx)) {
+        profile.allChietXuats.push(cx);
+      }
+
+      const feat = (p.TINH_NANG || '').trim();
+      if (feat) {
+        const featUpper = feat.toUpperCase();
+        let normFeat = feat;
+        if (['ĐM', 'ĐỔI MÀU', 'DOI MAU'].includes(featUpper)) {
+          normFeat = 'ĐM';
+        } else if (['ASX', 'ASG', 'BLUE', 'BLUE CUT'].includes(featUpper)) {
+          normFeat = 'ASX';
+        }
+
+        if (!profile.allFeatures.includes(normFeat)) {
+          profile.allFeatures.push(normFeat);
+        }
+      }
+    });
+
+    // 3. Auto-determine defaults if only one option exists
+    Object.keys(profiles).forEach(key => {
+      const p = profiles[key];
+      if (p.allChietXuats.length === 1 && !p.defaultChietXuat) {
+        p.defaultChietXuat = p.allChietXuats[0];
+      }
+      if (p.allFeatures.length === 1 && !p.defaultFeature) {
+        p.defaultFeature = p.allFeatures[0];
+      }
+    });
+
+    return profiles;
+  }, [brandList, sanPhams]);
 
   // Helper to normalize chiet xuat shorthand (e.g. 156 -> 1.56)
   const normalizeChietXuat = (val: string): string => {
@@ -167,6 +275,27 @@ export default function OrderParser({ sanPhams, brandList, onCreateXuatPhieu }: 
     console.log('  - Registered Chiết Suấts:', uniqueChietXuats);
     console.log('  - Registered Features:', uniqueFeatures);
 
+    // Sorted keys for our precise brandProfiles lookup
+    const sortedBrandKeys = Object.keys(brandProfiles).sort((a, b) => b.length - a.length);
+
+    // Boundary word search helper to verify words/tokens accurately
+    const findWordIndex = (textUpper: string, wordUpper: string): number => {
+      let index = textUpper.indexOf(wordUpper);
+      while (index !== -1) {
+        const charBefore = index > 0 ? textUpper[index - 1] : '';
+        const charAfter = index + wordUpper.length < textUpper.length ? textUpper[index + wordUpper.length] : '';
+        
+        const isBeforeValid = !charBefore || !isLetterOrDigit(charBefore);
+        const isAfterValid = !charAfter || !isLetterOrDigit(charAfter);
+        
+        if (isBeforeValid && isAfterValid) {
+          return index;
+        }
+        index = textUpper.indexOf(wordUpper, index + 1);
+      }
+      return -1;
+    };
+
     lines.forEach((rawLine, index) => {
       const line = rawLine.trim();
       // Skip empty lines, lines consisting of separator symbols (at least 2), or blank lines
@@ -183,33 +312,46 @@ export default function OrderParser({ sanPhams, brandList, onCreateXuatPhieu }: 
       let foundChiet = '';
       let foundFeat = '';
 
-      // Find Brand
-      for (const b of uniqueBrands) {
-        if (containsWord(lineUpper, b)) {
-          foundBrand = b;
+      let remainingLineUpper = lineUpper;
+
+      // 1. Find Brand (longest matching first to avoid greedy collision)
+      for (const brandKey of sortedBrandKeys) {
+        const brandIdx = findWordIndex(remainingLineUpper, brandKey);
+        if (brandIdx !== -1) {
+          foundBrand = brandProfiles[brandKey].name;
+          // Blank out matched brand characters to prevent any sub-part of the brand name from being matched as a feature
+          remainingLineUpper = remainingLineUpper.substring(0, brandIdx) + ' '.repeat(brandKey.length) + remainingLineUpper.substring(brandIdx + brandKey.length);
           break;
         }
       }
 
-      // Find Chiết suất
+      // 2. Find Chiết suất from the remaining part of the line
       for (const cx of uniqueChietXuats) {
-        if (containsWord(lineUpper, cx)) {
+        const cxIdx = findWordIndex(remainingLineUpper, cx);
+        if (cxIdx !== -1) {
           foundChiet = cx;
+          remainingLineUpper = remainingLineUpper.substring(0, cxIdx) + ' '.repeat(cx.length) + remainingLineUpper.substring(cxIdx + cx.length);
           break;
         }
       }
+
+      // Fallback: check for chiết suất shorthand like 156, 160
       if (!foundChiet) {
         for (const sh of ['156', '160', '161', '167', '174']) {
-          if (containsWord(lineUpper, sh)) {
+          const shIdx = findWordIndex(remainingLineUpper, sh);
+          if (shIdx !== -1) {
             foundChiet = normalizeChietXuat(sh);
+            remainingLineUpper = remainingLineUpper.substring(0, shIdx) + ' '.repeat(sh.length) + remainingLineUpper.substring(shIdx + sh.length);
             break;
           }
         }
       }
 
-      // Find Feature
-      for (const f of uniqueFeatures) {
-        if (containsWord(lineUpper, f)) {
+      // 3. Find Feature from the remaining part of the line
+      const sortedFeatures = uniqueFeatures.slice().sort((a, b) => b.length - a.length);
+      for (const f of sortedFeatures) {
+        const fIdx = findWordIndex(remainingLineUpper, f);
+        if (fIdx !== -1) {
           const fUpper = f.toUpperCase();
           if (fUpper === 'ĐM' || fUpper === 'ĐỔI MÀU' || fUpper === 'DOI MAU') {
             foundFeat = 'ĐM';
@@ -218,6 +360,7 @@ export default function OrderParser({ sanPhams, brandList, onCreateXuatPhieu }: 
           } else {
             foundFeat = f;
           }
+          remainingLineUpper = remainingLineUpper.substring(0, fIdx) + ' '.repeat(f.length) + remainingLineUpper.substring(fIdx + f.length);
           break;
         }
       }
@@ -225,23 +368,29 @@ export default function OrderParser({ sanPhams, brandList, onCreateXuatPhieu }: 
       // Context Tracking & Reset/Update logic:
       // Whenever we encounter any title components in a line (brand, chiet, feat), we update the context.
       // If we are starting a group (because of a brand/chiet/feat change or new title-only line), 
-      // we resolve missing parts using the brand config defaults.
+      // we resolve missing parts using the brand config defaults or smart auto-deductions.
       if (foundBrand || foundChiet || foundFeat) {
-        const resolvedBrand = foundBrand || activeFallbackBrand || '';
+        const resolvedBrand = foundBrand || activeFallbackBrand || currentBrand || '';
         
         let resolvedChiet = foundChiet;
         let resolvedFeat = foundFeat;
 
-        // Find default config from brandList
-        const brandConfig = brandList.find(b => 
-          (b.THUONG_HIEU || '').toUpperCase().trim() === resolvedBrand.toUpperCase().trim()
-        );
-        if (brandConfig) {
-          if (!resolvedChiet) resolvedChiet = brandConfig.CHIET_XUAT_MAC_DINH || '';
-          if (!resolvedFeat) resolvedFeat = brandConfig.TINH_NANG_MAC_DINH || brandConfig.TINH_NANG || '';
+        // Try to resolve/deduce missing fields from the Brand Profile
+        if (resolvedBrand) {
+          const profile = brandProfiles[resolvedBrand.toUpperCase()];
+          if (profile) {
+            // Auto-deduce chiết suất if the brand has only one unique chiết suất
+            if (!resolvedChiet) {
+              resolvedChiet = profile.allChietXuats.length === 1 ? profile.allChietXuats[0] : (profile.defaultChietXuat || '');
+            }
+            // Auto-deduce feature if the brand has only one unique feature
+            if (!resolvedFeat) {
+              resolvedFeat = profile.allFeatures.length === 1 ? profile.allFeatures[0] : (profile.defaultFeature || '');
+            }
+          }
         }
 
-        // If still missing, check in sanPhams for any sample product of this brand
+        // If still missing, check in sanPhams for any sample product of this brand as a secondary fallback
         if (!resolvedChiet || !resolvedFeat) {
           const matchedProdSample = sanPhams.find(p => 
             (p.THUONG_HIEU || '').toUpperCase().trim() === resolvedBrand.toUpperCase().trim()
@@ -452,6 +601,10 @@ export default function OrderParser({ sanPhams, brandList, onCreateXuatPhieu }: 
               console.log(`  - WARN: No exact SKU match found in catalog for "${generatedSku}"`);
             }
 
+            const stock = matchedProduct?.TON_CUOI ?? 0;
+            const isSelectable = !!matchedProduct && stock > 0;
+            const defaultExportQty = isSelectable ? Math.min(quantity, stock) : 0;
+
             results.push({
               id: `PARSED_${index}_${Math.random().toString(36).substring(2, 5)}`,
               rawLine,
@@ -463,7 +616,9 @@ export default function OrderParser({ sanPhams, brandList, onCreateXuatPhieu }: 
               quantity,
               unit,
               sku: generatedSku,
-              matchedProduct
+              matchedProduct,
+              selected: isSelectable,
+              exportQuantity: defaultExportQty
             });
           }
         }
@@ -606,32 +761,81 @@ export default function OrderParser({ sanPhams, brandList, onCreateXuatPhieu }: 
     });
   };
 
+  // Selection helper variables
+  const selectableItems = useMemo(() => {
+    return parsedItems.filter(item => !item.error && item.matchedProduct && item.matchedProduct.TON_CUOI > 0);
+  }, [parsedItems]);
+
+  const allSelectableChecked = useMemo(() => {
+    if (selectableItems.length === 0) return false;
+    return selectableItems.every(item => item.selected);
+  }, [selectableItems]);
+
+  const someSelectableChecked = useMemo(() => {
+    if (selectableItems.length === 0) return false;
+    return selectableItems.some(item => item.selected) && !allSelectableChecked;
+  }, [selectableItems, allSelectableChecked]);
+
+  const handleToggleSelectAll = () => {
+    const targetState = !allSelectableChecked;
+    setParsedItems(prev => prev.map(item => {
+      const isSelectable = !item.error && item.matchedProduct && item.matchedProduct.TON_CUOI > 0;
+      if (isSelectable) {
+        return { ...item, selected: targetState };
+      }
+      return item;
+    }));
+  };
+
+  const handleToggleSelectItem = (id: string) => {
+    setParsedItems(prev => prev.map(item => {
+      if (item.id === id) {
+        // Can only select if stock > 0 and no error
+        const stock = item.matchedProduct?.TON_CUOI ?? 0;
+        if (!item.error && stock > 0) {
+          return { ...item, selected: !item.selected };
+        }
+      }
+      return item;
+    }));
+  };
+
+  const handleUpdateExportQty = (id: string, val: number) => {
+    setParsedItems(prev => prev.map(item => {
+      if (item.id !== id) return item;
+      const stock = item.matchedProduct?.TON_CUOI ?? 0;
+      // Clamp quantity to [1, stock]
+      const clamped = Math.max(1, Math.min(val, stock));
+      return { ...item, exportQuantity: clamped };
+    }));
+  };
+
   // Individual parsed item deletion
   const handleDeleteParsedItem = (id: string) => {
     setParsedItems(prev => prev.filter(item => item.id !== id));
   };
 
-  // Bulk remove unfulfillable/unavailable items
+  // Bulk remove unfulfillable/unavailable items (stock <= 0)
   const handleRemoveUnavailableSKUs = () => {
     setParsedItems(prev => prev.filter(item => {
       if (item.error) return false;
       if (!item.matchedProduct) return false;
       const stock = item.matchedProduct.TON_CUOI;
-      return stock >= item.quantity;
+      return stock > 0;
     }));
   };
 
-  // Auto transition whole order to transaction sales form
+  // Auto transition selected items with export quantities to transaction sales form
   const handleCreateXuat = () => {
-    const validItems = parsedItems
-      .filter(item => !item.error && item.matchedProduct && item.matchedProduct.TON_CUOI >= item.quantity)
+    const selectedItems = parsedItems
+      .filter(item => !item.error && item.selected && item.matchedProduct && (item.exportQuantity ?? 0) > 0)
       .map(item => ({
         sku: item.sku,
-        soLuong: item.quantity
+        soLuong: item.exportQuantity ?? 0
       }));
     
-    if (validItems.length > 0) {
-      onCreateXuatPhieu(validItems);
+    if (selectedItems.length > 0) {
+      onCreateXuatPhieu(selectedItems);
     }
   };
 
@@ -804,18 +1008,18 @@ export default function OrderParser({ sanPhams, brandList, onCreateXuatPhieu }: 
                   </div>
 
                   <div className="flex items-center gap-2">
-                    {parsedItems.some(item => !item.error && item.matchedProduct && item.matchedProduct.TON_CUOI >= item.quantity) ? (
+                    {parsedItems.some(item => !item.error && item.selected && item.matchedProduct && (item.exportQuantity ?? 0) > 0) ? (
                       <button
                         onClick={handleCreateXuat}
                         className="bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold py-2 px-3.5 rounded-xl transition-all shadow-md active:scale-95 flex items-center gap-1.5 cursor-pointer"
                         id="generate_invoice_from_parser_btn"
                       >
                         <ShoppingBag className="w-4 h-4" />
-                        Tạo Phiếu Xuất ({parsedItems.filter(item => !item.error && item.matchedProduct && item.matchedProduct.TON_CUOI >= item.quantity).length} SKU)
+                        Tạo Phiếu Xuất ({parsedItems.filter(item => !item.error && item.selected && item.matchedProduct && (item.exportQuantity ?? 0) > 0).length} SKU)
                       </button>
                     ) : (
                       <div className="text-[11px] text-slate-400 font-medium italic">
-                        * Không có SKU nào đủ hàng để tạo phiếu xuất
+                        * Hãy chọn ít nhất một SKU có hàng để tạo phiếu xuất
                       </div>
                     )}
                   </div>
@@ -881,13 +1085,28 @@ export default function OrderParser({ sanPhams, brandList, onCreateXuatPhieu }: 
 
                 {/* Table of Parsed results */}
                 <div className="border border-slate-100 rounded-xl overflow-hidden">
-                  <div className="overflow-x-auto max-h-[300px] overflow-y-auto">
+                  <div className="overflow-x-auto max-h-[350px] overflow-y-auto">
                     <table className="w-full text-left border-collapse font-sans">
                       <thead>
                         <tr className="bg-slate-50 border-b border-slate-100">
+                          <th className="py-2.5 px-3 text-[10px] font-bold text-slate-400 uppercase text-center w-10">
+                            <input
+                              type="checkbox"
+                              checked={allSelectableChecked}
+                              ref={el => {
+                                if (el) {
+                                  el.indeterminate = someSelectableChecked;
+                                }
+                              }}
+                              onChange={handleToggleSelectAll}
+                              className="w-3.5 h-3.5 rounded-sm border-slate-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer"
+                              title="Chọn tất cả SKU khả dụng"
+                            />
+                          </th>
                           <th className="py-2.5 px-3 text-[10px] font-bold text-slate-400 uppercase">Thông số diopter / SKU</th>
-                          <th className="py-2.5 px-3 text-[10px] font-bold text-slate-400 uppercase text-center w-20">Yêu cầu</th>
-                          <th className="py-2.5 px-3 text-[10px] font-bold text-slate-400 uppercase text-center w-20">Kho thực tế</th>
+                          <th className="py-2.5 px-3 text-[10px] font-bold text-slate-400 uppercase text-center w-16">Yêu cầu</th>
+                          <th className="py-2.5 px-3 text-[10px] font-bold text-slate-400 uppercase text-center w-16">Kho</th>
+                          <th className="py-2.5 px-3 text-[10px] font-bold text-slate-400 uppercase text-center w-24">SL Xuất</th>
                           <th className="py-2.5 px-3 text-[10px] font-bold text-slate-400 uppercase text-center w-28">Trạng thái</th>
                           <th className="py-2.5 px-3 text-[10px] font-bold text-slate-400 uppercase text-center w-12">Xóa</th>
                         </tr>
@@ -901,7 +1120,10 @@ export default function OrderParser({ sanPhams, brandList, onCreateXuatPhieu }: 
                           if (item.error) {
                             return (
                               <tr key={item.id} className="hover:bg-slate-50/50 bg-red-50/10">
-                                <td colSpan={4} className="py-2.5 px-3">
+                                <td className="py-2.5 px-3 text-center">
+                                  <input type="checkbox" disabled className="w-3.5 h-3.5 rounded-sm border-slate-200" />
+                                </td>
+                                <td colSpan={5} className="py-2.5 px-3">
                                   <div className="space-y-0.5">
                                     <p className="font-bold text-rose-600 flex items-center gap-1">
                                       <AlertTriangle className="w-3.5 h-3.5" />
@@ -926,6 +1148,7 @@ export default function OrderParser({ sanPhams, brandList, onCreateXuatPhieu }: 
 
                           const stock = item.matchedProduct?.TON_CUOI ?? 0;
                           const hasProduct = !!item.matchedProduct;
+                          const isSelectable = hasProduct && stock > 0;
                           
                           let statusBadge = null;
                           let textClass = "text-slate-800";
@@ -950,7 +1173,7 @@ export default function OrderParser({ sanPhams, brandList, onCreateXuatPhieu }: 
                           } else if (stock < item.quantity) {
                             statusBadge = (
                               <span className="inline-flex items-center gap-0.5 text-amber-600 bg-amber-50 text-[10px] font-bold px-2 py-0.5 rounded-md border border-amber-100">
-                                <AlertTriangle className="w-3 h-3" /> Chỉ còn {stock} miếng
+                                <AlertTriangle className="w-3 h-3" /> Thiếu
                               </span>
                             );
                             rowClass = "bg-amber-50/10 hover:bg-amber-50/20";
@@ -958,13 +1181,23 @@ export default function OrderParser({ sanPhams, brandList, onCreateXuatPhieu }: 
                           } else {
                             statusBadge = (
                               <span className="inline-flex items-center gap-0.5 text-emerald-600 bg-emerald-50 text-[10px] font-bold px-2 py-0.5 rounded-md border border-emerald-100">
-                                <CheckCircle className="w-3 h-3" /> Còn
+                                <CheckCircle className="w-3 h-3" /> Sẵn sàng
                               </span>
                             );
                           }
 
                           return (
-                            <tr key={item.id} className={rowClass}>
+                            <tr key={item.id} className={`${rowClass} ${item.selected ? 'bg-indigo-50/10' : ''}`}>
+                              <td className="py-2.5 px-3 text-center">
+                                <input
+                                  type="checkbox"
+                                  checked={!!item.selected}
+                                  disabled={!isSelectable}
+                                  onChange={() => handleToggleSelectItem(item.id)}
+                                  className="w-3.5 h-3.5 rounded-sm border-slate-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                                  title={isSelectable ? "Chọn để xuất" : "Không thể chọn SKU hết hàng"}
+                                />
+                              </td>
                               <td className="py-2.5 px-3">
                                 <div className="space-y-0.5">
                                   <p className="font-mono font-bold text-slate-800 flex items-center gap-1.5">
@@ -972,7 +1205,7 @@ export default function OrderParser({ sanPhams, brandList, onCreateXuatPhieu }: 
                                     <span>SPH {sphStr}</span>
                                     <span>CYL {cylStr}</span>
                                   </p>
-                                  <p className="text-[10px] text-slate-400 font-mono tracking-tight">{item.sku || 'N/A'}</p>
+                                  <p className="text-[10px] text-slate-400 font-mono tracking-tight">{formatSKUForDisplay(item.sku) || 'N/A'}</p>
                                 </div>
                               </td>
                               <td className="py-2.5 px-3 text-center font-bold text-slate-700">
@@ -980,6 +1213,21 @@ export default function OrderParser({ sanPhams, brandList, onCreateXuatPhieu }: 
                               </td>
                               <td className={`py-2.5 px-3 text-center font-mono font-bold ${textClass}`}>
                                 {hasProduct ? stock : 0}
+                              </td>
+                              <td className="py-2.5 px-3 text-center">
+                                {isSelectable ? (
+                                  <input
+                                    type="number"
+                                    min={1}
+                                    max={stock}
+                                    disabled={!item.selected}
+                                    value={item.exportQuantity ?? ''}
+                                    onChange={(e) => handleUpdateExportQty(item.id, parseInt(e.target.value) || 0)}
+                                    className="w-16 px-1.5 py-1 text-center border border-slate-200 rounded-md focus:outline-hidden focus:border-indigo-500 text-xs font-bold disabled:bg-slate-50 disabled:text-slate-400"
+                                  />
+                                ) : (
+                                  <span className="text-slate-400 font-semibold font-mono">-</span>
+                                )}
                               </td>
                               <td className="py-2.5 px-3 text-center">
                                 {statusBadge}

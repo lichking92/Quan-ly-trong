@@ -38,17 +38,40 @@
 /* Các lớp ghi đè tương phản cao cho chế độ tối (High Contrast Dark Mode) */
 .dark-theme .bento-card,
 .dark-theme [class*="bento-card"],
-.dark-theme .bg-white {
+.dark-theme .bg-white,
+.dark-theme .bg-slate-50,
+.dark-theme .bg-slate-100,
+.dark-theme .bg-slate-150,
+.dark-theme .bg-slate-200,
+.dark-theme .bg-gray-50,
+.dark-theme .bg-gray-100,
+.dark-theme .bg-gray-200,
+.dark-theme .bg-zinc-50,
+.dark-theme .bg-zinc-100,
+.dark-theme .bg-zinc-200,
+.dark-theme .bg-neutral-50,
+.dark-theme .bg-neutral-100,
+.dark-theme .bg-neutral-200,
+.dark-theme .bg-stone-50,
+.dark-theme .bg-stone-100,
+.dark-theme .bg-stone-200,
+.dark-theme [class^="bg-slate-100/"],
+.dark-theme [class^="bg-slate-50/"],
+.dark-theme [class^="bg-gray-100/"],
+.dark-theme [class^="bg-gray-50/"] {
   background-color: var(--bg-card) !important;
   border-color: var(--border-color) !important;
   color: var(--text-main) !important;
 }
 
-.dark-theme .bg-slate-50,
-.dark-theme .bg-slate-100,
-.dark-theme .bg-slate-50/40,
-.dark-theme .bg-slate-100/80 {
-  background-color: #0f172a !important;
+/* Các khu vực cần nền tối hẳn như container ngoài */
+.dark-theme .bg-slate-900,
+.dark-theme .bg-slate-950,
+.dark-theme .bg-gray-900,
+.dark-theme .bg-gray-950,
+.dark-theme .bg-[#0f172a],
+.dark-theme .bg-black {
+  background-color: var(--bg-main) !important;
 }
 
 .dark-theme select,
@@ -59,26 +82,112 @@
   color: var(--text-input) !important;
 }
 
+/* Khắc phục triệt để "Chữ đen trên nền tối" & "Chữ xám trên nền xám" */
+/* Nhóm 1: Các màu chữ sẫm (950, 900, 850, 800, 750, 700, 650, 600) -> Chuyển thành Trắng sáng */
 .dark-theme text,
+.dark-theme .text-slate-950,
 .dark-theme .text-slate-900,
 .dark-theme .text-slate-850,
 .dark-theme .text-slate-800,
 .dark-theme .text-slate-700,
-.dark-theme .text-slate-650 {
+.dark-theme .text-slate-650,
+.dark-theme .text-slate-600,
+.dark-theme .text-gray-950,
+.dark-theme .text-gray-900,
+.dark-theme .text-gray-850,
+.dark-theme .text-gray-800,
+.dark-theme .text-gray-700,
+.dark-theme .text-gray-650,
+.dark-theme .text-gray-600,
+.dark-theme .text-zinc-950,
+.dark-theme .text-zinc-900,
+.dark-theme .text-zinc-850,
+.dark-theme .text-zinc-800,
+.dark-theme .text-zinc-700,
+.dark-theme .text-zinc-650,
+.dark-theme .text-zinc-600,
+.dark-theme .text-neutral-950,
+.dark-theme .text-neutral-900,
+.dark-theme .text-neutral-850,
+.dark-theme .text-neutral-800,
+.dark-theme .text-neutral-700,
+.dark-theme .text-neutral-650,
+.dark-theme .text-neutral-600,
+.dark-theme .text-stone-950,
+.dark-theme .text-stone-900,
+.dark-theme .text-stone-850,
+.dark-theme .text-stone-800,
+.dark-theme .text-stone-700,
+.dark-theme .text-stone-650,
+.dark-theme .text-stone-600,
+.dark-theme .text-black {
   color: #ffffff !important;
 }
 
-.dark-theme .text-slate-600,
+/* Nhóm 2: Các màu chữ xám trung cấp (500, 450, 400) -> Chuyển thành Xám sáng tương phản tốt */
 .dark-theme .text-slate-500,
-.dark-theme .text-slate-400 {
+.dark-theme .text-slate-450,
+.dark-theme .text-slate-400,
+.dark-theme .text-gray-500,
+.dark-theme .text-gray-450,
+.dark-theme .text-gray-400,
+.dark-theme .text-zinc-500,
+.dark-theme .text-zinc-450,
+.dark-theme .text-zinc-400,
+.dark-theme .text-neutral-500,
+.dark-theme .text-neutral-450,
+.dark-theme .text-neutral-400,
+.dark-theme .text-stone-500,
+.dark-theme .text-stone-450,
+.dark-theme .text-stone-400 {
   color: #cbd5e1 !important;
 }
 
+/* Nhóm 3: Các màu chữ nhạt (350, 300, 200) -> Chuyển thành Xám nhạt dịu nhẹ để giữ phân cấp */
+.dark-theme .text-slate-350,
+.dark-theme .text-slate-300,
+.dark-theme .text-slate-200,
+.dark-theme .text-gray-350,
+.dark-theme .text-gray-300,
+.dark-theme .text-gray-200,
+.dark-theme .text-zinc-350,
+.dark-theme .text-zinc-300,
+.dark-theme .text-zinc-200,
+.dark-theme .text-neutral-350,
+.dark-theme .text-neutral-300,
+.dark-theme .text-neutral-200,
+.dark-theme .text-stone-350,
+.dark-theme .text-stone-300,
+.dark-theme .text-stone-200 {
+  color: #94a3b8 !important;
+}
+
+/* Placeholder độ tương phản tốt, không bị quá mờ */
+.dark-theme ::placeholder,
+.dark-theme input::placeholder,
+.dark-theme textarea::placeholder {
+  color: #94a3b8 !important;
+  opacity: 1 !important;
+}
+
+/* Khắc phục bảng dữ liệu, đường viền, phân tách dòng */
+.dark-theme .border-slate-50,
 .dark-theme .border-slate-100,
 .dark-theme .border-slate-150,
-.dark-theme .border-slate-50,
+.dark-theme .border-slate-200,
+.dark-theme .border-gray-100,
+.dark-theme .border-gray-150,
+.dark-theme .border-gray-200,
+.dark-theme .border-zinc-100,
+.dark-theme .border-zinc-200,
+.dark-theme .border-neutral-100,
+.dark-theme .border-neutral-200,
+.dark-theme .border-stone-100,
+.dark-theme .border-stone-200,
 .dark-theme .divide-slate-50,
-.dark-theme .border-slate-200 {
+.dark-theme .divide-slate-100,
+.dark-theme .divide-gray-100,
+.dark-theme .divide-gray-200 {
   border-color: #334155 !important;
 }
 
@@ -87,56 +196,238 @@
 }
 
 .dark-theme .hover\:bg-slate-50:hover,
-.dark-theme .hover\:bg-slate-50/40:hover,
-.dark-theme .hover\:bg-slate-100:hover {
+.dark-theme .hover\:bg-slate-50\/40:hover,
+.dark-theme .hover\:bg-slate-100:hover,
+.dark-theme .hover\:bg-slate-100\/50:hover,
+.dark-theme .hover\:bg-gray-100:hover {
   background-color: #334155 !important;
 }
 
-.dark-theme .bg-blue-50 {
-  background-color: rgba(37, 99, 235, 0.25) !important;
-  color: #60a5fa !important;
+/* Tối ưu hóa toàn bộ các màu trạng thái (Xanh, Đỏ, Cam, Vàng, Tím) trên nền tối */
+/* 1. Trạng thái Đỏ / Hết hàng / Nguy cấp */
+.dark-theme .bg-red-50,
+.dark-theme .bg-red-100,
+.dark-theme .bg-red-500/10,
+.dark-theme .bg-red-600/10,
+.dark-theme .bg-red-650/10 {
+  background-color: rgba(239, 68, 68, 0.18) !important;
+  color: #fca5a5 !important;
+  border-color: rgba(239, 68, 68, 0.35) !important;
+}
+.dark-theme .text-red-650,
+.dark-theme .text-red-700,
+.dark-theme .text-red-600,
+.dark-theme .text-red-800,
+.dark-theme .text-red-900,
+.dark-theme .text-red-950 {
+  color: #fca5a5 !important;
 }
 
-.dark-theme .text-blue-600 {
-  color: #60a5fa !important;
+.dark-theme .bg-rose-50,
+.dark-theme .bg-rose-100,
+.dark-theme .bg-rose-100\/80,
+.dark-theme .bg-rose-200,
+.dark-theme .bg-rose-500/10,
+.dark-theme .bg-rose-600/10 {
+  background-color: rgba(244, 63, 94, 0.2) !important;
+  color: #fda4af !important;
+  border-color: rgba(244, 63, 94, 0.35) !important;
+}
+.dark-theme .text-rose-700,
+.dark-theme .text-rose-600,
+.dark-theme .text-rose-800,
+.dark-theme .text-rose-900 {
+  color: #fda4af !important;
 }
 
-.dark-theme .text-emerald-600 {
-  color: #34d399 !important;
+/* 2. Trạng thái Cam / Vàng / Hổ phách / Thấp / Đạt */
+.dark-theme .bg-orange-50,
+.dark-theme .bg-orange-100,
+.dark-theme .bg-orange-100\/80,
+.dark-theme .bg-orange-500/10,
+.dark-theme .bg-orange-600/10 {
+  background-color: rgba(249, 115, 22, 0.18) !important;
+  color: #fed7aa !important;
+  border-color: rgba(249, 115, 22, 0.35) !important;
+}
+.dark-theme .text-orange-600,
+.dark-theme .text-orange-700,
+.dark-theme .text-orange-800,
+.dark-theme .text-orange-900 {
+  color: #fed7aa !important;
 }
 
-.dark-theme .bg-emerald-50 {
-  background-color: rgba(16, 185, 129, 0.25) !important;
-  color: #34d399 !important;
+.dark-theme .bg-yellow-50,
+.dark-theme .bg-yellow-50\/70,
+.dark-theme .bg-yellow-100,
+.dark-theme .bg-yellow-100\/80,
+.dark-theme .bg-yellow-500/10 {
+  background-color: rgba(234, 179, 8, 0.15) !important;
+  color: #fef08a !important;
+  border-color: rgba(234, 179, 8, 0.3) !important;
+}
+.dark-theme .text-yellow-700,
+.dark-theme .text-yellow-650,
+.dark-theme .text-yellow-850,
+.dark-theme .text-yellow-800,
+.dark-theme .text-yellow-900 {
+  color: #fef08a !important;
 }
 
-.dark-theme .bg-purple-50 {
-  background-color: rgba(139, 92, 246, 0.25) !important;
+.dark-theme .bg-amber-50,
+.dark-theme .bg-amber-100,
+.dark-theme .bg-amber-500/10,
+.dark-theme .bg-amber-600/10,
+.dark-theme .bg-amber-100\/80 {
+  background-color: rgba(245, 158, 11, 0.18) !important;
+  color: #fde68a !important;
+  border-color: rgba(245, 158, 11, 0.35) !important;
+}
+.dark-theme .text-amber-600,
+.dark-theme .text-amber-700,
+.dark-theme .text-amber-800,
+.dark-theme .text-amber-900,
+.dark-theme .text-amber-950 {
+  color: #fde68a !important;
+}
+
+/* 3. Trạng thái Xanh lá / Đạt yêu cầu / An toàn */
+.dark-theme .bg-emerald-50,
+.dark-theme .bg-emerald-100,
+.dark-theme .bg-emerald-100\/80,
+.dark-theme .bg-emerald-500/10,
+.dark-theme .bg-emerald-600/10 {
+  background-color: rgba(16, 185, 129, 0.18) !important;
+  color: #a7f3d0 !important;
+  border-color: rgba(16, 185, 129, 0.35) !important;
+}
+.dark-theme .text-emerald-600,
+.dark-theme .text-emerald-700,
+.dark-theme .text-emerald-800,
+.dark-theme .text-emerald-900 {
+  color: #a7f3d0 !important;
+}
+
+/* 4. Trạng thái Xanh dương / Nhập kho */
+.dark-theme .bg-blue-50,
+.dark-theme .bg-blue-100,
+.dark-theme .bg-blue-100\/40,
+.dark-theme .bg-blue-500/10 {
+  background-color: rgba(59, 130, 246, 0.18) !important;
+  color: #93c5fd !important;
+  border-color: rgba(59, 130, 246, 0.35) !important;
+}
+.dark-theme .text-blue-600,
+.dark-theme .text-blue-700,
+.dark-theme .text-blue-800,
+.dark-theme .text-blue-900 {
+  color: #93c5fd !important;
+}
+
+/* 5. Trạng thái Tím / Indigo */
+.dark-theme .bg-purple-50,
+.dark-theme .bg-purple-100,
+.dark-theme .bg-purple-500/10 {
+  background-color: rgba(139, 92, 246, 0.18) !important;
+  color: #c084fc !important;
+  border-color: rgba(139, 92, 246, 0.35) !important;
+}
+.dark-theme .text-purple-600,
+.dark-theme .text-purple-700,
+.dark-theme .text-purple-800,
+.dark-theme .text-purple-900 {
   color: #c084fc !important;
 }
 
-.dark-theme .text-purple-600 {
-  color: #c084fc !important;
+.dark-theme .bg-indigo-50,
+.dark-theme .bg-indigo-100,
+.dark-theme .bg-indigo-500/10 {
+  background-color: rgba(99, 102, 241, 0.18) !important;
+  color: #c7d2fe !important;
+  border-color: rgba(99, 102, 241, 0.35) !important;
+}
+.dark-theme .text-indigo-600,
+.dark-theme .text-indigo-700,
+.dark-theme .text-indigo-800,
+.dark-theme .text-indigo-900 {
+  color: #c7d2fe !important;
 }
 
-.dark-theme .bg-rose-50 {
-  background-color: rgba(244, 63, 94, 0.25) !important;
-  color: #f43f5e !important;
-}
-
-.dark-theme .text-rose-600 {
-  color: #f43f5e !important;
-}
-
-/* Treat tables headers specifically in Dark Mode to ensure high visual prominence */
+/* Tables, headers and select dropdown options */
 .dark-theme th,
 .dark-theme thead,
-.dark-theme .bg-slate-50/80 {
+.dark-theme .bg-slate-50/80,
+.dark-theme .bg-slate-50/75,
+.dark-theme .bg-slate-50/50,
+.dark-theme .bg-slate-50/90,
+.dark-theme .bg-slate-50/95 {
+  background-color: #1e293b !important;
+  color: #ffffff !important;
+}
+
+.dark-theme td {
   background-color: #0f172a !important;
   color: #ffffff !important;
 }
 
-/* Ensure selected rows in dark mode are clearly distinguishable */
+/* Hỗ trợ hiển thị trong ô ma trận (Sticky columns / sticky headers) */
+.dark-theme td.sticky,
+.dark-theme th.sticky {
+  background-color: #1e293b !important;
+  color: #ffffff !important;
+  border-color: #334155 !important;
+}
+
+.dark-theme select option {
+  background-color: #1e293b !important;
+  color: #ffffff !important;
+}
+
+/* Nút bấm (Buttons) và phần tử tương tác nền sáng trong Chế độ tối */
+.dark-theme button.bg-slate-100,
+.dark-theme button.bg-slate-50,
+.dark-theme button.bg-slate-200,
+.dark-theme button.bg-white,
+.dark-theme .bg-slate-100 button,
+.dark-theme .bg-slate-50 button,
+.dark-theme button.bg-slate-850 {
+  background-color: #334155 !important;
+  color: #ffffff !important;
+  border: 1px solid #475569 !important;
+}
+
+.dark-theme button.bg-slate-100:hover,
+.dark-theme button.bg-slate-50:hover,
+.dark-theme button.bg-slate-200:hover,
+.dark-theme button.bg-white:hover,
+.dark-theme button.bg-slate-850:hover {
+  background-color: #475569 !important;
+}
+
+/* Recharts Tooltip và Legend trong Dark Mode */
+.dark-theme .recharts-default-tooltip {
+  background-color: #1e293b !important;
+  border-color: #334155 !important;
+  color: #ffffff !important;
+}
+.dark-theme .recharts-tooltip-label {
+  color: #ffffff !important;
+}
+.dark-theme .recharts-legend-item-text {
+  color: #cbd5e1 !important;
+}
+
+/* Modals / Popups trong Dark Mode */
+.dark-theme .modal-container,
+.dark-theme [role="dialog"],
+.dark-theme .bg-white.rounded-2xl,
+.dark-theme .bg-white.rounded-xl {
+  background-color: #1e293b !important;
+  color: #ffffff !important;
+  border: 1px solid #334155 !important;
+}
+
+/* Đảm bảo hàng được chọn có tương phản tốt */
 .dark-theme tr.bg-blue-50/40,
 .dark-theme .bg-blue-50/40 {
   background-color: rgba(37, 99, 235, 0.3) !important;

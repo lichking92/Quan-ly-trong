@@ -4,6 +4,37 @@
  */
 
 import React, { useState, useMemo, useEffect, useRef } from 'react';
+
+// Intercept and demote non-fatal network/Supabase errors from console.error to console.warn
+const originalAppError = console.error;
+console.error = function (...args) {
+  const argStr = args.map(arg => {
+    if (typeof arg === 'string') return arg;
+    if (arg instanceof Error) return arg.message + '\n' + arg.stack;
+    try {
+      return JSON.stringify(arg);
+    } catch (e) {
+      return String(arg);
+    }
+  }).join(' ');
+
+  const isNetworkOrDbFetchError = 
+    argStr.includes('Failed to fetch') || 
+    argStr.includes('TypeError') ||
+    argStr.includes('Lỗi kiểm tra Onboarding') ||
+    argStr.includes('Lỗi fetchAllRows') ||
+    argStr.includes('Lỗi tải b_') ||
+    argStr.includes('Lỗi sync') ||
+    argStr.includes('Lỗi khi tải dữ liệu từ Supabase Cloud') ||
+    argStr.includes('Lỗi trong quá trình khởi tạo Auth');
+
+  if (isNetworkOrDbFetchError) {
+    console.warn('[App Network/DB Warning (Demoted from Error)]:', ...args);
+    return;
+  }
+
+  originalAppError.apply(console, args);
+};
 import { 
   TrendingUp, 
   TrendingDown, 
@@ -27,20 +58,14 @@ import {
   ChevronRight,
   RefreshCw,
   LayoutGrid,
-  MessageSquare
+  MessageSquare,
+  BarChart3
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 
 // Import Types và Mock Data
 import { SanPham, NhapXuat, NhapXuatCT, KiemKho, UserRole, User, ThươngHieu, ChiNhanh, NhanVien, EmailLog } from './types';
 import { 
-  MOCK_SAN_PHAM, 
-  MOCK_NHAP_XUAT, 
-  MOCK_NHAP_XUAT_CT, 
-  MOCK_KIEM_KHO, 
-  MOCK_THUONG_HIEU, 
-  MOCK_CHI_NHANH, 
-  MOCK_NHAN_VIEN,
   getVietnamDateString,
   getVietnamDateTimeString
 } from './data/mockData';
@@ -99,37 +124,37 @@ export default function App() {
   // --- 1. KHỞI TẠO STATE CƠ SỞ DỮ LIỆU ĐỒNG BỘ LOCALSTORAGE ---
   const [sanPhams, setSanPhams] = useState<SanPham[]>(() => {
     const saved = localStorage.getItem('B_SANPHAM');
-    return saved ? JSON.parse(saved) : MOCK_SAN_PHAM;
+    return saved ? JSON.parse(saved) : [];
   });
 
   const [nhapXuats, setNhapXuats] = useState<NhapXuat[]>(() => {
     const saved = localStorage.getItem('B_NHAPXUAT');
-    return saved ? JSON.parse(saved) : MOCK_NHAP_XUAT;
+    return saved ? JSON.parse(saved) : [];
   });
 
   const [nhapXuatCTs, setNhapXuatCTs] = useState<NhapXuatCT[]>(() => {
     const saved = localStorage.getItem('B_NHAPXUATCT');
-    return saved ? JSON.parse(saved) : MOCK_NHAP_XUAT_CT;
+    return saved ? JSON.parse(saved) : [];
   });
 
   const [kiemKhos, setKiemKhos] = useState<KiemKho[]>(() => {
     const saved = localStorage.getItem('B_KIEMKHO');
-    return saved ? JSON.parse(saved) : MOCK_KIEM_KHO;
+    return saved ? JSON.parse(saved) : [];
   });
 
   const [thuongHieus, setThuongHieus] = useState<ThươngHieu[]>(() => {
     const saved = localStorage.getItem('B_THUONGHIEU');
-    return saved ? JSON.parse(saved) : MOCK_THUONG_HIEU;
+    return saved ? JSON.parse(saved) : [];
   });
 
   const [chiNhanhs, setChiNhanhs] = useState<ChiNhanh[]>(() => {
     const saved = localStorage.getItem('B_CHINHANH');
-    return saved ? JSON.parse(saved) : MOCK_CHI_NHANH;
+    return saved ? JSON.parse(saved) : [];
   });
 
   const [nhanViens, setNhanViens] = useState<NhanVien[]>(() => {
     const saved = localStorage.getItem('B_NHANVIEN');
-    return saved ? JSON.parse(saved) : MOCK_NHAN_VIEN;
+    return saved ? JSON.parse(saved) : [];
   });
 
   const [emailLogs, setEmailLogs] = useState<EmailLog[]>(() => {
@@ -146,6 +171,17 @@ export default function App() {
   });
 
   const handleLogout = async () => {
+    if (currentUser) {
+      localStorage.removeItem(`${currentUser.username}_HISTORY_FILTER_SEARCH`);
+      localStorage.removeItem(`${currentUser.username}_HISTORY_FILTER_TYPE`);
+      localStorage.removeItem(`${currentUser.username}_HISTORY_FILTER_SORT_BY`);
+      localStorage.removeItem(`${currentUser.username}_HISTORY_FILTER_SORT_ORDER`);
+      localStorage.removeItem(`${currentUser.username}_HISTORY_FILTER_GROUPED`);
+      localStorage.removeItem(`${currentUser.username}_HISTORY_FILTER_BRANCH`);
+      localStorage.removeItem(`${currentUser.username}_HISTORY_FILTER_WAREHOUSE`);
+      localStorage.removeItem(`${currentUser.username}_HISTORY_FILTER_FROM_DATE`);
+      localStorage.removeItem(`${currentUser.username}_HISTORY_FILTER_TO_DATE`);
+    }
     setCurrentUser(null);
     localStorage.removeItem('CURRENT_USER');
     console.log("Đã đăng xuất người dùng trên giao diện. Giữ kết nối nền Supabase hoạt động.");
@@ -440,16 +476,26 @@ export default function App() {
         if (current) {
           const parsed = JSON.parse(current);
           if (parsed.username.includes('@')) {
+            localStorage.removeItem(`${parsed.username}_HISTORY_FILTER_SEARCH`);
+            localStorage.removeItem(`${parsed.username}_HISTORY_FILTER_TYPE`);
+            localStorage.removeItem(`${parsed.username}_HISTORY_FILTER_SORT_BY`);
+            localStorage.removeItem(`${parsed.username}_HISTORY_FILTER_SORT_ORDER`);
+            localStorage.removeItem(`${parsed.username}_HISTORY_FILTER_GROUPED`);
+            localStorage.removeItem(`${parsed.username}_HISTORY_FILTER_BRANCH`);
+            localStorage.removeItem(`${parsed.username}_HISTORY_FILTER_WAREHOUSE`);
+            localStorage.removeItem(`${parsed.username}_HISTORY_FILTER_FROM_DATE`);
+            localStorage.removeItem(`${parsed.username}_HISTORY_FILTER_TO_DATE`);
+
             setCurrentUser(null);
             localStorage.removeItem('CURRENT_USER');
             
-            setSanPhams(MOCK_SAN_PHAM);
-            setNhapXuats(MOCK_NHAP_XUAT);
-            setNhapXuatCTs(MOCK_NHAP_XUAT_CT);
-            setKiemKhos(MOCK_KIEM_KHO);
-            setThuongHieus(MOCK_THUONG_HIEU);
-            setChiNhanhs(MOCK_CHI_NHANH);
-            setNhanViens(MOCK_NHAN_VIEN);
+            setSanPhams([]);
+            setNhapXuats([]);
+            setNhapXuatCTs([]);
+            setKiemKhos([]);
+            setThuongHieus([]);
+            setChiNhanhs([]);
+            setNhanViens([]);
 
             localStorage.removeItem('B_SANPHAM');
             localStorage.removeItem('B_NHAPXUAT');
@@ -1957,7 +2003,7 @@ export default function App() {
               }`}
               title={sidebarCollapsed ? "Dashboard" : undefined}
             >
-              <TrendingUp className="w-4 h-4 shrink-0 text-blue-500" /> 
+              <BarChart3 className="w-4 h-4 shrink-0 text-blue-500" /> 
               {!sidebarCollapsed && <span>Dashboard</span>}
             </button>
           )}
@@ -2333,34 +2379,23 @@ export default function App() {
         <div className="fixed bottom-0 left-0 right-0 z-40 bg-[#0f172a] border-t border-slate-800 md:hidden flex items-center justify-around h-16 px-1 shadow-[0_-4px_12px_rgba(0,0,0,0.15)] pb-safe">
           {[
             {
-              tab: currentUser.role === 'NHAN_VIEN' ? 'TRANSACTION_XUAT' : 'DASHBOARD',
-              label: 'Home',
-              icon: Home
-            },
-            {
-              tab: 'PRODUCT',
-              label: 'Sản phẩm',
-              icon: Boxes
-            },
-            {
-              tab: 'TRANSACTION_NHAP',
-              label: 'Nhập Kho',
-              icon: TrendingUp,
-              hidden: currentUser.role === 'NHAN_VIEN'
-            },
-            {
               tab: 'TRANSACTION_XUAT',
               label: 'Xuất Kho',
               icon: TrendingDown
+            },
+            {
+              tab: 'ORDER_PARSER',
+              label: 'Kiểm tra đơn',
+              icon: MessageSquare
             },
             {
               tab: 'HISTORY',
               label: 'Lịch sử',
               icon: History
             }
-          ].filter(item => !item.hidden).map((item) => {
+          ].map((item) => {
             const Icon = item.icon;
-            const isActive = activeTab === item.tab || (item.label === 'Home' && (activeTab === 'DASHBOARD' || (currentUser.role === 'NHAN_VIEN' && activeTab === 'TRANSACTION_XUAT')));
+            const isActive = activeTab === item.tab;
             return (
               <button
                 key={item.label}

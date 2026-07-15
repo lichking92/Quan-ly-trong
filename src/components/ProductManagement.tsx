@@ -20,7 +20,7 @@ import {
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { SanPham, ThươngHieu } from '../types';
-import { generateSKUString, formatDop } from '../data/mockData';
+import { generateSKUString, formatDop, formatSKUForDisplay, cleanSKU, generateSphOptions } from '../data/mockData';
 
 /**
  * FILE: ProductManagement.tsx
@@ -215,31 +215,25 @@ export default function ProductManagement({ sanPhams = [], onAddProduct, onUpdat
     }
   };
 
-  // Tính toán SPH Range dựa trên loại độ (Cận: 0.00 đến -8.00, Viễn: 0.75 đến 4.00, bước nhảy 0.25)
+  // Tính toán SPH Range dựa trên loại độ (Cận / Viễn) theo cấu hình thương hiệu và chiết suất đang chọn
   const sphOptions = useMemo(() => {
-    const opts: number[] = [];
-    if (formDoSphType === 'CẬN') {
-      // Cận từ -0.00 đến -8.00
-      for (let i = 0; i >= -8.00; i -= 0.25) {
-        opts.push(Number(i.toFixed(2)));
-      }
-    } else {
-      // Viễn từ 0.75 đến 4.00
-      for (let i = 0.75; i <= 4.00; i += 0.25) {
-        opts.push(Number(i.toFixed(2)));
-      }
-    }
-    return opts;
-  }, [formDoSphType]);
+    return generateSphOptions(formBrand, formChietXuat, brandList, formDoSphType);
+  }, [formBrand, formChietXuat, brandList, formDoSphType]);
 
   // Luôn cập nhật lại độ SPH được chọn nếu nó không nằm trong dãy tùy chọn mới thay đổi
   React.useEffect(() => {
-    if (formDoSphType === 'CẬN') {
-      setFormDoSph(-2.00); // Reset mặc định độ cận thông dụng
-    } else {
-      setFormDoSph(1.50);  // Reset mặc định độ viễn thông dụng
+    if (sphOptions.length > 0) {
+      if (!sphOptions.includes(formDoSph)) {
+        if (formDoSphType === 'CẬN' && sphOptions.includes(-2.00)) {
+          setFormDoSph(-2.00);
+        } else if (formDoSphType === 'VIỄN' && sphOptions.includes(1.50)) {
+          setFormDoSph(1.50);
+        } else {
+          setFormDoSph(sphOptions[0]);
+        }
+      }
     }
-  }, [formDoSphType]);
+  }, [sphOptions, formDoSph, formDoSphType]);
 
   // Độ loạn từ -0.00 đến -2.00 (bước nhảy 0.25)
   const cylOptions = useMemo(() => {
@@ -364,7 +358,7 @@ export default function ProductManagement({ sanPhams = [], onAddProduct, onUpdat
     setFormError('');
 
     // Kiểm tra trùng lặp SKU (Yêu cầu nghiệp vụ: SKU là duy nhất)
-    const isDuplicate = sanPhams.some(p => p.SKU.toUpperCase() === currentFormSKU.toUpperCase());
+    const isDuplicate = sanPhams.some(p => cleanSKU(p.SKU) === cleanSKU(currentFormSKU));
     if (isDuplicate) {
       setFormError(`Lỗi: Mã SKU [${currentFormSKU}] đã tồn tại trong hệ thống. Hãy kiểm tra lại cấu hình thông số.`);
       return;
@@ -671,7 +665,7 @@ export default function ProductManagement({ sanPhams = [], onAddProduct, onUpdat
                       {/* SKU */}
                       <td className="py-3 px-4 font-mono truncate" style={{ width: columnWidths.sku, maxWidth: columnWidths.sku }}>
                         <span className="text-xs font-bold text-slate-700 bg-slate-100 py-1 px-2.5 rounded-md">
-                          {p.SKU}
+                          {formatSKUForDisplay(p.SKU)}
                         </span>
                       </td>
 

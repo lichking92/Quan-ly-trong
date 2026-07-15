@@ -27,7 +27,7 @@ import {
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { SanPham, NhapXuat, NhapXuatCT, LoaiPhieu, User as UserType, ThươngHieu } from '../types';
-import { generateSKUString, formatDop, getVietnamDateString, getVietnamDateTimeString, generateSphOptions } from '../data/mockData';
+import { generateSKUString, formatDop, getVietnamDateString, getVietnamDateTimeString, generateSphOptions, formatSKUForDisplay, cleanSKU } from '../data/mockData';
 
 /**
  * FILE: TransactionForm.tsx
@@ -1552,7 +1552,7 @@ export default function TransactionForm({
           <div className="bg-slate-50 p-4 rounded-xl border border-slate-200/80 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
             <div className="space-y-1">
               <span className="text-[10px] uppercase font-bold text-slate-400">SKU xác định:</span>
-              <p className="text-xs font-bold font-mono text-slate-800 tracking-tight">{calculatedSKU}</p>
+              <p className="text-xs font-bold font-mono text-slate-800 tracking-tight">{formatSKUForDisplay(calculatedSKU)}</p>
               <p className="text-[11px] text-slate-400 truncate max-w-sm font-medium">{calculatedProductName}</p>
             </div>
             
@@ -1657,7 +1657,7 @@ export default function TransactionForm({
                     <td className="py-3 px-4 text-xs font-mono text-slate-400">{index + 1}</td>
                     <td className="py-3 px-4">
                       <span className="text-xs font-bold font-mono text-slate-700 bg-slate-100 py-0.5 px-2 rounded">
-                        {item.sku}
+                        {formatSKUForDisplay(item.sku)}
                       </span>
                     </td>
                     <td className="py-3 px-4">
