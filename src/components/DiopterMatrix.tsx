@@ -38,7 +38,12 @@ interface DiopterMatrixProps {
     newTonToiThieu: number,
     newTonThucTe: number,
     currentSystemTon: number,
-    branchName: string
+    branchName: string,
+    brand?: string,
+    feature?: string,
+    chietXuat?: string,
+    sph?: number,
+    cyl?: number
   ) => Promise<void>;
 }
 
@@ -171,7 +176,12 @@ export default function DiopterMatrix({
         minStock,
         actualStock,
         selectedCellDetail.tonCuoi,
-        selectedBranch === 'Tất cả' ? 'Kho Trung Tâm' : selectedBranch
+        selectedBranch === 'Tất cả' ? 'Kho Trung Tâm' : selectedBranch,
+        selectedCellDetail.product?.THUONG_HIEU,
+        selectedCellDetail.product?.TINH_NANG,
+        selectedCellDetail.product?.CHIET_XUAT,
+        selectedCellDetail.product?.CAN,
+        selectedCellDetail.product?.LOAN
       );
       setSelectedCellDetail(null);
     } catch (error: any) {
@@ -291,25 +301,86 @@ export default function DiopterMatrix({
     };
   };
 
-  // Trả về style màu cho ô tương ứng
+  // Trực quan hóa tồn kho bằng thang màu Gradient liên tục theo tỷ lệ Tồn cuối / Tồn tối thiểu
+  const getInventoryDynamicStyle = (tonCuoi: number, tonToiThieu: number, exists: boolean) => {
+    if (!exists) {
+      return {
+        style: {} as React.CSSProperties,
+        status: 'An toàn' as const
+      };
+    }
+
+    if (tonCuoi === 0) {
+      return {
+        style: {
+          backgroundColor: '#b91c1c', // Đỏ đậm (Red 700)
+          color: '#ffffff',
+          fontWeight: '800',
+          borderWidth: '1px',
+          borderColor: '#991b1b',
+        } as React.CSSProperties,
+        status: 'Hết hàng' as const
+      };
+    }
+
+    const minStock = tonToiThieu > 0 ? tonToiThieu : 10;
+    const ratio = tonToiThieu === 0 ? 1.5 : (tonCuoi / minStock);
+
+    let r = 0, g = 0, b = 0;
+    let status: 'Hết hàng' | 'Nguy cấp' | 'Thấp' | 'Đạt yêu cầu' | 'An toàn' = 'An toàn';
+
+    if (ratio < 0.5) {
+      status = 'Nguy cấp';
+      // Tỷ lệ từ 0 đến 0.5: Chuyển từ Đỏ (Red 500: 239, 68, 68) sang Cam (Orange 400: 251, 146, 60)
+      const t = ratio / 0.5;
+      r = Math.round(239 + (251 - 239) * t);
+      g = Math.round(68 + (146 - 68) * t);
+      b = Math.round(68 + (60 - 68) * t);
+    } else if (ratio < 1.0) {
+      status = 'Thấp';
+      // Tỷ lệ từ 0.5 đến 1.0: Chuyển từ Cam (Orange 400: 251, 146, 60) sang Vàng (Yellow 300: 253, 224, 71)
+      const t = (ratio - 0.5) / 0.5;
+      r = Math.round(251 + (253 - 251) * t);
+      g = Math.round(146 + (224 - 146) * t);
+      b = Math.round(60 + (71 - 60) * t);
+    } else if (ratio < 1.5) {
+      status = 'Đạt yêu cầu';
+      // Tỷ lệ từ 1.0 đến 1.5: Chuyển từ Vàng (Yellow 300: 253, 224, 71) sang Xanh lá nhạt (Green 500: 34, 197, 94)
+      const t = (ratio - 1.0) / 0.5;
+      r = Math.round(253 + (34 - 253) * t);
+      g = Math.round(224 + (197 - 224) * t);
+      b = Math.round(71 + (94 - 71) * t);
+    } else {
+      status = 'An toàn';
+      // Tỷ lệ từ 1.5 trở lên: Chuyển từ Xanh lá (Green 500: 34, 197, 94) sang Xanh lá đậm (Green 750: 21, 115, 55)
+      const t = Math.min(1, (ratio - 1.5) / 1.5);
+      r = Math.round(34 + (21 - 34) * t);
+      g = Math.round(197 + (115 - 197) * t);
+      b = Math.round(94 + (55 - 94) * t);
+    }
+
+    // Tự động tính độ sáng tương phản để chữ luôn sắc nét, dễ đọc trên cả Light & Dark modes
+    const brightness = (r * 299 + g * 587 + b * 114) / 1000;
+    const textColor = brightness > 145 ? '#0f172a' : '#ffffff';
+
+    return {
+      style: {
+        backgroundColor: `rgb(${r}, ${g}, ${b})`,
+        color: textColor,
+        borderWidth: '1px',
+        borderColor: `rgba(${Math.max(0, r - 30)}, ${Math.max(0, g - 30)}, ${Math.max(0, b - 30)}, 0.55)`,
+        textShadow: textColor === '#ffffff' ? '0px 1px 2px rgba(0,0,0,0.3)' : 'none',
+      } as React.CSSProperties,
+      status
+    };
+  };
+
+  // Trả về style màu cho ô tương ứng làm dự phòng
   const getCellClasses = (status: 'Hết hàng' | 'Nguy cấp' | 'Thấp' | 'Đạt yêu cầu' | 'An toàn', exists: boolean) => {
     if (!exists) {
-      return 'bg-slate-100 text-slate-350 border-slate-200 cursor-not-allowed opacity-40';
+      return 'bg-slate-100 dark:bg-slate-800/40 text-slate-350 dark:text-slate-650 border-slate-200 dark:border-slate-800 cursor-not-allowed opacity-40';
     }
-    switch (status) {
-      case 'Hết hàng':
-        return 'bg-red-50 text-red-650 border-red-200 hover:bg-red-100';
-      case 'Nguy cấp':
-        return 'bg-rose-100/80 text-rose-800 border-rose-300 hover:bg-rose-200 font-bold';
-      case 'Thấp':
-        return 'bg-orange-50 text-orange-600 border-orange-200 hover:bg-orange-100/80';
-      case 'Đạt yêu cầu':
-        return 'bg-yellow-50/70 text-yellow-700 border-yellow-250 hover:bg-yellow-100/80';
-      case 'An toàn':
-        return 'bg-emerald-50 text-emerald-600 border-emerald-200 hover:bg-emerald-100/80';
-      default:
-        return 'bg-slate-50 text-slate-600 border-slate-200';
-    }
+    return '';
   };
 
   const getStatusLabel = (status: string) => {
@@ -325,22 +396,22 @@ export default function DiopterMatrix({
 
   const getStatusBadgeClass = (status: string) => {
     switch (status) {
-      case 'Hết hàng': return 'bg-red-500/10 text-red-600 border border-red-200';
-      case 'Nguy cấp': return 'bg-rose-600/10 text-rose-700 border border-rose-300 font-bold';
-      case 'Thấp': return 'bg-orange-500/10 text-orange-600 border border-orange-200';
-      case 'Đạt yêu cầu': return 'bg-yellow-500/10 text-yellow-650 border border-yellow-200';
-      case 'An toàn': return 'bg-emerald-500/10 text-emerald-600 border border-emerald-200';
-      default: return 'bg-slate-500/10 text-slate-600 border border-slate-200';
+      case 'Hết hàng': return 'bg-red-600 text-white font-extrabold border border-red-700 px-2 py-0.5 rounded-full';
+      case 'Nguy cấp': return 'bg-red-200 text-red-900 font-bold border border-red-300 px-2 py-0.5 rounded-full';
+      case 'Thấp': return 'bg-orange-400 text-orange-950 font-bold border border-orange-500 px-2 py-0.5 rounded-full';
+      case 'Đạt yêu cầu': return 'bg-yellow-300 text-yellow-950 font-bold border border-yellow-400 px-2 py-0.5 rounded-full';
+      case 'An toàn': return 'bg-emerald-500 text-white font-bold border border-emerald-600 px-2 py-0.5 rounded-full';
+      default: return 'bg-slate-500/10 text-slate-600 border border-slate-200 px-2 py-0.5 rounded-full';
     }
   };
 
   const getStatusColorDot = (status: string) => {
     switch (status) {
-      case 'Hết hàng': return 'bg-red-500';
-      case 'Nguy cấp': return 'bg-rose-700';
-      case 'Thấp': return 'bg-orange-500';
-      case 'Đạt yêu cầu': return 'bg-yellow-400';
-      case 'An toàn': return 'bg-emerald-500';
+      case 'Hết hàng': return 'bg-red-600 border border-red-700';
+      case 'Nguy cấp': return 'bg-red-200 border border-red-300';
+      case 'Thấp': return 'bg-orange-400 border border-orange-500';
+      case 'Đạt yêu cầu': return 'bg-yellow-300 border border-yellow-400';
+      case 'An toàn': return 'bg-emerald-500 border border-emerald-600';
       default: return 'bg-slate-300';
     }
   };
@@ -512,11 +583,11 @@ export default function DiopterMatrix({
 
           {/* Chú giải ý nghĩa màu */}
           <div className="flex flex-wrap items-center gap-2.5 text-[9px] font-bold text-slate-500 uppercase tracking-wide">
-            <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-full bg-red-500 shrink-0" /> Hết hàng</span>
-            <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-full bg-rose-700 shrink-0" /> Nguy cấp</span>
-            <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-full bg-orange-500 shrink-0" /> Thấp</span>
-            <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-full bg-yellow-400 shrink-0" /> Đạt</span>
-            <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-full bg-emerald-500 shrink-0" /> An toàn</span>
+            <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-full bg-red-600 border border-red-700 shrink-0" /> Hết hàng</span>
+            <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-full bg-red-200 border border-red-300 shrink-0" /> Nguy cấp</span>
+            <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-full bg-orange-400 border border-orange-500 shrink-0" /> Thấp</span>
+            <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-full bg-yellow-300 border border-yellow-400 shrink-0" /> Đạt</span>
+            <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-full bg-emerald-500 border border-emerald-600 shrink-0" /> An toàn</span>
           </div>
         </div>
       </div>
@@ -568,6 +639,7 @@ export default function DiopterMatrix({
                   {/* Các ô giá trị tương ứng */}
                   {cylList.map(cyl => {
                     const info = getCellStockInfo(sph, cyl);
+                    const dyn = getInventoryDynamicStyle(info.tonCuoi, info.tonToiThieu, info.exists);
                     return (
                       <td
                         key={`${sph}_${cyl}`}
@@ -580,26 +652,29 @@ export default function DiopterMatrix({
                               exists: info.exists,
                               tonCuoi: info.tonCuoi,
                               tonToiThieu: info.tonToiThieu,
-                              status: info.status,
+                              status: dyn.status,
                               product: info.product
                             });
                           }
                         }}
-                        className={`p-1.5 border-r border-slate-150 text-center font-mono text-[11px] transition-all relative ${
-                          getCellClasses(info.status, info.exists)
-                        } ${info.exists ? 'cursor-pointer active:scale-95' : 'cursor-not-allowed'}`}
-                        title={info.exists ? `${info.sku}\nTồn: ${info.tonCuoi}` : 'Chưa định nghĩa SKU'}
+                        style={info.exists ? dyn.style : {}}
+                        className={`p-1 border-r border-slate-150 text-center font-mono text-[11.5px] transition-all relative ${
+                          info.exists 
+                            ? 'cursor-pointer active:scale-95 hover:brightness-105 shadow-2xs' 
+                            : 'bg-slate-100 dark:bg-slate-800/40 text-slate-350 dark:text-slate-650 border-slate-200 dark:border-slate-800 cursor-not-allowed opacity-40'
+                        }`}
+                        title={info.exists ? `${info.sku}\nTồn: ${info.tonCuoi} / Tối thiểu: ${info.tonToiThieu} (${getStatusLabel(dyn.status)})` : 'Chưa định nghĩa SKU'}
                       >
-                        <div className="h-9 w-full flex items-center justify-center">
+                        <div className="h-8.5 w-full flex items-center justify-center">
                           {info.exists ? (
                             displayMode === 'QUANTITY' ? (
-                              <span className="font-bold">{info.tonCuoi}</span>
+                              <span className="font-extrabold tracking-tight">{info.tonCuoi}</span>
                             ) : (
-                              // Chế độ màu trạng thái: Render hình tròn đặc trưng có màu rõ ràng
-                              <span className={`h-4.5 w-4.5 rounded-full flex shrink-0 animate-fade-in shadow-xs ${getStatusColorDot(info.status)}`} />
+                              // Chế độ màu trạng thái: Chỉ cần nhìn dải màu của ô, hoặc hiển thị chấm tròn đồng nhất nếu muốn
+                              <span className="w-2.5 h-2.5 rounded-full bg-white/75 shadow-xs animate-pulse" />
                             )
                           ) : (
-                            <span className="text-slate-300">-</span>
+                            <span className="text-slate-350 dark:text-slate-600">-</span>
                           )}
                         </div>
                       </td>

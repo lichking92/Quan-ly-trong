@@ -69,7 +69,8 @@ import { motion, AnimatePresence } from 'motion/react';
 import { SanPham, NhapXuat, NhapXuatCT, KiemKho, UserRole, User, ThươngHieu, ChiNhanh, NhanVien, EmailLog } from './types';
 import { 
   getVietnamDateString,
-  getVietnamDateTimeString
+  getVietnamDateTimeString,
+  cleanSKU
 } from './data/mockData';
 
 // Import Supabase
@@ -107,10 +108,8 @@ import OrderParser from './components/OrderParser';
 
 
 
-const cleanSKU = (sku: string | undefined | null): string => {
-  if (!sku) return '';
-  return sku.trim().replace(/\s+/g, ' ').toUpperCase();
-};
+
+
 
 /**
  * FILE: App.tsx
@@ -736,6 +735,48 @@ export default function App() {
   };
 
   /**
+   * Nghiệp vụ Cập nhật thông tin sản phẩm tròng kính
+   */
+  const handleUpdateProduct = async (sku: string, updatedFields: Partial<SanPham>) => {
+    const normSku = cleanSKU(sku);
+    setSanPhams(prev => prev.map(p => {
+      if (cleanSKU(p.SKU) === normSku) {
+        return { ...p, ...updatedFields };
+      }
+      return p;
+    }));
+
+    // Đồng bộ Supabase
+    if (currentUser) {
+      try {
+        const uId = await getUserId();
+        if (uId) {
+          const productInState = sanPhams.find(p => cleanSKU(p.SKU) === normSku);
+          if (productInState) {
+            const finalProduct = { ...productInState, ...updatedFields };
+            const res = await syncSanPham(finalProduct, uId);
+            if (res.error) {
+              setSyncError({
+                table: 'b_sanpham',
+                action: 'Cập nhật sản phẩm',
+                message: res.error.message || JSON.stringify(res.error)
+              });
+            }
+          }
+        }
+      } catch (err: any) {
+        console.error('Lỗi sync cập nhật sản phẩm:', err);
+        setSyncError({
+          table: 'b_sanpham',
+          action: 'Cập nhật sản phẩm',
+          message: err.message || JSON.stringify(err)
+        });
+      }
+    }
+    setSuccessToast({ message: `Đã cập nhật thành công sản phẩm: ${sku}` });
+  };
+
+  /**
    * Cập nhật thông tin ô tròng kính trực tiếp từ Ma trận độ:
    * 1. Lưu trực tiếp Tồn tối thiểu vào Sản phẩm
    * 2. Nếu Tồn thực tế khác Tồn hệ thống:
@@ -750,7 +791,12 @@ export default function App() {
     newTonToiThieu: number,
     newTonThucTe: number,
     currentSystemTon: number,
-    branchName: string
+    branchName: string,
+    brand?: string,
+    feature?: string,
+    chietXuat?: string,
+    sph?: number,
+    cyl?: number
   ) => {
     // 1. Xác định lệch
     const lech = newTonThucTe - currentSystemTon;
@@ -760,7 +806,20 @@ export default function App() {
     // 2. Tạo bản cập nhật sản phẩm trước
     const normSku = cleanSKU(sku);
     let updatedProducts = sanPhams.map(p => {
-      if (cleanSKU(p.SKU) === normSku) {
+      let isMatch = false;
+      if (brand !== undefined && feature !== undefined && chietXuat !== undefined && sph !== undefined && cyl !== undefined) {
+        isMatch = 
+          p.THUONG_HIEU.trim().toLowerCase() === brand.trim().toLowerCase() &&
+          p.TINH_NANG.trim().toLowerCase() === feature.trim().toLowerCase() &&
+          p.CHIET_XUAT.trim() === chietXuat.trim() &&
+          Math.abs(p.CAN - sph) < 0.001 &&
+          Math.abs(p.LOAN - cyl) < 0.001 &&
+          cleanSKU(p.SKU) === normSku;
+      } else {
+        isMatch = cleanSKU(p.SKU) === normSku;
+      }
+
+      if (isMatch) {
         return {
           ...p,
           TON_TOI_THIEU: newTonToiThieu
@@ -824,12 +883,25 @@ export default function App() {
 
       let newAdjInvoiceId = '';
       if (isPositive) {
-        newAdjInvoiceId = `PNK${String(maxPNKNum + 1).padStart(7, '0')}`;
+        newAdjInvoiceId = `PNK${String(maxPNKNum + 1).padStart(6, '0')}`;
       } else {
-        newAdjInvoiceId = `PXK${String(maxPXKNum + 1).padStart(7, '0')}`;
+        newAdjInvoiceId = `PXK${String(maxPXKNum + 1).padStart(6, '0')}`;
       }
 
-      const matchedP = updatedProducts.find(p => cleanSKU(p.SKU) === normSku);
+      const matchedP = updatedProducts.find(p => {
+        if (brand !== undefined && feature !== undefined && chietXuat !== undefined && sph !== undefined && cyl !== undefined) {
+          return (
+            p.THUONG_HIEU.trim().toLowerCase() === brand.trim().toLowerCase() &&
+            p.TINH_NANG.trim().toLowerCase() === feature.trim().toLowerCase() &&
+            p.CHIET_XUAT.trim() === chietXuat.trim() &&
+            Math.abs(p.CAN - sph) < 0.001 &&
+            Math.abs(p.LOAN - cyl) < 0.001 &&
+            cleanSKU(p.SKU) === normSku
+          );
+        }
+        return cleanSKU(p.SKU) === normSku;
+      });
+
       if (matchedP) {
         createdAdjHeader = {
           HOA_DON: newAdjInvoiceId,
@@ -866,16 +938,29 @@ export default function App() {
         newHeaders = [...newHeaders, createdAdjHeader];
         newDetails = [...newDetails, createdAdjDetail];
       }
-    }
 
-    // 3. Tái tính toán và cập nhật lại tồn kho sản phẩm
-    updatedProducts = updatedProducts.map(p => {
-      if (cleanSKU(p.SKU) === normSku) {
-        const updatedP = recalculateProductState(sku, updatedProducts, newDetails, newKiemKhos);
-        return updatedP ? updatedP : p;
-      }
-      return p;
-    });
+      // 3. Tái tính toán và cập nhật lại tồn kho sản phẩm (chỉ chạy khi thực sự có chênh lệch tồn thực tế)
+      updatedProducts = updatedProducts.map(p => {
+        let isMatch = false;
+        if (brand !== undefined && feature !== undefined && chietXuat !== undefined && sph !== undefined && cyl !== undefined) {
+          isMatch = 
+            p.THUONG_HIEU.trim().toLowerCase() === brand.trim().toLowerCase() &&
+            p.TINH_NANG.trim().toLowerCase() === feature.trim().toLowerCase() &&
+            p.CHIET_XUAT.trim() === chietXuat.trim() &&
+            Math.abs(p.CAN - sph) < 0.001 &&
+            Math.abs(p.LOAN - cyl) < 0.001 &&
+            cleanSKU(p.SKU) === normSku;
+        } else {
+          isMatch = cleanSKU(p.SKU) === normSku;
+        }
+
+        if (isMatch) {
+          const updatedP = recalculateProductState(sku, updatedProducts, newDetails, newKiemKhos);
+          return updatedP ? updatedP : p;
+        }
+        return p;
+      });
+    }
 
     // Cập nhật State
     setSanPhams(updatedProducts);
@@ -896,7 +981,20 @@ export default function App() {
           const promises: Promise<any>[] = [];
           
           // Sync sản phẩm bị ảnh hưởng
-          const targetProd = updatedProducts.find(p => cleanSKU(p.SKU) === normSku);
+          const targetProd = updatedProducts.find(p => {
+            if (brand !== undefined && feature !== undefined && chietXuat !== undefined && sph !== undefined && cyl !== undefined) {
+              return (
+                p.THUONG_HIEU.trim().toLowerCase() === brand.trim().toLowerCase() &&
+                p.TINH_NANG.trim().toLowerCase() === feature.trim().toLowerCase() &&
+                p.CHIET_XUAT.trim() === chietXuat.trim() &&
+                Math.abs(p.CAN - sph) < 0.001 &&
+                Math.abs(p.LOAN - cyl) < 0.001 &&
+                cleanSKU(p.SKU) === normSku
+              );
+            }
+            return cleanSKU(p.SKU) === normSku;
+          });
+
           if (targetProd) {
             promises.push(syncSanPham(targetProd, uId));
           }
@@ -1155,10 +1253,10 @@ export default function App() {
         let newAdjInvoiceId = '';
         if (isPositive) {
           currentPNKNum += 1;
-          newAdjInvoiceId = `PNK${String(currentPNKNum).padStart(7, '0')}`;
+          newAdjInvoiceId = `PNK${String(currentPNKNum).padStart(6, '0')}`;
         } else {
           currentPXKNum += 1;
-          newAdjInvoiceId = `PXK${String(currentPXKNum).padStart(7, '0')}`;
+          newAdjInvoiceId = `PXK${String(currentPXKNum).padStart(6, '0')}`;
         }
 
         const matchedP = sanPhams.find(p => cleanSKU(p.SKU) === cleanSKU(finalizedAudit.SKU));
@@ -2248,6 +2346,7 @@ export default function App() {
                   currentUser={currentUser}
                   sanPhams={sanPhams}
                   onAddProduct={handleAddProduct}
+                  onUpdateProduct={handleUpdateProduct}
                   thuongHieus={listBrandNames}
                   brandList={thuongHieus}
                 />
