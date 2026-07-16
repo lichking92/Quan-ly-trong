@@ -245,7 +245,7 @@ export default function DiopterMatrix({
 
     // Nếu chọn chi nhánh cụ thể, tính toán lại tồn kho theo chi nhánh
     if (selectedBranch && selectedBranch !== 'Tất cả') {
-      const branchHeaders = nhapXuats.filter(h => h.CHI_NHANH === selectedBranch);
+      const branchHeaders = nhapXuats.filter(h => h.CHI_NHANH === selectedBranch && h.TRANG_THAI !== 'Đã hủy');
       const branchHeaderIds = new Set(branchHeaders.map(h => h.HOA_DON));
 
       const branchDetails = nhapXuatCTs.filter(d => d.SKU === product.SKU && branchHeaderIds.has(d.HOA_DON));

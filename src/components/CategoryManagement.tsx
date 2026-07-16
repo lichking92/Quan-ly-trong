@@ -1842,10 +1842,10 @@ export default function CategoryManagement({
                         </div>
 
                         <div className="flex flex-wrap gap-1.5">
-                          {(!r.PERMISSIONS || r.PERMISSIONS.length === 0) ? (
+                          {(!r.PERMISSIONS || (Array.isArray(r.PERMISSIONS) ? r.PERMISSIONS : safeParseArray(r.PERMISSIONS)).length === 0) ? (
                             <span className="text-[10px] text-slate-400 italic">Chưa gán quyền hạn nào...</span>
                           ) : (
-                            r.PERMISSIONS.map(pCode => (
+                            (Array.isArray(r.PERMISSIONS) ? r.PERMISSIONS : safeParseArray(r.PERMISSIONS)).map(pCode => (
                               <span
                                 key={pCode}
                                 className="text-[9px] font-sans font-bold px-2 py-0.5 rounded bg-slate-50 text-slate-500 border border-slate-200/50"

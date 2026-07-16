@@ -2,6 +2,7 @@ import { supabase } from './supabaseClient';
 import { SanPham, NhapXuat, NhapXuatCT, KiemKho, ThươngHieu, ChiNhanh, NhanVien, EmailLog, Role, safeParseArray } from './types';
 
 export let isOfflineMode = false;
+export let hasCreatedColumns = false;
 
 export function setOfflineMode(value: boolean) {
   isOfflineMode = value;
@@ -101,6 +102,26 @@ export interface UserDataPayload {
  * Kiểm tra xem tài khoản đã có dữ liệu chưa, nếu chưa thì tự động Onboard nạp dữ liệu mẫu
  */
 export async function tryCreateColumnsOnSupabase() {
+  if (isOfflineMode) return;
+  if (hasCreatedColumns) return;
+  hasCreatedColumns = true;
+
+  if (typeof window !== 'undefined' && localStorage.getItem('SUPABASE_RPC_NOT_AVAILABLE') === 'true') {
+    console.log("Bỏ qua cấu hình tự động qua exec_sql/run_sql do không được hỗ trợ trên Supabase này (lấy từ cache).");
+    return;
+  }
+
+  // Thử kiểm tra xem các bảng/cột chính đã có sẵn chưa
+  try {
+    const { error: checkError } = await supabase.from('b_nhanvien').select('NGAY_DANG_KY').limit(1);
+    if (!checkError) {
+      console.log("Cơ sở dữ liệu Supabase đã sẵn sàng và đầy đủ cột. Bỏ qua cấu hình tự động.");
+      return;
+    }
+  } catch (err) {
+    // Bỏ qua lỗi và tiếp tục thử chạy RPC nếu thực sự thiếu cột
+  }
+
   const sql = `
     DO $$ 
     BEGIN
@@ -268,6 +289,11 @@ export async function tryCreateColumnsOnSupabase() {
       EXCEPTION WHEN others THEN NULL;
       END;
 
+      BEGIN
+        ALTER TABLE b_nhapxuat ADD COLUMN IF NOT EXISTS "TRANG_THAI" text DEFAULT 'Hoàn tất';
+      EXCEPTION WHEN others THEN NULL;
+      END;
+
       -- Thêm các cột cho b_kiemkho
       BEGIN
         ALTER TABLE b_kiemkho ADD COLUMN IF NOT EXISTS "MA_NV" text;
@@ -327,6 +353,9 @@ export async function tryCreateColumnsOnSupabase() {
       if (error.code === 'PGRST202') {
         // Hàm không tồn tại trong schema cache, hoàn toàn bình thường
         console.log("Hàm 'exec_sql' không có sẵn trên Supabase (bỏ qua cấu hình tự động qua exec_sql).");
+        if (typeof window !== 'undefined') {
+          localStorage.setItem('SUPABASE_RPC_NOT_AVAILABLE', 'true');
+        }
       } else {
         console.log("Thông tin cấu hình qua exec_sql:", error.message);
       }
@@ -343,6 +372,9 @@ export async function tryCreateColumnsOnSupabase() {
       if (error.code === 'PGRST202') {
         // Hàm không tồn tại trong schema cache, hoàn toàn bình thường
         console.log("Hàm 'run_sql' không có sẵn trên Supabase (bỏ qua cấu hình tự động qua run_sql).");
+        if (typeof window !== 'undefined') {
+          localStorage.setItem('SUPABASE_RPC_NOT_AVAILABLE', 'true');
+        }
       } else {
         console.log("Thông tin cấu hình qua run_sql:", error.message);
       }
@@ -658,7 +690,10 @@ export async function fetchAllUserData(userId: string): Promise<UserDataPayload>
     NGUOI_TAO: item.NGUOI_TAO,
     TEN_NGUOI_TAO: item.TEN_NGUOI_TAO,
     TG_TAO: item.TG_TAO,
-    GHI_CHU: item.GHI_CHU || ''
+    GHI_CHU: item.GHI_CHU || '',
+    MA_NV: item.MA_NV || undefined,
+    TEN_DANG_NHAP: item.TEN_DANG_NHAP || undefined,
+    TRANG_THAI: item.TRANG_THAI || 'Hoàn tất'
   }));
 
   const nhapXuatCTs: NhapXuatCT[] = (dataNhapXuatCTs || []).map(item => ({
@@ -886,6 +921,7 @@ export async function syncNhapXuat(nx: NhapXuat, userId: string) {
       "GHI_CHU": nx.GHI_CHU,
       "MA_NV": nx.MA_NV || null,
       "TEN_DANG_NHAP": nx.TEN_DANG_NHAP || null,
+      "TRANG_THAI": nx.TRANG_THAI || 'Hoàn tất',
       user_id: userId
     };
 

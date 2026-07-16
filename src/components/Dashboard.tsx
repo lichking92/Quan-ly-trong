@@ -252,6 +252,7 @@ export default function Dashboard({ sanPhams, nhapXuats, nhapXuatCTs, chiNhanhs,
   // Lọc phiếu theo Chi nhánh và Khoảng thời gian
   const filteredHeadersBase = useMemo(() => {
     return nhapXuats.filter(h => {
+      if (h.TRANG_THAI === 'Đã hủy') return false;
       const matchBranch = selectedBranch === 'Tất cả' || h.CHI_NHANH === selectedBranch;
       const matchDate = h.NGAY >= startDate && h.NGAY <= endDate;
       return matchBranch && matchDate;

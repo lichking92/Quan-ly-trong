@@ -66,6 +66,7 @@ export interface NhapXuat {
   GHI_CHU: string;         // Ghi chú tổng quát của phiếu
   MA_NV?: string;          // Mã nhân viên thực hiện (định danh đồng nhất)
   TEN_DANG_NHAP?: string;  // Tên đăng nhập người tạo
+  TRANG_THAI?: string;     // Trạng thái phiếu (ví dụ: 'Hoàn tất' hoặc 'Đã hủy')
 }
 
 // B_NHAPXUATCT: Chi tiết từng dòng sản phẩm trong phiếu Nhập / Xuất / Kiểm kho

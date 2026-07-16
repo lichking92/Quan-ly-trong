@@ -485,6 +485,20 @@ export default function App() {
             const oldRow = payload.old;
             const rowUserId = (newRow && newRow.user_id) || (oldRow && oldRow.user_id);
 
+            // Nếu thay đổi thuộc về b_role, chỉ tải lại vai trò, không tải lại toàn bộ database để tránh làm chậm hệ thống
+            if (payload.table === 'b_role') {
+              if (ignoreRealtimeRef.current) {
+                console.log('Đang bỏ qua sự kiện Realtime cho bảng b_role do cờ ignoreRealtime...');
+                return;
+              }
+              const ownerId = localStorage.getItem('DB_OWNER_USER_ID') || userId;
+              if (rowUserId === userId || rowUserId === ownerId || rowUserId === '00000000-0000-0000-0000-000000000000') {
+                console.log('Phát hiện thay đổi cấu hình vai trò trên Supabase Cloud. Tiến hành cập nhật danh sách vai trò tại chỗ...');
+                await reloadRoles();
+              }
+              return;
+            }
+
             // Nếu dữ liệu thay đổi thuộc về user hiện tại hoặc Owner, tự động reload lại toàn bộ
             const ownerId = localStorage.getItem('DB_OWNER_USER_ID') || userId;
             if (rowUserId === userId || rowUserId === ownerId || rowUserId === '00000000-0000-0000-0000-000000000000') {
@@ -1106,7 +1120,7 @@ export default function App() {
         }
 
         if (isMatch) {
-          const updatedP = recalculateProductState(sku, updatedProducts, newDetails, newKiemKhos);
+          const updatedP = recalculateProductState(sku, updatedProducts, newDetails, newKiemKhos, newHeaders);
           return updatedP ? updatedP : p;
         }
         return p;
@@ -1197,7 +1211,8 @@ export default function App() {
     sku: string,
     currentProducts: SanPham[],
     currentDetails: NhapXuatCT[],
-    currentKiemKhos: KiemKho[]
+    currentKiemKhos: KiemKho[],
+    currentHeaders?: NhapXuat[]
   ): SanPham | null => {
     const normSku = cleanSKU(sku);
     const product = currentProducts.find(p => cleanSKU(p.SKU) === normSku);
@@ -1206,14 +1221,21 @@ export default function App() {
       return null;
     }
 
-    // 1. Tính tổng Nhập từ nhapXuatCTs (gồm PN, PNK...)
+    const headersList = currentHeaders || nhapXuats;
+    const activeInvoices = new Set(
+      headersList
+        .filter(h => h.TRANG_THAI !== 'Đã hủy')
+        .map(h => h.HOA_DON)
+    );
+
+    // 1. Tính tổng Nhập từ nhapXuatCTs (gồm PN, PNK...) (chỉ tính phiếu chưa hủy)
     const totalNhap = currentDetails
-      .filter(d => cleanSKU(d.SKU) === normSku && d.LOAI === 'NHẬP')
+      .filter(d => cleanSKU(d.SKU) === normSku && d.LOAI === 'NHẬP' && activeInvoices.has(d.HOA_DON))
       .reduce((sum, d) => sum + (Number(d.SO_LUONG) || 0), 0);
 
-    // 2. Tính tổng Xuất từ nhapXuatCTs (gồm PX, PXK...)
+    // 2. Tính tổng Xuất từ nhapXuatCTs (gồm PX, PXK...) (chỉ tính phiếu chưa hủy)
     const totalXuat = currentDetails
-      .filter(d => cleanSKU(d.SKU) === normSku && d.LOAI === 'XUẤT')
+      .filter(d => cleanSKU(d.SKU) === normSku && d.LOAI === 'XUẤT' && activeInvoices.has(d.HOA_DON))
       .reduce((sum, d) => sum + (Number(d.SO_LUONG) || 0), 0);
 
     // 3. Tính tổng lượng Nhập bù từ lịch sử Kiểm kho (chỉ những phiếu kiểm kho CHƯA có phiếu điều chỉnh PNK trong chi tiết)
@@ -1311,7 +1333,7 @@ export default function App() {
     const updatedProductsList = sanPhams.map(p => {
       const pSkuNorm = cleanSKU(p.SKU);
       if (affectedSKUs.includes(pSkuNorm)) {
-        const updatedP = recalculateProductState(p.SKU, sanPhams, updatedDetails, kiemKhos);
+        const updatedP = recalculateProductState(p.SKU, sanPhams, updatedDetails, kiemKhos, updatedHeaders);
         return updatedP ? updatedP : p;
       }
       return p;
@@ -1479,7 +1501,7 @@ export default function App() {
     const updatedProductsList = sanPhams.map(p => {
       const pSkuNorm = cleanSKU(p.SKU);
       if (affectedSKUs.includes(pSkuNorm)) {
-        const updatedP = recalculateProductState(p.SKU, sanPhams, updatedDetails, updatedKiemKhos);
+        const updatedP = recalculateProductState(p.SKU, sanPhams, updatedDetails, updatedKiemKhos, updatedHeaders);
         return updatedP ? updatedP : p;
       }
       return p;
@@ -1546,7 +1568,8 @@ export default function App() {
     skusToRecalc: string[]
   ) => {
     // 1. Cập nhật header trong danh sách
-    setNhapXuats(prev => prev.map(h => h.HOA_DON === updatedHeader.HOA_DON ? updatedHeader : h));
+    const nextHeaders = nhapXuats.map(h => h.HOA_DON === updatedHeader.HOA_DON ? updatedHeader : h);
+    setNhapXuats(nextHeaders);
     
     // 2. Ghi đè lại toàn bộ chi tiết mới (chỉ chứa sự thay đổi của dòng trong phiếu)
     setNhapXuatCTs(updatedDetails);
@@ -1556,7 +1579,7 @@ export default function App() {
     const updatedProductsList = sanPhams.map(p => {
       const pSkuNorm = cleanSKU(p.SKU);
       if (normSkusToRecalc.includes(pSkuNorm)) {
-        const updatedP = recalculateProductState(p.SKU, sanPhams, updatedDetails, kiemKhos);
+        const updatedP = recalculateProductState(p.SKU, sanPhams, updatedDetails, kiemKhos, nextHeaders);
         return updatedP ? updatedP : p;
       }
       return p;
@@ -1606,58 +1629,67 @@ export default function App() {
    * HỦY PHIẾU VÀ HOÀN TÁC ROLLBACK TỒN KHO TRỌN VẸN (Rule 4)
    * Phục hồi lại số lượng tròng kính của tất cả SKU liên quan về nguyên trạng.
    */
-  const handleDeleteTransaction = async (hoaDonId: string, skusToRecalc: string[]) => {
-    // 1. Loại bỏ Header khỏi danh sách
-    setNhapXuats(prev => prev.filter(h => h.HOA_DON !== hoaDonId));
+  const handleDeleteTransaction = async (hoaDonId: string, skusToRecalc: string[]): Promise<boolean> => {
+    try {
+      // 1. Cập nhật TRANG_THAI = 'Đã hủy' cho Header trong danh sách nhapXuats
+      const updatedHeaders = nhapXuats.map(h => h.HOA_DON === hoaDonId ? { ...h, TRANG_THAI: 'Đã hủy' } : h);
+      setNhapXuats(updatedHeaders);
 
-    // 2. Loại bỏ toàn bộ dòng chi tiết liên quan
-    const remainingDetails = nhapXuatCTs.filter(d => d.HOA_DON !== hoaDonId);
-    setNhapXuatCTs(remainingDetails);
+      // 2. Giữ nguyên chi tiết nhapXuatCTs để hiển thị được trong lịch sử giao dịch
 
-    // 3. Tái tính toán khôi phục kho cho các SKU bị ảnh hưởng (Rollback hoàn toàn)
-    const normSkusToRecalc = skusToRecalc.map(s => cleanSKU(s));
-    const updatedProductsList = sanPhams.map(p => {
-      const pSkuNorm = cleanSKU(p.SKU);
-      if (normSkusToRecalc.includes(pSkuNorm)) {
-        const updatedP = recalculateProductState(p.SKU, sanPhams, remainingDetails, kiemKhos);
-        return updatedP ? updatedP : p;
-      }
-      return p;
-    });
-
-    setSanPhams(updatedProductsList);
-
-    // Đồng bộ Supabase
-    if (currentUser) {
-      ignoreRealtimeRef.current = true;
-      try {
-        const uId = await getUserId();
-        if (uId) {
-          const [resDel, resSync] = await Promise.all([
-            deleteNhapXuatAndDetails(hoaDonId),
-            syncSanPhams(updatedProductsList.filter(p => normSkusToRecalc.includes(cleanSKU(p.SKU))), uId)
-          ]);
-          const error = resDel.error || resSync.error;
-          if (error) {
-            setSyncError({
-              table: 'b_nhapxuat / b_nhapxuatct / b_sanpham',
-              action: 'Xóa hóa đơn',
-              message: error.message || JSON.stringify(error)
-            });
-          }
+      // 3. Tái tính toán khôi phục kho cho các SKU bị ảnh hưởng (Rollback hoàn toàn)
+      const normSkusToRecalc = skusToRecalc.map(s => cleanSKU(s));
+      const updatedProductsList = sanPhams.map(p => {
+        const pSkuNorm = cleanSKU(p.SKU);
+        if (normSkusToRecalc.includes(pSkuNorm)) {
+          // Pass the updated headers list so that the calculator knows this transaction has been cancelled!
+          const updatedP = recalculateProductState(p.SKU, sanPhams, nhapXuatCTs, kiemKhos, updatedHeaders);
+          return updatedP ? updatedP : p;
         }
-      } catch (err: any) {
-        console.error('Lỗi sync xóa hóa đơn:', err);
-        setSyncError({
-          table: 'b_nhapxuat / b_nhapxuatct / b_sanpham',
-          action: 'Xóa hóa đơn',
-          message: err.message || JSON.stringify(err)
-        });
-      } finally {
-        setTimeout(() => {
-          ignoreRealtimeRef.current = false;
-        }, 3000);
+        return p;
+      });
+
+      setSanPhams(updatedProductsList);
+
+      // Đồng bộ Supabase
+      if (currentUser) {
+        ignoreRealtimeRef.current = true;
+        try {
+          const uId = await getUserId();
+          if (uId) {
+            const cancelledHeader = updatedHeaders.find(h => h.HOA_DON === hoaDonId);
+            const [resSyncHeader, resSyncProducts] = await Promise.all([
+              cancelledHeader ? syncNhapXuat(cancelledHeader, uId) : Promise.resolve({ error: null }),
+              syncSanPhams(updatedProductsList.filter(p => normSkusToRecalc.includes(cleanSKU(p.SKU))), uId)
+            ]);
+            const error = resSyncHeader.error || resSyncProducts.error;
+            if (error) {
+              setSyncError({
+                table: 'b_nhapxuat / b_sanpham',
+                action: 'Hủy hóa đơn',
+                message: error.message || JSON.stringify(error)
+              });
+              return false;
+            }
+          }
+        } catch (err: any) {
+          console.error('Lỗi sync hủy hóa đơn:', err);
+          setSyncError({
+            table: 'b_nhapxuat / b_sanpham',
+            action: 'Hủy hóa đơn',
+            message: err.message || JSON.stringify(err)
+          });
+          return false;
+        } finally {
+          setTimeout(() => {
+            ignoreRealtimeRef.current = false;
+          }, 3000);
+        }
       }
+      return true;
+    } catch (err) {
+      console.error('Lỗi khi hủy hóa đơn:', err);
+      return false;
     }
   };
 
@@ -2543,49 +2575,6 @@ export default function App() {
                 />
               )}
 
-              {activeTab === 'ORDER_PARSER' && (hasPermission('export.create') || hasPermission('export.view')) && (
-                <OrderParser 
-                  sanPhams={sanPhams}
-                  brandList={thuongHieus}
-                  onCreateXuatPhieu={(items) => {
-                    setPrefilledCartItems(items);
-                    setActiveTab('TRANSACTION_XUAT');
-                  }}
-                />
-              )}
-
-              {activeTab === 'TRANSACTION_XUAT' && hasPermission('export.create') && (
-                <TransactionForm 
-                  currentUser={currentUser}
-                  sanPhams={sanPhams}
-                  chiNhanhs={listBranchNames}
-                  thuongHieus={listBrandNames}
-                  brandList={thuongHieus}
-                  loaiPhieuMacDinh="XUẤT"
-                  prefilledSku={prefilledSku || undefined}
-                  onClearPrefilledSku={() => setPrefilledSku(null)}
-                  prefilledCartItems={prefilledCartItems || undefined}
-                  onClearPrefilledCartItems={() => setPrefilledCartItems(null)}
-                  onSaveTransaction={handleSaveTransaction}
-                  onNavigateToHistory={() => setActiveTab('HISTORY')}
-                />
-              )}
-
-              {activeTab === 'TRANSACTION_NHAP' && hasPermission('import.create') && (
-                <TransactionForm 
-                  currentUser={currentUser}
-                  sanPhams={sanPhams}
-                  chiNhanhs={listBranchNames}
-                  thuongHieus={listBrandNames}
-                  brandList={thuongHieus}
-                  loaiPhieuMacDinh="NHẬP"
-                  prefilledSku={prefilledSku || undefined}
-                  onClearPrefilledSku={() => setPrefilledSku(null)}
-                  onSaveTransaction={handleSaveTransaction}
-                  onNavigateToHistory={() => setActiveTab('HISTORY')}
-                />
-              )}
-
               {activeTab === 'AUDIT' && hasPermission('inventory.view') && (
                 <InventoryAudit 
                   currentUser={currentUser}
@@ -2637,40 +2626,61 @@ export default function App() {
                   onDeleteNhanVien={handleDeleteNhanVien}
                   roles={roles}
                   onAddRole={async (r) => {
-                    const res = await syncRole(r, currentUser.id);
-                    if (res.error) {
-                      setSyncError({
-                        table: 'b_role',
-                        action: 'Thêm vai trò mới',
-                        message: res.error.message || JSON.stringify(res.error)
-                      });
-                      throw new Error(res.error.message || "Lỗi lưu lên Supabase");
+                    ignoreRealtimeRef.current = true;
+                    try {
+                      const res = await syncRole(r, currentUser.id);
+                      if (res.error) {
+                        setSyncError({
+                          table: 'b_role',
+                          action: 'Thêm vai trò mới',
+                          message: res.error.message || JSON.stringify(res.error)
+                        });
+                        throw new Error(res.error.message || "Lỗi lưu lên Supabase");
+                      }
+                      await reloadRoles();
+                    } finally {
+                      setTimeout(() => {
+                        ignoreRealtimeRef.current = false;
+                      }, 1000);
                     }
-                    await reloadRoles();
                   }}
                   onUpdateRole={async (r) => {
-                    const res = await syncRole(r, currentUser.id);
-                    if (res.error) {
-                      setSyncError({
-                        table: 'b_role',
-                        action: 'Cập nhật vai trò',
-                        message: res.error.message || JSON.stringify(res.error)
-                      });
-                      throw new Error(res.error.message || "Lỗi cập nhật trên Supabase");
+                    ignoreRealtimeRef.current = true;
+                    try {
+                      const res = await syncRole(r, currentUser.id);
+                      if (res.error) {
+                        setSyncError({
+                          table: 'b_role',
+                          action: 'Cập nhật vai trò',
+                          message: res.error.message || JSON.stringify(res.error)
+                        });
+                        throw new Error(res.error.message || "Lỗi cập nhật trên Supabase");
+                      }
+                      await reloadRoles();
+                    } finally {
+                      setTimeout(() => {
+                        ignoreRealtimeRef.current = false;
+                      }, 1000);
                     }
-                    await reloadRoles();
                   }}
                   onDeleteRole={async (roleCode) => {
-                    const res = await deleteRole(roleCode, currentUser.id);
-                    if (res.error) {
-                      setSyncError({
-                        table: 'b_role',
-                        action: 'Xóa vai trò',
-                        message: res.error.message || JSON.stringify(res.error)
-                      });
-                      throw new Error(res.error.message || "Lỗi xóa trên Supabase");
+                    ignoreRealtimeRef.current = true;
+                    try {
+                      const res = await deleteRole(roleCode, currentUser.id);
+                      if (res.error) {
+                        setSyncError({
+                          table: 'b_role',
+                          action: 'Xóa vai trò',
+                          message: res.error.message || JSON.stringify(res.error)
+                        });
+                        throw new Error(res.error.message || "Lỗi xóa trên Supabase");
+                      }
+                      await reloadRoles();
+                    } finally {
+                      setTimeout(() => {
+                        ignoreRealtimeRef.current = false;
+                      }, 1000);
                     }
-                    await reloadRoles();
                   }}
                   onTriggerToast={(message, type) => {
                     setSuccessToast({ show: true, message, type: type || 'success' });

@@ -6,6 +6,9 @@
 @theme {
   --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
   --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+  --color-red-650: #dc2626;
+  --color-blue-650: #1d4ed8;
+  --color-emerald-650: #047857;
 }
 
 /* Khởi tạo biến Light Mode */

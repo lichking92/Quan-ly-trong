@@ -53,7 +53,7 @@ interface TransactionHistoryProps {
     updatedDetails: NhapXuatCT[], 
     skusToRecalc: string[]
   ) => void;
-  onDeleteTransaction: (hoaDonId: string, skusToRecalc: string[]) => void;
+  onDeleteTransaction: (hoaDonId: string, skusToRecalc: string[]) => Promise<boolean>;
   onSaveTransaction?: (header: NhapXuat, details: NhapXuatCT[]) => Promise<void>;
   chiNhanhs?: string[];
   thuongHieus?: string[];
@@ -122,7 +122,12 @@ export default function TransactionHistory({
       ...tempDetails.map(d => d.SKU)
     ]));
 
-    const otherDetails = nhapXuatCTs.filter(d => d.HOA_DON !== headerId);
+    const activeInvoices = new Set(
+      nhapXuats
+        .filter(h => h.HOA_DON !== headerId && h.TRANG_THAI !== 'Đã hủy')
+        .map(h => h.HOA_DON)
+    );
+    const otherDetails = nhapXuatCTs.filter(d => activeInvoices.has(d.HOA_DON));
     const simulatedDetails = [...otherDetails, ...tempDetails];
 
     for (const sku of affectedSKUs) {
@@ -492,7 +497,7 @@ export default function TransactionHistory({
   }, [toDate, currentUser]);
   const [columnOrder, setColumnOrder] = useState<string[]>(() => {
     const saved = localStorage.getItem(`${currentUser.username}_HISTORY_COLUMN_ORDER`);
-    return saved ? JSON.parse(saved) : ['invoiceNo', 'type', 'datetime', 'branch', 'creator', 'totalQty', 'note'];
+    return saved ? JSON.parse(saved) : ['invoiceNo', 'type', 'status', 'datetime', 'branch', 'creator', 'totalQty', 'note'];
   });
 
   const handleMoveColumn = (index: number, direction: 'up' | 'down') => {
@@ -514,6 +519,7 @@ export default function TransactionHistory({
     return saved ? JSON.parse(saved) : {
       invoiceNo: true,
       type: true,
+      status: true,
       datetime: true,
       branch: true,
       creator: true,
@@ -527,6 +533,7 @@ export default function TransactionHistory({
     return saved ? JSON.parse(saved) : {
       invoiceNo: 140,
       type: 110,
+      status: 110,
       datetime: 170,
       branch: 160,
       creator: 160,
@@ -830,8 +837,13 @@ export default function TransactionHistory({
   };
 
   // --- 8. HỦY HOÀN TOÀN CẢ PHIẾU (ROLLBACK) ---
-  const handleDeleteEntireInvoice = () => {
+  const handleDeleteEntireInvoice = async () => {
     if (!activeHeader) return;
+
+    if (activeHeader.TRANG_THAI === 'Đã hủy') {
+      setErrorMsg('Phiếu này đã được hủy trước đó, không thể hủy lại.');
+      return;
+    }
 
     // Verify deleting won't cause negative inventory (Rule 1)
     const checkResult = checkSimulatedStock(activeHeader.HOA_DON, []);
@@ -840,7 +852,7 @@ export default function TransactionHistory({
       return;
     }
 
-    if (!window.confirm(`⚠️ CẢNH BÁO QUAN TRỌNG:\nHành động này sẽ XÓA HOÀN TOÀN phiếu ${activeHeader.HOA_DON} và tiến hành HOÀN TỒN KHO (ROLLBACK) của tất cả sản phẩm liên quan.\n\nBạn có chắc chắn muốn tiếp tục thực hiện?`)) {
+    if (!window.confirm(`⚠️ CẢNH BÁO QUAN TRỌNG:\nHành động này sẽ HỦY phiếu ${activeHeader.HOA_DON} và tiến hành HOÀN TỒN KHO (ROLLBACK) của tất cả sản phẩm liên quan.\n\nBạn có chắc chắn muốn tiếp tục thực hiện?`)) {
       return;
     }
 
@@ -855,14 +867,18 @@ export default function TransactionHistory({
       activeHeader.HOA_DON,
       { header: activeHeader, details: activeDetails },
       undefined,
-      `Xóa/Hủy hoàn toàn phiếu bởi ${currentUser.username}`
+      `Hủy hoàn toàn phiếu bởi ${currentUser.username}`
     );
 
-    onDeleteTransaction(activeHeader.HOA_DON, affectedSKUs);
+    const success = await onDeleteTransaction(activeHeader.HOA_DON, affectedSKUs);
 
-    setSelectedInvoice(null);
-    setSuccessMsg(`Đã hủy bỏ hoàn toàn phiếu ${activeHeader.HOA_DON} và hoàn tất Rollback kho!`);
-    setTimeout(() => setSuccessMsg(''), 4000);
+    if (success) {
+      setSelectedInvoice(null);
+      setSuccessMsg(`✅ Hủy phiếu thành công. Đã hoàn tất Rollback kho cho các sản phẩm liên quan!`);
+      setTimeout(() => setSuccessMsg(''), 4000);
+    } else {
+      setErrorMsg(`❌ Hủy phiếu thất bại. Vui lòng liên hệ quản trị viên.`);
+    }
   };
 
   // --- 9. RENDER GIAO DIỆN CHI TIẾT PHIẾU ---
@@ -943,8 +959,8 @@ export default function TransactionHistory({
                     className="w-full text-xs font-semibold text-slate-700 bg-white border border-slate-200 rounded p-1.5 focus:outline-hidden"
                   >
                     <option value="">-- Chọn tròng kính --</option>
-                    {sanPhams.map(p => (
-                      <option key={p.SKU} value={p.SKU}>{formatSKUForDisplay(p.SKU)} (Còn tồn: {p.TON_CUOI})</option>
+                    {sanPhams.map((p, idx) => (
+                      <option key={`${p.SKU}-${idx}`} value={p.SKU}>{formatSKUForDisplay(p.SKU)} (Còn tồn: {p.TON_CUOI})</option>
                     ))}
                   </select>
                 </div>
@@ -1156,6 +1172,37 @@ export default function TransactionHistory({
           </span>
         </td>
       )
+    },
+    status: {
+      label: 'Trạng thái',
+      defaultWidth: 110,
+      renderHeader: (width, onMouseDown, onDoubleClick) => (
+        <th 
+          key="status"
+          style={{ width, minWidth: width, maxWidth: width }}
+          className="py-2.5 px-3 relative font-bold uppercase tracking-wider text-[10px]"
+        >
+          Trạng thái
+          <div 
+            onMouseDown={onMouseDown}
+            onDoubleClick={onDoubleClick}
+            className="absolute right-0 top-0 bottom-0 w-1.5 cursor-col-resize hover:bg-red-500/40 active:bg-red-600 z-25"
+          />
+        </th>
+      ),
+      renderCell: (h) => {
+        const isCancelled = h.TRANG_THAI === 'Đã hủy';
+        const colorClass = isCancelled
+          ? 'bg-rose-50 text-rose-700 border-rose-200'
+          : 'bg-emerald-50 text-emerald-700 border-emerald-200';
+        return (
+          <td key="status" className="py-3 px-3">
+            <span className={`text-[9px] font-bold py-0.5 px-2 rounded-full border uppercase tracking-wider ${colorClass}`}>
+              {isCancelled ? 'Đã hủy' : 'Hoàn tất'}
+            </span>
+          </td>
+        );
+      }
     },
     datetime: {
       label: 'Ngày giờ tạo',
