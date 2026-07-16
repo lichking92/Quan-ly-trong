@@ -522,8 +522,7 @@ export async function fetchAllRows(tableName: string, userId: string): Promise<a
       if (error) {
         logDbError(`Lỗi fetchAllRows từ ${tableName}:`, error);
         if (isNetworkError(error)) {
-          isOfflineMode = true;
-          console.warn(`[Database] Đã tự động kích hoạt chế độ Ngoại tuyến (Offline Mode) cho bảng ${tableName} do lỗi mạng.`);
+          console.warn(`[Database] Đang sử dụng dữ liệu Cache từ localStorage cho bảng ${tableName} do lỗi mạng.`);
           const cached = localStorage.getItem(cacheKey);
           if (cached) {
             try {
@@ -547,8 +546,7 @@ export async function fetchAllRows(tableName: string, userId: string): Promise<a
     } catch (err) {
       logDbError(`Lỗi ngoại lệ fetchAllRows từ ${tableName}:`, err);
       if (isNetworkError(err)) {
-        isOfflineMode = true;
-        console.warn(`[Database] Đã tự động kích hoạt chế độ Ngoại tuyến (Offline Mode) cho bảng ${tableName} do ngoại lệ lỗi mạng.`);
+        console.warn(`[Database] Đang sử dụng dữ liệu Cache từ localStorage cho bảng ${tableName} do ngoại lệ lỗi mạng.`);
         const cached = localStorage.getItem(cacheKey);
         if (cached) {
           try {
@@ -640,8 +638,7 @@ export async function fetchAllUserData(userId: string): Promise<UserDataPayload>
   } catch (err) {
     logDbError('Lỗi tải fetchAllUserData từ Supabase:', err);
     if (isNetworkError(err)) {
-      isOfflineMode = true;
-      console.warn("[Database] Phát hiện lỗi kết nối mạng khi tải dữ liệu. Đã kích hoạt chế độ Ngoại tuyến (Offline Mode)...");
+      console.warn("[Database] Phát hiện lỗi kết nối mạng khi tải dữ liệu. Đang tự động sử dụng dữ liệu Cache Ngoại tuyến...");
       return {
         sanPhams: getCached('B_SANPHAM'),
         nhapXuats: getCached('B_NHAPXUAT'),

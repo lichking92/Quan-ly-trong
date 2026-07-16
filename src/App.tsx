@@ -362,6 +362,7 @@ export default function App() {
     return false;
   });
   const isOfflineRef = useRef<boolean>(isOffline);
+  const wasOfflineRef = useRef<boolean>(isOffline);
   const consecutiveFailuresRef = useRef<number>(0);
 
   const setIsOffline = (val: boolean) => {
@@ -391,75 +392,108 @@ export default function App() {
     try {
       const rawUrl = (import.meta as any).env.VITE_SUPABASE_URL || "https://fuyyregblrjugejetunj.supabase.co";
       const cleanUrl = rawUrl.replace(/\/rest\/v1\/?$/, "").replace(/\/$/, "");
-      
+      const anonKey = (import.meta as any).env.VITE_SUPABASE_ANON_KEY || "sb_publishable_G-1asuq_o55iGIuput1wHA__0wdrGAV";
+
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 3500); // 3.5 seconds timeout
+      const timeoutId = setTimeout(() => controller.abort(), 4000); // 4 seconds timeout
 
-      const response = await fetch(`${cleanUrl}/auth/v1/health`, {
-        method: "GET",
-        signal: controller.signal,
-        headers: {
-          'Cache-Control': 'no-cache'
+      try {
+        const response = await fetch(`${cleanUrl}/rest/v1/`, {
+          method: "GET",
+          signal: controller.signal,
+          headers: {
+            "apikey": anonKey,
+            "Cache-Control": "no-cache"
+          }
+        });
+        clearTimeout(timeoutId);
+        // Any HTTP response (even 4xx/5xx) indicates that we successfully reached the Supabase server
+        return true;
+      } catch (restErr) {
+        clearTimeout(timeoutId);
+        console.warn("[Ping] Thử endpoint /rest/v1/ không thành công, chuyển sang thử /auth/v1/health:", restErr);
+        
+        const backupController = new AbortController();
+        const backupTimeoutId = setTimeout(() => backupController.abort(), 3000);
+        
+        try {
+          const backupResponse = await fetch(`${cleanUrl}/auth/v1/health`, {
+            method: "GET",
+            signal: backupController.signal,
+            headers: {
+              "Cache-Control": "no-cache"
+            }
+          });
+          clearTimeout(backupTimeoutId);
+          return true; // Received response from backup endpoint = reachable
+        } catch (authErr) {
+          clearTimeout(backupTimeoutId);
+          console.warn("[Ping] Cả 2 endpoint của Supabase đều thất bại:", authErr);
+          return false;
         }
-      });
-
-      clearTimeout(timeoutId);
-      return response.ok;
+      }
     } catch (err) {
-      console.warn("Ping Supabase thất bại:", err);
+      console.warn("Lỗi tổng quát trong pingSupabase:", err);
       return false;
     }
   };
 
   const ensureOnline = async (): Promise<boolean> => {
-    if (isOfflineRef.current) {
-      const isNetOffline = typeof window !== 'undefined' && window.navigator && !window.navigator.onLine;
-      setSuccessToast({
-        message: isNetOffline 
-          ? "❌ Không có kết nối mạng. Vui lòng kiểm tra Internet và thử lại."
-          : "❌ Không thể kết nối máy chủ. Chức năng này chỉ khả dụng khi trực tuyến.",
-        type: "error",
-        id: `offline-warn-${Date.now()}`
-      });
-      return false;
+    // Nếu hệ thống đang trực tuyến, cho phép thao tác ngay lập tức không cần pre-ping chậm trễ
+    if (!isOfflineRef.current) {
+      return true;
     }
 
+    // Nếu đang đánh dấu ngoại tuyến, kiểm tra nhanh xem đã có kết nối lại chưa để tránh khóa nhầm
+    console.log("[Connection] Hệ thống đang ngoại tuyến. Đang ping thời gian thực để thử khôi phục kết nối...");
     const online = await pingSupabase();
     if (online) {
+      console.log("[Connection] Khôi phục kết nối thành công qua kiểm tra trực tiếp! Resetting failures count. => SYSTEM GOING ONLINE");
       consecutiveFailuresRef.current = 0;
       setIsOffline(false);
       return true;
-    } else {
-      consecutiveFailuresRef.current += 1;
-      if (consecutiveFailuresRef.current >= 3) {
-        setIsOffline(true);
-        const isNetOffline = typeof window !== 'undefined' && window.navigator && !window.navigator.onLine;
-        setTimeout(() => {
-          setSuccessToast({
-            message: isNetOffline 
-              ? "❌ Không có kết nối mạng. Vui lòng kiểm tra Internet và thử lại."
-              : "❌ Không thể kết nối máy chủ. Chức năng này chỉ khả dụng khi trực tuyến.",
-            type: "error",
-            id: `offline-warn-${Date.now()}`
-          });
-        }, 150);
-        return false;
-      }
-      return true;
     }
+
+    const isNetOffline = typeof window !== 'undefined' && window.navigator && !window.navigator.onLine;
+    setSuccessToast({
+      message: isNetOffline 
+        ? "❌ Không có kết nối mạng. Vui lòng kiểm tra Internet và thử lại."
+        : "❌ Không thể kết nối máy chủ. Chức năng này chỉ khả dụng khi trực tuyến.",
+      type: "error",
+      id: `offline-warn-${Date.now()}`
+    });
+    return false;
   };
 
   // Định kỳ kiểm tra kết nối Supabase thực tế mỗi 10 giây
   useEffect(() => {
     const checkConnection = async () => {
+      const isNetOffline = typeof window !== 'undefined' && window.navigator && !window.navigator.onLine;
+      if (isNetOffline) {
+        if (consecutiveFailuresRef.current < 5) {
+          consecutiveFailuresRef.current = 5;
+          console.warn("[Health Check] Mất kết nối mạng thiết bị (navigator.onLine === false).");
+          console.warn("Health Check #5 failed => OFFLINE");
+          setIsOffline(true);
+        }
+        return;
+      }
+
       const online = await pingSupabase();
       if (online) {
+        if (consecutiveFailuresRef.current > 0 || isOfflineRef.current) {
+          console.log("[Health Check] Kết nối thành công! Đã xóa bộ đếm thất bại. => SYSTEM GOING ONLINE");
+        }
         consecutiveFailuresRef.current = 0;
         setIsOffline(false);
       } else {
         consecutiveFailuresRef.current += 1;
-        if (consecutiveFailuresRef.current >= 3) {
-          setIsOffline(true);
+        console.warn(`Health Check #${consecutiveFailuresRef.current} failed`);
+        if (consecutiveFailuresRef.current >= 5) {
+          if (!isOfflineRef.current) {
+            console.error("=> OFFLINE (Lý do: Không thể truy cập Supabase Health Check sau 5 lần kiểm tra liên tiếp)");
+            setIsOffline(true);
+          }
         }
       }
     };
@@ -469,11 +503,22 @@ export default function App() {
 
     const interval = setInterval(checkConnection, 10000); // 10 giây một lần
 
-    const handleOnline = () => {
-      checkConnection();
+    const handleOnline = async () => {
+      console.log("[Network Event] Thiết bị báo Online trở lại. Đang thực hiện kiểm tra kết nối Supabase...");
+      const online = await pingSupabase();
+      if (online) {
+        console.log("[Network Event] Kết nối Supabase thành công! Chuyển sang Trực tuyến.");
+        consecutiveFailuresRef.current = 0;
+        setIsOffline(false);
+      } else {
+        consecutiveFailuresRef.current = 1;
+        console.warn("Health Check #1 failed (Sau Network Event Online)");
+      }
     };
+
     const handleOffline = () => {
-      consecutiveFailuresRef.current = 3;
+      console.warn("[Network Event] Thiết bị báo Ngoại tuyến (Mất mạng hoàn toàn). Chuyển sang chế độ Ngoại tuyến ngay.");
+      consecutiveFailuresRef.current = 5;
       setIsOffline(true);
     };
 
@@ -524,6 +569,10 @@ export default function App() {
     if (!currentUser || !currentUser.id) return;
 
     const interval = setInterval(async () => {
+      if (isOfflineRef.current) {
+        console.log("Background Polling: Hệ thống đang ngoại tuyến, tạm dừng polling...");
+        return;
+      }
       if (ignoreRealtimeRef.current) {
         console.log("Đang lưu phiếu hoặc có thao tác ghi dữ liệu, tạm dừng polling...");
         return;
@@ -663,6 +712,17 @@ export default function App() {
       setLoadingDb(false);
     }
   };
+
+  // Tự động đồng bộ và nạp lại toàn bộ dữ liệu khi chuyển đổi từ ngoại tuyến sang trực tuyến (Không cần F5/Reload)
+  useEffect(() => {
+    if (!isOffline && wasOfflineRef.current) {
+      console.log("Phát hiện có kết nối trở lại! Tự động đồng bộ mới nhất từ Supabase Cloud...");
+      if (currentUser && currentUser.id) {
+        syncAllDataFromSupabase(currentUser.id, currentUser.username);
+      }
+    }
+    wasOfflineRef.current = isOffline;
+  }, [isOffline, currentUser]);
 
   // Quản lý Auth và Realtime đồng bộ hóa dữ liệu từ Supabase
   useEffect(() => {
