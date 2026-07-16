@@ -94,7 +94,8 @@ import {
   deleteNhanVien,
   syncEmailLog,
   fetchEmailLogs,
-  setOfflineMode
+  setOfflineMode,
+  resolveEffectiveUserId
 } from './supabaseSync';
 
 // Import Components con
@@ -438,6 +439,94 @@ export default function App() {
     }
   };
 
+  const forceLogout = () => {
+    console.warn("[Auth Guard] Bắt đầu xóa toàn bộ cache, session và thông tin đăng nhập...");
+    try {
+      supabase.auth.signOut();
+    } catch (e) {
+      console.warn("Lỗi khi signOut Supabase:", e);
+    }
+    localStorage.clear();
+    sessionStorage.clear();
+    setCurrentUser(null);
+    setSuccessToast({
+      message: "❌ Tài khoản của bạn không còn tồn tại hoặc đã bị vô hiệu hóa. Vui lòng liên hệ quản trị viên.",
+      type: "error",
+      id: `force-logout-${Date.now()}`
+    });
+  };
+
+  const verifySession = async (): Promise<boolean> => {
+    if (!currentUser) return true;
+
+    if (currentUser.username === 'nguyenkienduc.digital@gmail.com' || currentUser.username === 'admin') {
+      return true;
+    }
+
+    if (isOfflineRef.current) {
+      console.log("[Auth Guard] Máy đang ngoại tuyến, tạm bỏ qua xác thực phiên...");
+      return true;
+    }
+
+    try {
+      const activeUid = await resolveEffectiveUserId();
+      const { data: dbNhanViens, error } = await supabase
+        .from('b_nhanvien')
+        .select('*')
+        .eq('user_id', activeUid)
+        .eq('MA_NV', currentUser.id);
+
+      if (error) {
+        console.warn("[Auth Guard] Lỗi truy vấn xác thực tài khoản:", error.message);
+        return true;
+      }
+
+      const staffMember = dbNhanViens && dbNhanViens[0];
+      
+      if (!staffMember) {
+        console.error(`[Auth Guard] Tài khoản ${currentUser.username} không tồn tại trong b_nhanvien! Đăng xuất cưỡng chế.`);
+        forceLogout();
+        return false;
+      }
+
+      const rawStatus = (staffMember.TRANG_THAI || '').trim().toUpperCase();
+      const isPending = rawStatus === 'CHỜ DUYỆT' || rawStatus === 'PENDING' || rawStatus === 'CHO DUYET';
+      const isActive = rawStatus === 'HOẠT ĐỘNG' || rawStatus === 'ACTIVE' || rawStatus === 'KÍCH HOẠT' || rawStatus === 'HOAT DONG';
+
+      if (isPending || !isActive) {
+        console.error(`[Auth Guard] Tài khoản ${currentUser.username} không hoạt động (${rawStatus})! Đăng xuất cưỡng chế.`);
+        forceLogout();
+        return false;
+      }
+
+      const updatedUser: User = {
+        username: staffMember.TEN_DANG_NHAP || staffMember.EMAIL || staffMember.HO_TEN,
+        fullName: staffMember.HO_TEN,
+        role: staffMember.ROLE || staffMember.VAI_TRO || 'NHAN_VIEN',
+        branch: staffMember.CHI_NHANH || 'Kho Trung Tâm',
+        writeAccess: staffMember.WRITE_ACCESS !== false,
+        WRITE_ACCESS: staffMember.WRITE_ACCESS !== false,
+        id: staffMember.MA_NV,
+        ROLES: staffMember.ROLES || []
+      };
+
+      if (
+        currentUser.role !== updatedUser.role ||
+        currentUser.branch !== updatedUser.branch ||
+        currentUser.writeAccess !== updatedUser.writeAccess
+      ) {
+        console.log("[Auth Guard] Cập nhật thông tin và quyền hạn của người dùng từ Supabase...");
+        setCurrentUser(updatedUser);
+        localStorage.setItem('CURRENT_USER', JSON.stringify(updatedUser));
+      }
+
+      return true;
+    } catch (err) {
+      console.warn("[Auth Guard] Có lỗi bất thường khi xác thực phiên:", err);
+      return true;
+    }
+  };
+
   const ensureOnline = async (): Promise<boolean> => {
     // Nếu hệ thống đang trực tuyến, cho phép thao tác ngay lập tức không cần pre-ping chậm trễ
     if (!isOfflineRef.current) {
@@ -531,6 +620,21 @@ export default function App() {
       window.removeEventListener('offline', handleOffline);
     };
   }, []);
+
+  // Định kỳ mỗi 2 phút xác thực lại User với Supabase
+  useEffect(() => {
+    if (!currentUser || !currentUser.id) return;
+
+    // Chạy kiểm tra ngay khi có user (hoặc đổi user)
+    verifySession();
+
+    const checkActiveUserInterval = setInterval(async () => {
+      console.log("[Auth Guard] Đang kiểm tra phiên đăng nhập của người dùng định kỳ...");
+      await verifySession();
+    }, 120000); // 2 phút
+
+    return () => clearInterval(checkActiveUserInterval);
+  }, [currentUser]);
 
   const [isSyncing, setIsSyncing] = useState<boolean>(false);
 
@@ -679,6 +783,17 @@ export default function App() {
                 id: latestStaff.MA_NV,
                 ROLES: latestStaff.ROLES || []
               };
+
+              const rawStatus = (latestStaff.TRANG_THAI || '').trim().toUpperCase();
+              const isPending = rawStatus === 'CHỜ DUYỆT' || rawStatus === 'PENDING' || rawStatus === 'CHO DUYET';
+              const isActive = rawStatus === 'HOẠT ĐỘNG' || rawStatus === 'ACTIVE' || rawStatus === 'KÍCH HOẠT' || rawStatus === 'HOAT DONG';
+
+              if (isPending || !isActive) {
+                console.error(`[Auth Guard] Tài khoản ${savedUser.username} ở trạng thái không hoạt động (${rawStatus})! Tiến hành đăng xuất cưỡng chế.`);
+                forceLogout();
+                return;
+              }
+
               setCurrentUser(u);
               localStorage.setItem('CURRENT_USER', JSON.stringify(u));
               return;
@@ -695,6 +810,10 @@ export default function App() {
               };
               setCurrentUser(u);
               localStorage.setItem('CURRENT_USER', JSON.stringify(u));
+              return;
+            } else {
+              console.error(`[Auth Guard] Không tìm thấy tài khoản ${savedUser.username} (ID: ${savedUser.id}) trong b_nhanvien từ Supabase! Tiến hành đăng xuất cưỡng chế.`);
+              forceLogout();
               return;
             }
           }
@@ -1554,6 +1673,8 @@ export default function App() {
    * Tự động sinh Số hóa đơn (PNxxxxxx, PXxxxxxx) tăng dần chính xác
    */
   const handleSaveTransaction = async (header: NhapXuat, details: NhapXuatCT[]) => {
+    const isSessionValid = await verifySession();
+    if (!isSessionValid) return;
     if (!(await ensureOnline())) return;
     let prefix = header.LOAI === 'NHẬP' ? 'PN' : 'PX';
     if (header.HOA_DON) {
@@ -1656,6 +1777,8 @@ export default function App() {
    * Đồng thời tự động tạo giao dịch điều chỉnh liên kết (PNKxxxxxx hoặc PXKxxxxxx)
    */
   const handleSaveAudit = async (newAuditOrAudits: KiemKho | KiemKho[]) => {
+    const isSessionValid = await verifySession();
+    if (!isSessionValid) return;
     if (!(await ensureOnline())) return;
     const newAudits = Array.isArray(newAuditOrAudits) ? newAuditOrAudits : [newAuditOrAudits];
     
@@ -1842,6 +1965,8 @@ export default function App() {
     updatedDetails: NhapXuatCT[], 
     skusToRecalc: string[]
   ) => {
+    const isSessionValid = await verifySession();
+    if (!isSessionValid) return;
     if (!(await ensureOnline())) return;
     // 1. Cập nhật header trong danh sách
     const nextHeaders = nhapXuats.map(h => h.HOA_DON === updatedHeader.HOA_DON ? updatedHeader : h);
@@ -1906,6 +2031,8 @@ export default function App() {
    * Phục hồi lại số lượng tròng kính của tất cả SKU liên quan về nguyên trạng.
    */
   const handleDeleteTransaction = async (hoaDonId: string, skusToRecalc: string[]): Promise<boolean> => {
+    const isSessionValid = await verifySession();
+    if (!isSessionValid) return false;
     if (!(await ensureOnline())) return false;
     try {
       // 1. Cập nhật TRANG_THAI = 'Đã hủy' cho Header trong danh sách nhapXuats
@@ -2138,6 +2265,8 @@ export default function App() {
   };
 
   const handleUpdateThuongHieu = async (oldName: string, oldFeature: string, brand: ThươngHieu) => {
+    const isSessionValid = await verifySession();
+    if (!isSessionValid) return;
     if (!(await ensureOnline())) return;
     const brandFeature = brand.TINH_NANG || brand.TINH_NANG_MAC_DINH || '';
     setThuongHieus(prev => {
@@ -2178,6 +2307,8 @@ export default function App() {
   };
 
   const handleDeleteThuongHieu = async (brandName: string, feature: string) => {
+    const isSessionValid = await verifySession();
+    if (!isSessionValid) return;
     if (!(await ensureOnline())) return;
     setThuongHieus(prev => prev.filter(t => !(t.THUONG_HIEU === brandName && (t.TINH_NANG || t.TINH_NANG_MAC_DINH || '') === feature)));
 
@@ -2206,6 +2337,8 @@ export default function App() {
   };
 
   const handleUpdateChiNhanh = async (oldName: string, branch: ChiNhanh) => {
+    const isSessionValid = await verifySession();
+    if (!isSessionValid) return;
     if (!(await ensureOnline())) return;
     setChiNhanhs(prev => prev.map(c => c.CHI_NHANH === oldName ? branch : c));
 
@@ -2237,6 +2370,8 @@ export default function App() {
   };
 
   const handleDeleteChiNhanh = async (branchName: string) => {
+    const isSessionValid = await verifySession();
+    if (!isSessionValid) return;
     if (!(await ensureOnline())) return;
     setChiNhanhs(prev => prev.filter(c => c.CHI_NHANH !== branchName));
 
@@ -2285,6 +2420,8 @@ export default function App() {
   };
 
   const handleUpdateNhanVien = async (oldEmail: string, staff: NhanVien) => {
+    const isSessionValid = await verifySession();
+    if (!isSessionValid) return;
     if (!(await ensureOnline())) return;
     const oldStaff = nhanViens.find(n => n.EMAIL === oldEmail);
     const oldStatus = oldStaff ? (oldStaff.TRANG_THAI || 'ACTIVE').trim().toUpperCase() : 'ACTIVE';
@@ -2397,6 +2534,8 @@ export default function App() {
   };
 
   const handleDeleteNhanVien = async (email: string) => {
+    const isSessionValid = await verifySession();
+    if (!isSessionValid) return;
     if (!(await ensureOnline())) return;
     setNhanViens(prev => prev.filter(n => n.EMAIL !== email));
 
