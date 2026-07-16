@@ -804,33 +804,12 @@ export async function syncSanPham(p: SanPham, userId: string) {
       user_id: userId
     };
 
-    const { data: existing, error: checkError } = await supabase
+    const res = await supabase
       .from('b_sanpham')
-      .select('SKU')
-      .eq('SKU', p.SKU)
-      .eq('user_id', userId)
-      .maybeSingle();
+      .upsert(payload, { onConflict: 'SKU,user_id' })
+      .select();
 
-    if (checkError) {
-      console.warn("Lỗi kiểm tra b_sanpham:", checkError.message);
-    }
-
-    let res;
-    if (existing) {
-      res = await supabase
-        .from('b_sanpham')
-        .update(payload)
-        .eq('SKU', p.SKU)
-        .eq('user_id', userId)
-        .select();
-      if (res.error) logDbError("Lỗi syncSanPham (update):", res.error);
-    } else {
-      res = await supabase
-        .from('b_sanpham')
-        .insert(payload)
-        .select();
-      if (res.error) logDbError("Lỗi syncSanPham (insert):", res.error);
-    }
+    if (res.error) logDbError("Lỗi syncSanPham (upsert):", res.error);
     return res;
   } catch (err: any) {
     logDbError("Lỗi ngoài dự kiến trong syncSanPham:", err);
@@ -865,26 +844,10 @@ export async function syncSanPhams(pList: SanPham[], userId: string) {
         user_id: userId
       };
 
-      const { data: existing } = await supabase
+      return supabase
         .from('b_sanpham')
-        .select('SKU')
-        .eq('SKU', p.SKU)
-        .eq('user_id', userId)
-        .maybeSingle();
-
-      if (existing) {
-        return supabase
-          .from('b_sanpham')
-          .update(payload)
-          .eq('SKU', p.SKU)
-          .eq('user_id', userId)
-          .select();
-      } else {
-        return supabase
-          .from('b_sanpham')
-          .insert(payload)
-          .select();
-      }
+        .upsert(payload, { onConflict: 'SKU,user_id' })
+        .select();
     });
 
     const results = await Promise.all(promises);
@@ -925,32 +888,14 @@ export async function syncNhapXuat(nx: NhapXuat, userId: string) {
       user_id: userId
     };
 
-    const { data: existing, error: checkError } = await supabase
+    const res = await supabase
       .from('b_nhapxuat')
-      .select('HOA_DON')
-      .eq('HOA_DON', nx.HOA_DON)
-      .eq('user_id', userId)
-      .maybeSingle();
+      .upsert(payload, { onConflict: 'HOA_DON,user_id' })
+      .select();
 
-    if (checkError) {
-      console.warn("Lỗi kiểm tra b_nhapxuat:", checkError.message);
-    }
-
-    let res;
-    if (existing) {
-      res = await supabase
-        .from('b_nhapxuat')
-        .update(payload)
-        .eq('HOA_DON', nx.HOA_DON)
-        .eq('user_id', userId)
-        .select();
-      if (res.error) logDbError("Lỗi syncNhapXuat (update):", res.error);
-    } else {
-      res = await supabase
-        .from('b_nhapxuat')
-        .insert(payload)
-        .select();
-      if (res.error) logDbError("Lỗi syncNhapXuat (insert):", res.error);
+    if (res.error) {
+      // Nếu có lỗi do constraint chỉ có HOA_DON hoặc HOA_DON_user_id
+      logDbError("Lỗi syncNhapXuat (upsert):", res.error);
     }
     return res;
   } catch (err: any) {
@@ -987,26 +932,10 @@ export async function syncNhapXuatCTs(details: NhapXuatCT[], userId: string) {
         user_id: userId
       };
 
-      const { data: existing } = await supabase
+      return supabase
         .from('b_nhapxuatct')
-        .select('id')
-        .eq('id', d.ID)
-        .eq('user_id', userId)
-        .maybeSingle();
-
-      if (existing) {
-        return supabase
-          .from('b_nhapxuatct')
-          .update(payload)
-          .eq('id', d.ID)
-          .eq('user_id', userId)
-          .select();
-      } else {
-        return supabase
-          .from('b_nhapxuatct')
-          .insert(payload)
-          .select();
-      }
+        .upsert(payload, { onConflict: 'id,user_id' })
+        .select();
     });
 
     const results = await Promise.all(promises);
