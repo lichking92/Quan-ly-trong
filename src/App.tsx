@@ -3118,6 +3118,9 @@ export default function App() {
                       setPrefilledSku(sku);
                       setActiveTab('TRANSACTION_NHAP'); // Lập phiếu nhập kho trực tiếp
                     }}
+                    onTriggerToast={(message, type) => {
+                      setSuccessToast({ show: true, message, type: type || 'success', id: Date.now() });
+                    }}
                   />
                 )}
 

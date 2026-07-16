@@ -278,6 +278,67 @@ export async function tryCreateColumnsOnSupabase() {
       EXCEPTION WHEN others THEN NULL;
       END;
 
+      -- Tạo bảng b_export_template
+      BEGIN
+        CREATE TABLE IF NOT EXISTS public.b_export_template (
+          id text,
+          name text,
+          type text,
+          "fileName" text,
+          "fileData" text,
+          "isDefault" boolean DEFAULT false,
+          "detectedPlaceholders" text[],
+          description text,
+          "createdAt" text,
+          "applicableReportTypes" text[],
+          user_id uuid,
+          PRIMARY KEY (id, user_id)
+        );
+        ALTER TABLE public.b_export_template DISABLE ROW LEVEL SECURITY;
+      EXCEPTION WHEN others THEN NULL;
+      END;
+
+      -- Đảm bảo các cột mới nâng cấp tồn tại trên b_export_template
+      BEGIN
+        ALTER TABLE public.b_export_template ADD COLUMN IF NOT EXISTS "user_id" uuid;
+      EXCEPTION WHEN others THEN NULL;
+      END;
+
+      BEGIN
+        ALTER TABLE public.b_export_template ADD COLUMN IF NOT EXISTS "startRow" integer;
+      EXCEPTION WHEN others THEN NULL;
+      END;
+
+      BEGIN
+        ALTER TABLE public.b_export_template ADD COLUMN IF NOT EXISTS "columnMappings" jsonb;
+      EXCEPTION WHEN others THEN NULL;
+      END;
+
+      BEGIN
+        ALTER TABLE public.b_export_template ADD COLUMN IF NOT EXISTS "groupByFields" text[];
+      EXCEPTION WHEN others THEN NULL;
+      END;
+
+      -- Tạo bảng b_export_mapping
+      BEGIN
+        CREATE TABLE IF NOT EXISTS public.b_export_mapping (
+          placeholder text,
+          "sourceType" text,
+          "sourceField" text,
+          description text,
+          user_id uuid,
+          PRIMARY KEY (placeholder, user_id)
+        );
+        ALTER TABLE public.b_export_mapping DISABLE ROW LEVEL SECURITY;
+      EXCEPTION WHEN others THEN NULL;
+      END;
+
+      -- Đảm bảo b_export_mapping có cột user_id
+      BEGIN
+        ALTER TABLE public.b_export_mapping ADD COLUMN IF NOT EXISTS "user_id" uuid;
+      EXCEPTION WHEN others THEN NULL;
+      END;
+
       -- Thêm các cột cho b_nhapxuat
       BEGIN
         ALTER TABLE b_nhapxuat ADD COLUMN IF NOT EXISTS "MA_NV" text;
@@ -341,6 +402,14 @@ export async function tryCreateColumnsOnSupabase() {
         END;
         BEGIN
           ALTER PUBLICATION supabase_realtime ADD TABLE b_emaillog;
+        EXCEPTION WHEN others THEN NULL;
+        END;
+        BEGIN
+          ALTER PUBLICATION supabase_realtime ADD TABLE b_export_template;
+        EXCEPTION WHEN others THEN NULL;
+        END;
+        BEGIN
+          ALTER PUBLICATION supabase_realtime ADD TABLE b_export_mapping;
         EXCEPTION WHEN others THEN NULL;
         END;
       END IF;
@@ -1548,4 +1617,149 @@ export async function fetchEmailLogs(userId: string): Promise<EmailLog[]> {
   }
 
   return localLogs;
+}
+
+/**
+ * Đồng bộ Mẫu xuất file lên Supabase
+ */
+export async function syncExportTemplate(t: any, userId?: string) {
+  if (isOfflineMode) return { data: [t], error: null };
+  userId = await resolveEffectiveUserId();
+  try {
+    const payload = {
+      id: t.id,
+      name: t.name,
+      type: t.type,
+      fileName: t.fileName,
+      fileData: t.fileData,
+      isDefault: !!t.isDefault,
+      detectedPlaceholders: t.detectedPlaceholders || [],
+      description: t.description || '',
+      createdAt: t.createdAt || new Date().toISOString(),
+      applicableReportTypes: t.applicableReportTypes || [],
+      user_id: userId,
+      startRow: t.startRow !== undefined ? Number(t.startRow) : null,
+      columnMappings: t.columnMappings || null,
+      groupByFields: t.groupByFields || null
+    };
+
+    const res = await supabase
+      .from('b_export_template')
+      .upsert(payload, { onConflict: 'id,user_id' })
+      .select();
+
+    return res;
+  } catch (err) {
+    logDbError('Lỗi syncExportTemplate:', err);
+    return { data: null, error: err };
+  }
+}
+
+/**
+ * Xóa Mẫu xuất file khỏi Supabase
+ */
+export async function deleteExportTemplate(id: string, userId?: string) {
+  if (isOfflineMode) return { error: null };
+  userId = await resolveEffectiveUserId();
+  try {
+    const res = await supabase
+      .from('b_export_template')
+      .delete()
+      .eq('id', id)
+      .eq('user_id', userId);
+    return res;
+  } catch (err) {
+    logDbError('Lỗi deleteExportTemplate:', err);
+    return { error: err };
+  }
+}
+
+/**
+ * Tải danh sách Mẫu xuất file từ Supabase
+ */
+export async function fetchExportTemplates(userId?: string): Promise<any[]> {
+  userId = await resolveEffectiveUserId();
+  try {
+    const { data, error } = await supabase
+      .from('b_export_template')
+      .select('*')
+      .eq('user_id', userId);
+      
+    if (error) {
+      console.warn('Lỗi fetchExportTemplates từ Supabase, trả về rỗng:', error.message);
+      return [];
+    }
+    return data || [];
+  } catch (err) {
+    console.warn('Exception khi fetchExportTemplates:', err);
+    return [];
+  }
+}
+
+/**
+ * Đồng bộ Mapping Placeholder lên Supabase
+ */
+export async function syncExportMapping(m: any, userId?: string) {
+  if (isOfflineMode) return { data: [m], error: null };
+  userId = await resolveEffectiveUserId();
+  try {
+    const payload = {
+      placeholder: m.placeholder,
+      sourceType: m.sourceType,
+      sourceField: m.sourceField,
+      description: m.description || '',
+      user_id: userId
+    };
+
+    const res = await supabase
+      .from('b_export_mapping')
+      .upsert(payload, { onConflict: 'placeholder,user_id' })
+      .select();
+
+    return res;
+  } catch (err) {
+    logDbError('Lỗi syncExportMapping:', err);
+    return { data: null, error: err };
+  }
+}
+
+/**
+ * Xóa Mapping Placeholder khỏi Supabase
+ */
+export async function deleteExportMapping(placeholder: string, userId?: string) {
+  if (isOfflineMode) return { error: null };
+  userId = await resolveEffectiveUserId();
+  try {
+    const res = await supabase
+      .from('b_export_mapping')
+      .delete()
+      .eq('placeholder', placeholder)
+      .eq('user_id', userId);
+    return res;
+  } catch (err) {
+    logDbError('Lỗi deleteExportMapping:', err);
+    return { error: err };
+  }
+}
+
+/**
+ * Tải danh sách Mapping Placeholder từ Supabase
+ */
+export async function fetchExportMappings(userId?: string): Promise<any[]> {
+  userId = await resolveEffectiveUserId();
+  try {
+    const { data, error } = await supabase
+      .from('b_export_mapping')
+      .select('*')
+      .eq('user_id', userId);
+      
+    if (error) {
+      console.warn('Lỗi fetchExportMappings từ Supabase, trả về rỗng:', error.message);
+      return [];
+    }
+    return data || [];
+  } catch (err) {
+    console.warn('Exception khi fetchExportMappings:', err);
+    return [];
+  }
 }

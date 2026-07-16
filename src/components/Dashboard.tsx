@@ -33,7 +33,12 @@ import {
   ZoomOut,
   RotateCcw,
   Eye,
-  EyeOff
+  EyeOff,
+  Layers,
+  Database,
+  Plus,
+  Trash2,
+  ShieldCheck
 } from 'lucide-react';
 import { motion } from 'motion/react';
 import { 
@@ -53,6 +58,17 @@ import {
 } from 'recharts';
 import { SanPham, NhapXuat, NhapXuatCT } from '../types';
 import TemplateExportManager from './TemplateExportManager';
+import { 
+  calculateResolvedValues, 
+  exportReportByTemplate, 
+  Template, 
+  PlaceholderMapping, 
+  DEFAULT_MAPPINGS,
+  ColumnMapping,
+  exportRawData,
+  exportReportWithFilters
+} from '../utils/exportEngine';
+import { fetchExportTemplates, fetchExportMappings } from '../supabaseSync';
 
 /**
  * FILE: Dashboard.tsx
@@ -68,9 +84,17 @@ interface DashboardProps {
   nhapXuatCTs: NhapXuatCT[];
   chiNhanhs: string[];
   onQuickRestock?: (sku: string) => void;
+  onTriggerToast?: (message: string, type?: 'success' | 'warning' | 'error') => void;
 }
 
-export default function Dashboard({ sanPhams, nhapXuats, nhapXuatCTs, chiNhanhs, onQuickRestock }: DashboardProps) {
+export default function Dashboard({ 
+  sanPhams, 
+  nhapXuats, 
+  nhapXuatCTs, 
+  chiNhanhs, 
+  onQuickRestock,
+  onTriggerToast
+}: DashboardProps) {
   const [dashboardSubTab, setDashboardSubTab] = useState<'ANALYTICS' | 'TEMPLATES'>('ANALYTICS');
   
   // --- 1. QUẢN LÝ TRẠNG THÁI BỘ LỌC ---
@@ -85,6 +109,50 @@ export default function Dashboard({ sanPhams, nhapXuats, nhapXuatCTs, chiNhanhs,
   const [endDate, setEndDate] = useState<string>('2026-07-31');
   const [activeQuickFilter, setActiveQuickFilter] = useState<string>('30d');
   const [isExporting, setIsExporting] = useState<boolean>(false);
+
+  // --- QUẢN LÝ DANH SÁCH MẪU XUẤT CHO DASHBOARD ---
+  const [exportTemplates, setExportTemplates] = useState<Template[]>([]);
+  const [exportMappings, setExportMappings] = useState<PlaceholderMapping[]>([]);
+
+  // Trạng thái của Modal cấu hình xuất nâng cao
+  const [showExportModal, setShowExportModal] = useState<boolean>(false);
+  const [exportModalType, setExportModalType] = useState<'EXCEL' | 'PDF'>('EXCEL');
+  const [exportMode, setExportMode] = useState<'RAW' | 'TEMPLATE'>('TEMPLATE');
+  const [selectedTemplateId, setSelectedTemplateId] = useState<string>('');
+  const [exportStartRow, setExportStartRow] = useState<number>(10);
+  const [exportGroupByFields, setExportGroupByFields] = useState<string[]>([]);
+  const [currentMappings, setCurrentMappings] = useState<ColumnMapping[]>([]);
+
+  React.useEffect(() => {
+    const loadTemplates = async () => {
+      try {
+        const dbTemplates = await fetchExportTemplates();
+        const dbMappings = await fetchExportMappings();
+        if (dbTemplates && dbTemplates.length > 0) {
+          setExportTemplates(dbTemplates);
+        } else {
+          // Khôi phục từ localStorage làm dự phòng
+          const savedTemplates = localStorage.getItem('export_templates');
+          if (savedTemplates) {
+            setExportTemplates(JSON.parse(savedTemplates));
+          }
+        }
+        if (dbMappings && dbMappings.length > 0) {
+          setExportMappings(dbMappings);
+        } else {
+          const savedMappings = localStorage.getItem('export_mappings');
+          if (savedMappings) {
+            setExportMappings(JSON.parse(savedMappings));
+          } else {
+            setExportMappings(DEFAULT_MAPPINGS);
+          }
+        }
+      } catch (err) {
+        console.error('Lỗi tải cấu hình mẫu xuất ở Dashboard:', err);
+      }
+    };
+    loadTemplates();
+  }, [dashboardSubTab]);
 
   // --- TRẠNG THÁI CHO BIỂU ĐỒ PHÂN TÍCH ĐỘ & TỔ HỢP ĐỘ ---
   const [diopterTxType, setDiopterTxType] = useState<'XUẤT' | 'NHẬP'>('XUẤT');
@@ -445,32 +513,82 @@ export default function Dashboard({ sanPhams, nhapXuats, nhapXuatCTs, chiNhanhs,
 
   // --- 11. XỬ LÝ XUẤT FILE BÁO CÁO (EXCEL/PDF) ---
   const handleExportData = (type: 'EXCEL' | 'PDF') => {
-    setIsExporting(true);
-    setTimeout(() => {
-      if (type === 'EXCEL') {
-        let csvContent = '\uFEFF'; 
-        csvContent += 'BÁO CÁO XUẤT NHẬP TỒN TRÒNG KÍNH CHI TIẾT\n';
-        csvContent += `Chi nhánh: ${selectedBranch}, Khoảng thời gian: ${startDate} đến ${endDate}\n\n`;
-        csvContent += 'MÃ SKU,TÊN SẢN PHẨM,THƯƠNG HIỆU,CHIẾT SUẤT,CẬN,LOẠN,TỒN ĐẦU,NHẬP,XUẤT,TỒN CUỐI,TỒN TỐI THIỂU,TRẠNG THÁI\n';
-        
-        sanPhams.forEach(p => {
-          const status = p.TON_CUOI <= p.TON_TOI_THIEU ? 'SẮP HẾT HÀNG!' : 'AN TOÀN';
-          csvContent += `"${p.SKU}","${p.TEN_SAN_PHAM}","${p.THUONG_HIEU}","${p.CHIET_XUAT}",${p.CAN},${p.LOAN},${p.TON_DAU},${p.NHAP},${p.XUAT},${p.TON_CUOI},${p.TON_TOI_THIEU},"${status}"\n`;
-        });
-
-        const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-        const url = URL.createObjectURL(blob);
-        const link = document.createElement('a');
-        link.setAttribute('href', url);
-        link.setAttribute('download', `Bao_Cao_Ton_Kho_${selectedBranch.replace(/\s+/g, '_')}_${startDate}_to_${endDate}.csv`);
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
+    const templatesOfType = exportTemplates.filter(t => t.type === type);
+    
+    if (templatesOfType.length === 0) {
+      if (onTriggerToast) {
+        onTriggerToast(
+          'Chưa cấu hình mẫu xuất Excel/PDF. Vui lòng cấu hình trong mục Hệ Thống Xuất Excel/PDF Theo Mẫu.',
+          'warning'
+        );
       } else {
+        alert('Chưa cấu hình mẫu xuất Excel/PDF. Vui lòng cấu hình trong mục Hệ Thống Xuất Excel/PDF Theo Mẫu.');
+      }
+      return;
+    }
+
+    setExportModalType(type);
+    
+    // Tìm mẫu mặc định hoặc mẫu đầu tiên
+    const matched = templatesOfType.find(t => t.isDefault) || templatesOfType[0];
+
+    setSelectedTemplateId(matched.id);
+    setExportStartRow(matched.startRow || 10);
+    setExportGroupByFields(matched.groupByFields || []);
+    setCurrentMappings(matched.columnMappings || []);
+    setExportMode('TEMPLATE');
+    setShowExportModal(true);
+  };
+
+  const executeExport = async () => {
+    setIsExporting(true);
+    try {
+      // Xuất theo mẫu cấu hình động (Single Source of Truth)
+      const matchedTemplate = exportTemplates.find(t => t.id === selectedTemplateId);
+      if (!matchedTemplate) {
+        if (onTriggerToast) {
+          onTriggerToast('Vui lòng chọn mẫu báo cáo hợp lệ', 'warning');
+        } else {
+          alert('Vui lòng chọn mẫu báo cáo hợp lệ');
+        }
+        return;
+      }
+
+      await exportReportWithFilters({
+        template: matchedTemplate,
+        startDate,
+        endDate,
+        selectedBranch,
+        selectedBrandFilter,
+        selectedFeatureFilter,
+        selectedChietXuatFilter,
+        salesDbSelectedSph,
+        salesDbSelectedCyl,
+        sanPhams,
+        nhapXuats,
+        nhapXuatCTs,
+        onTriggerToast,
+        onDownload: (blob, fileName) => {
+          const url = URL.createObjectURL(blob);
+          const link = document.createElement('a');
+          link.href = url;
+          link.download = fileName;
+          document.body.appendChild(link);
+          link.click();
+          document.body.removeChild(link);
+          URL.revokeObjectURL(url);
+        }
+      });
+      setShowExportModal(false);
+    } catch (error) {
+      console.error('Lỗi xuất báo cáo theo mẫu:', error);
+      alert('Đã xảy ra lỗi khi kết xuất báo cáo theo cấu hình. Hệ thống tự động chuyển sang chế độ in truyền thống.');
+      if (exportModalType === 'PDF') {
         window.print();
       }
+    } finally {
       setIsExporting(false);
-    }, 800);
+    }
   };
 
   // --- TRÍ TUỆ ĐỊNH GIÁ: TÍNH TOÁN DỮ LIỆU ĐỘ & TỔ HỢP ĐỘ ---
@@ -2232,6 +2350,193 @@ export default function Dashboard({ sanPhams, nhapXuats, nhapXuatCTs, chiNhanhs,
 
       </div>
       </>
+      )}
+
+      {/* MODAL CẤU HÌNH XUẤT NÂNG CAO */}
+      {showExportModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-xs p-4 overflow-y-auto">
+          <div className="bg-white rounded-3xl shadow-2xl border border-slate-150 w-full max-w-4xl max-h-[90vh] flex flex-col overflow-hidden animate-in fade-in zoom-in-95 duration-200">
+            {/* Header */}
+            <div className="p-6 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">
+              <div className="flex items-center gap-3">
+                <div className={`p-2.5 rounded-xl ${exportModalType === 'EXCEL' ? 'bg-emerald-50 text-emerald-600' : 'bg-rose-50 text-rose-600'}`}>
+                  {exportModalType === 'EXCEL' ? <FileSpreadsheet className="w-6 h-6" /> : <FileText className="w-6 h-6" />}
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold uppercase text-slate-850 tracking-wider font-sans">Chi tiết Mẫu Kết Xuất {exportModalType}</h3>
+                  <p className="text-[11px] text-slate-400 font-mono">Thông tin cấu hình mẫu xuất, dòng bắt đầu ghi dữ liệu, mapping cột và quy tắc gom nhóm</p>
+                </div>
+              </div>
+              <button 
+                type="button"
+                onClick={() => setShowExportModal(false)}
+                className="p-1.5 hover:bg-slate-100 rounded-lg text-slate-400 hover:text-slate-600 transition-all cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Content */}
+            <div className="p-6 overflow-y-auto space-y-6 flex-1 text-slate-755 text-xs">
+              
+              {/* PHÂN VÙNG 1: CHẾ ĐỘ XUẤT */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+                <div className="space-y-2">
+                  <label className="block text-[10px] font-extrabold uppercase text-slate-400 tracking-wider">Chế độ kết xuất</label>
+                  <div className="bg-slate-50 p-3 rounded-xl border border-slate-150 flex items-center gap-2.5">
+                    <div className="w-8 h-8 rounded-lg bg-indigo-50 text-indigo-600 flex items-center justify-center">
+                      <Layers className="w-4 h-4" />
+                    </div>
+                    <div>
+                      <div className="font-bold text-slate-750">Theo mẫu cấu hình hệ thống</div>
+                      <div className="text-[10px] text-slate-400">Đồng bộ tự động từ tab Mẫu Excel/PDF</div>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="space-y-2">
+                  <label className="block text-[10px] font-extrabold uppercase text-slate-400 tracking-wider">Mẫu báo cáo áp dụng</label>
+                  <select
+                    value={selectedTemplateId}
+                    onChange={(e) => {
+                      const tid = e.target.value;
+                      setSelectedTemplateId(tid);
+                      const matched = exportTemplates.find(t => t.id === tid);
+                      if (matched) {
+                        setExportStartRow(matched.startRow || 10);
+                        setExportGroupByFields(matched.groupByFields || []);
+                        setCurrentMappings(matched.columnMappings || []);
+                      }
+                    }}
+                    className="w-full bg-white border border-slate-200 rounded-xl py-3 px-3.5 font-bold text-slate-700 focus:outline-hidden focus:ring-1 focus:ring-indigo-500 cursor-pointer text-xs"
+                  >
+                    {exportTemplates
+                      .filter(t => t.type === exportModalType)
+                      .map(t => (
+                        <option key={t.id} value={t.id}>
+                          {t.name} {t.isDefault ? '(Mặc định)' : ''}
+                        </option>
+                      ))}
+                  </select>
+                </div>
+              </div>
+
+              <hr className="border-slate-100" />
+
+              {/* PHÂN VÙNG 2: DÒNG BẮT ĐẦU & GOM NHÓM (GROUP BY) */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div className="space-y-2">
+                  <label className="block text-[10px] font-extrabold uppercase text-slate-400 tracking-wider">Vị trí ghi dữ liệu</label>
+                  <div className="bg-slate-50 p-4 rounded-xl border border-slate-150 h-[100px] flex flex-col justify-center">
+                    <div className="text-slate-500 font-bold">Dòng bắt đầu chèn:</div>
+                    <div className="text-slate-800 font-mono font-bold text-lg mt-1">
+                      Hàng {exportStartRow}
+                    </div>
+                    <p className="text-[10px] text-slate-400 mt-1">Các hàng dữ liệu chi tiết sẽ tự động chèn bắt đầu từ hàng này.</p>
+                  </div>
+                </div>
+
+                <div className="space-y-2">
+                  <label className="block text-[10px] font-extrabold uppercase text-slate-400 tracking-wider">Quy tắc gom nhóm & tổng hợp dữ liệu</label>
+                  <div className="bg-slate-50 p-4 rounded-xl border border-slate-150 h-[100px] flex flex-col justify-center">
+                    <div className="text-slate-500 font-bold">Các trường gom nhóm (Group By):</div>
+                    <div className="flex flex-wrap gap-1.5 mt-2">
+                      {exportGroupByFields.length > 0 ? (
+                        exportGroupByFields.map(field => {
+                          const labelMap: Record<string, string> = {
+                            THUONG_HIEU: 'Thương hiệu',
+                            CHIET_XUAT: 'Chiết suất',
+                            TINH_NANG: 'Tính năng',
+                            CHI_NHANH: 'Chi nhánh',
+                            SKU: 'Mã SKU',
+                            LOAI: 'Loại GD'
+                          };
+                          return (
+                            <span key={field} className="px-2 py-0.5 bg-indigo-50 text-indigo-700 rounded text-[10px] font-bold border border-indigo-100/50">
+                              {labelMap[field] || field}
+                            </span>
+                          );
+                        })
+                      ) : (
+                        <span className="px-2 py-0.5 bg-slate-100 text-slate-500 rounded text-[10px] font-bold border border-slate-200">
+                          Không gom nhóm (Xuất chi tiết từng dòng)
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <hr className="border-slate-100" />
+
+              {/* PHÂN VÙNG 3: COLUMN MAPPING DISPLAY */}
+              <div className="space-y-3">
+                <label className="block text-[10px] font-extrabold uppercase text-slate-400 tracking-wider">Bản đồ ánh xạ cột Excel (Column Mapping - Chỉ đọc)</label>
+
+                <div className="border border-slate-150 rounded-xl overflow-hidden max-h-56 overflow-y-auto bg-slate-50/30">
+                  <table className="min-w-full text-xs text-left border-collapse">
+                    <thead className="bg-slate-100 sticky top-0 z-10">
+                      <tr>
+                        <th className="p-3 font-bold text-slate-500 border-b border-slate-200 w-28 text-center">Cột Excel</th>
+                        <th className="p-3 font-bold text-slate-500 border-b border-slate-200">Trường dữ liệu ánh xạ</th>
+                        <th className="p-3 font-bold text-slate-500 border-b border-slate-200">Nhãn tiêu đề cột</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {currentMappings.length > 0 ? (
+                        currentMappings.map((m, idx) => (
+                          <tr key={idx} className="hover:bg-slate-50/50 bg-white">
+                            <td className="p-3 font-mono font-bold text-indigo-600 text-center bg-indigo-50/10">
+                              {m.excelColumn}
+                            </td>
+                            <td className="p-3 font-semibold text-slate-700">
+                              {m.dataField}
+                            </td>
+                            <td className="p-3 text-slate-500 font-medium">
+                              {m.label || '(Chưa đặt nhãn)'}
+                            </td>
+                          </tr>
+                        ))
+                      ) : (
+                        <tr>
+                          <td colSpan={3} className="p-4 text-center text-slate-400 italic">
+                            Chưa cấu hình ánh xạ cột dữ liệu cho mẫu báo cáo này.
+                          </td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+            </div>
+
+            {/* Footer buttons */}
+            <div className="p-6 border-t border-slate-100 flex items-center justify-between bg-slate-50/30">
+              <div className="text-[10px] text-slate-400 font-mono flex items-center gap-1">
+                <ShieldCheck className="w-3.5 h-3.5 text-indigo-500" /> Hệ thống áp dụng cấu hình và bộ lọc tự động
+              </div>
+              <div className="flex gap-3">
+                <button
+                  type="button"
+                  onClick={() => setShowExportModal(false)}
+                  className="px-4 py-2 border border-slate-200 hover:bg-slate-50 text-slate-600 rounded-xl font-bold transition-all cursor-pointer text-xs bg-transparent"
+                >
+                  Đóng
+                </button>
+                <button
+                  type="button"
+                  onClick={executeExport}
+                  disabled={isExporting}
+                  className="px-5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl font-bold transition-all flex items-center gap-2 cursor-pointer shadow-xs text-xs disabled:opacity-50 border-0"
+                >
+                  <RefreshCw className={`w-4 h-4 ${isExporting ? 'animate-spin' : ''}`} />
+                  {isExporting ? 'Đang xuất...' : 'Bắt đầu kết xuất'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
       )}
 
     </div>
