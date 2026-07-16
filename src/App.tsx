@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useMemo, useEffect, useRef } from 'react';
+import React, { useState, useMemo, useEffect, useRef, useCallback } from 'react';
 
 // Intercept and demote non-fatal network/Supabase errors from console.error to console.warn
 const originalAppError = console.error;
@@ -47,6 +47,7 @@ import {
   Terminal, 
   Shield, 
   AlertTriangle, 
+  AlertCircle,
   X, 
   UserCheck,
   Eye,
@@ -66,7 +67,7 @@ import {
 import { motion, AnimatePresence } from 'motion/react';
 
 // Import Types và Mock Data
-import { SanPham, NhapXuat, NhapXuatCT, KiemKho, UserRole, User, ThươngHieu, ChiNhanh, NhanVien, EmailLog } from './types';
+import { SanPham, NhapXuat, NhapXuatCT, KiemKho, UserRole, User, ThươngHieu, ChiNhanh, NhanVien, EmailLog, Role, safeParseArray } from './types';
 import { 
   getVietnamDateString,
   getVietnamDateTimeString,
@@ -85,6 +86,8 @@ import {
   syncThuongHieu,
   syncChiNhanh,
   syncNhanVien,
+  syncRole,
+  deleteRole,
   deleteNhapXuatAndDetails,
   deleteThuongHieu,
   deleteChiNhanh,
@@ -119,6 +122,45 @@ import OrderParser from './components/OrderParser';
  *        triển khai các thuật toán xử lý nghiệp vụ, tự động cân bằng kho, rollback tồn kho
  *        và hệ thống phân quyền ba tầng nghiêm ngặt (Admin, Kho, Nhân viên).
  */
+
+const DEFAULT_ROLES: Role[] = [
+  {
+    ROLE_CODE: 'ADMIN',
+    TEN_ROLE: 'Quản trị viên (Admin)',
+    PERMISSIONS: [
+      'dashboard.view',
+      'product.view', 'product.create', 'product.edit', 'product.delete',
+      'import.view', 'import.create', 'import.edit', 'import.delete',
+      'export.view', 'export.create', 'export.edit', 'export.delete',
+      'inventory.view', 'inventory.edit',
+      'report.view',
+      'user.view', 'user.create', 'user.edit', 'user.delete',
+      'role.view', 'role.create', 'role.edit', 'role.delete'
+    ]
+  },
+  {
+    ROLE_CODE: 'MANAGER',
+    TEN_ROLE: 'Quản lý nghiệp vụ (Manager)',
+    PERMISSIONS: [
+      'dashboard.view',
+      'product.view', 'product.create', 'product.edit',
+      'import.view', 'import.create', 'import.edit',
+      'export.view', 'export.create', 'export.edit',
+      'inventory.view', 'inventory.edit',
+      'report.view'
+    ]
+  },
+  {
+    ROLE_CODE: 'STAFF',
+    TEN_ROLE: 'Nhân viên bán hàng (Staff)',
+    PERMISSIONS: [
+      'product.view',
+      'export.view', 'export.create',
+      'import.view',
+      'inventory.view'
+    ]
+  }
+];
 
 export default function App() {
   const ignoreRealtimeRef = useRef<boolean>(false);
@@ -172,6 +214,55 @@ export default function App() {
     return saved ? JSON.parse(saved) : null;
   });
 
+  // --- 2B. QUẢN LÝ VAI TRÒ & QUYỀN HẠN (RBAC) ---
+  const [roles, setRoles] = useState<Role[]>(() => {
+    const saved = localStorage.getItem('B_ROLE');
+    if (saved) {
+      try {
+        return JSON.parse(saved);
+      } catch {
+        return DEFAULT_ROLES;
+      }
+    }
+    return DEFAULT_ROLES;
+  });
+
+  useEffect(() => {
+    localStorage.setItem('B_ROLE', JSON.stringify(roles));
+  }, [roles]);
+
+  const hasPermission = useCallback((permissionCode: string): boolean => {
+    if (!currentUser) return false;
+
+    // Admin mặc định có toàn quyền
+    const isOwner = currentUser.username.toLowerCase() === 'nguyenkienduc.digital@gmail.com' || currentUser.username.toLowerCase() === 'nguyennhanhoa.artist@gmail.com';
+    if (isOwner) return true;
+
+    const userRoles = safeParseArray(currentUser.ROLES).length > 0 ? safeParseArray(currentUser.ROLES) : (currentUser.role ? [currentUser.role] : []);
+    if (userRoles.includes('ADMIN')) return true;
+
+    // Thu thập toàn bộ permission từ các role của user
+    const userPermissions = new Set<string>();
+    userRoles.forEach(roleCode => {
+      const matchedRole = roles.find(r => r.ROLE_CODE === roleCode);
+      if (matchedRole && matchedRole.PERMISSIONS) {
+        matchedRole.PERMISSIONS.forEach(p => userPermissions.add(p));
+      } else {
+        // Tương thích ngược: Đối sánh với vai trò mặc định nếu mã vai trò không khớp trực tiếp
+        let fallbackRoleCode = roleCode;
+        if (roleCode === 'KHO') fallbackRoleCode = 'MANAGER';
+        if (roleCode === 'NHAN_VIEN') fallbackRoleCode = 'STAFF';
+
+        const matchedFallback = roles.find(r => r.ROLE_CODE === fallbackRoleCode) || DEFAULT_ROLES.find(r => r.ROLE_CODE === fallbackRoleCode);
+        if (matchedFallback && matchedFallback.PERMISSIONS) {
+          matchedFallback.PERMISSIONS.forEach(p => userPermissions.add(p));
+        }
+      }
+    });
+
+    return userPermissions.has(permissionCode);
+  }, [currentUser, roles]);
+
   const handleLogout = async () => {
     if (currentUser) {
       localStorage.removeItem(`${currentUser.username}_HISTORY_FILTER_SEARCH`);
@@ -193,16 +284,29 @@ export default function App() {
 
   const handleManualSync = async () => {
     if (!currentUser || !currentUser.id) {
-      setSuccessToast({ message: "Vui lòng đăng nhập để đồng bộ!" });
+      setSuccessToast({ 
+        message: "Vui lòng đăng nhập để đồng bộ!", 
+        type: "warning", 
+        id: `login-warn-${Date.now()}` 
+      });
       return;
     }
     setIsSyncing(true);
     setOfflineMode(false);
     try {
       await syncAllDataFromSupabase(currentUser.id, currentUser.username);
-      setSuccessToast({ message: "Đồng bộ dữ liệu trực tuyến thành công!" });
-    } catch (err) {
+      setSuccessToast({ 
+        message: "Đồng bộ dữ liệu trực tuyến thành công!", 
+        type: "success", 
+        id: `sync-success-${Date.now()}` 
+      });
+    } catch (err: any) {
       console.error("Lỗi đồng bộ thủ công:", err);
+      setSuccessToast({
+        message: `Đồng bộ thất bại: ${err?.message || "Lỗi không xác định"}`,
+        type: "error",
+        id: `sync-error-${Date.now()}`
+      });
     } finally {
       setIsSyncing(false);
     }
@@ -228,6 +332,10 @@ export default function App() {
         setThuongHieus(payload.thuongHieus);
         setChiNhanhs(payload.chiNhanhs);
         setNhanViens(payload.nhanViens);
+        if (payload.roles && payload.roles.length > 0) {
+          setRoles(payload.roles);
+          localStorage.setItem('B_ROLE', JSON.stringify(payload.roles));
+        }
 
         localStorage.setItem('B_SANPHAM', JSON.stringify(payload.sanPhams));
         localStorage.setItem('B_NHAPXUAT', JSON.stringify(payload.nhapXuats));
@@ -266,6 +374,10 @@ export default function App() {
       setThuongHieus(payload.thuongHieus);
       setChiNhanhs(payload.chiNhanhs);
       setNhanViens(payload.nhanViens);
+      if (payload.roles && payload.roles.length > 0) {
+        setRoles(payload.roles);
+        localStorage.setItem('B_ROLE', JSON.stringify(payload.roles));
+      }
 
       // Lưu trữ đồng bộ tức thì vào LocalStorage để đảm bảo tính sẵn sàng
       localStorage.setItem('B_SANPHAM', JSON.stringify(payload.sanPhams));
@@ -306,7 +418,8 @@ export default function App() {
                 branch: latestStaff.CHI_NHANH || 'Kho Trung Tâm',
                 writeAccess: latestStaff.WRITE_ACCESS !== false,
                 WRITE_ACCESS: latestStaff.WRITE_ACCESS !== false,
-                id: latestStaff.MA_NV
+                id: latestStaff.MA_NV,
+                ROLES: latestStaff.ROLES || []
               };
               setCurrentUser(u);
               localStorage.setItem('CURRENT_USER', JSON.stringify(u));
@@ -319,7 +432,8 @@ export default function App() {
                 branch: 'Kho Trung Tâm',
                 writeAccess: true,
                 WRITE_ACCESS: true,
-                id: 'NV0001'
+                id: 'NV0001',
+                ROLES: ['ADMIN']
               };
               setCurrentUser(u);
               localStorage.setItem('CURRENT_USER', JSON.stringify(u));
@@ -524,7 +638,11 @@ export default function App() {
   // --- 3. ĐIỀU HƯỚNG TAB CHỨC NĂNG ---
   const [activeTab, setActiveTab] = useState<string>('DASHBOARD');
   const [mobileMenuOpen, setMobileMenuOpen] = useState<boolean>(false);
-  const [successToast, setSuccessToast] = useState<{ message: string } | null>(null);
+  const [successToast, setSuccessToast] = useState<{ 
+    message: string; 
+    type?: 'success' | 'warning' | 'error';
+    id?: string;
+  } | null>(null);
   const [sidebarCollapsed, setSidebarCollapsed] = useState<boolean>(false);
   const [prefilledSku, setPrefilledSku] = useState<string | null>(null);
   const [prefilledCartItems, setPrefilledCartItems] = useState<{ sku: string; soLuong: number; }[] | null>(null);
@@ -629,12 +747,13 @@ export default function App() {
     }
   }, [themeMode]);
 
-  // Tự động tắt Toast thành công sau 3 giây
+  // Tự động tắt Toast theo loại (Thành công/Cảnh báo: 1 giây, Lỗi: 3.5 giây)
   useEffect(() => {
     if (successToast) {
+      const duration = successToast.type === 'error' ? 3500 : 1000;
       const timer = setTimeout(() => {
         setSuccessToast(null);
-      }, 3000);
+      }, duration);
       return () => clearTimeout(timer);
     }
   }, [successToast]);
@@ -731,7 +850,11 @@ export default function App() {
         });
       }
     }
-    setSuccessToast({ message: `Đã thêm thành công sản phẩm tròng kính: ${newProduct.SKU}` });
+    setSuccessToast({ 
+      message: `Đã thêm thành công sản phẩm tròng kính: ${newProduct.SKU}`, 
+      type: "success", 
+      id: `add-prod-${newProduct.SKU}-${Date.now()}` 
+    });
   };
 
   /**
@@ -773,7 +896,11 @@ export default function App() {
         });
       }
     }
-    setSuccessToast({ message: `Đã cập nhật thành công sản phẩm: ${sku}` });
+    setSuccessToast({ 
+      message: `Đã cập nhật thành công sản phẩm: ${sku}`, 
+      type: "success", 
+      id: `update-prod-${sku}-${Date.now()}` 
+    });
   };
 
   /**
@@ -970,7 +1097,11 @@ export default function App() {
       setNhapXuatCTs(newDetails);
     }
 
-    setSuccessToast({ message: `Đã cập nhật ô độ ${sku} thành công!` });
+    setSuccessToast({ 
+      message: `Đã cập nhật ô độ ${sku} thành công!`, 
+      type: "success", 
+      id: `matrix-update-${sku}-${Date.now()}` 
+    });
 
     // Đồng bộ Supabase
     if (currentUser) {
@@ -1104,13 +1235,19 @@ export default function App() {
    * Tự động sinh Số hóa đơn (PNxxxxxx, PXxxxxxx) tăng dần chính xác
    */
   const handleSaveTransaction = async (header: NhapXuat, details: NhapXuatCT[]) => {
-    const prefix = header.LOAI === 'NHẬP' ? 'PN' : 'PX';
+    let prefix = header.LOAI === 'NHẬP' ? 'PN' : 'PX';
+    if (header.HOA_DON) {
+      if (header.HOA_DON.startsWith('PNK')) prefix = 'PNK';
+      else if (header.HOA_DON.startsWith('PXK')) prefix = 'PXK';
+      else if (header.HOA_DON.startsWith('PN')) prefix = 'PN';
+      else if (header.HOA_DON.startsWith('PX')) prefix = 'PX';
+    }
     
     // Tìm số hóa đơn lớn nhất có cùng tiền tố
     let maxNum = 0;
     nhapXuats.forEach(h => {
       if (h.HOA_DON.startsWith(prefix)) {
-        const numPart = parseInt(h.HOA_DON.substring(2), 10);
+        const numPart = parseInt(h.HOA_DON.substring(prefix.length), 10);
         if (!isNaN(numPart) && numPart > maxNum) {
           maxNum = numPart;
         }
@@ -1139,7 +1276,11 @@ export default function App() {
 
     // Kích hoạt Toast thông báo thành công chính giữa màn hình
     const toastMsg = finalizedHeader.LOAI === 'NHẬP' ? 'Lưu phiếu nhập thành công' : 'Lưu phiếu xuất thành công';
-    setSuccessToast({ message: toastMsg });
+    setSuccessToast({ 
+      message: toastMsg, 
+      type: "success", 
+      id: `save-tx-${Date.now()}` 
+    });
 
     // Cập nhật số lượng nhập, xuất, và tồn cuối trực tiếp vào bảng sản phẩm ngay lập tức
     const affectedSKUs = Array.from(new Set(finalizedDetails.map(d => cleanSKU(d.SKU))));
@@ -2061,43 +2202,49 @@ export default function App() {
         <nav className="flex-1 px-3 space-y-1 overflow-y-auto">
           
           {/* TAB 0: KIỂM TRA ĐƠN TIN NHẮN */}
-          <button
-            onClick={() => selectTabOnMobile('ORDER_PARSER')}
-            className={`w-full py-2.5 px-3.5 text-xs font-bold rounded-xl transition-all flex items-center gap-2.5 cursor-pointer ${sidebarCollapsed ? 'justify-center px-0' : ''} ${
-              activeTab === 'ORDER_PARSER' ? activeButtonClass : sidebarStyle.navDefault
-            }`}
-            title={sidebarCollapsed ? "Kiểm Tra Đơn" : undefined}
-          >
-            <MessageSquare className="w-4 h-4 shrink-0 text-indigo-500" /> 
-            {!sidebarCollapsed && <span>Kiểm Tra Đơn</span>}
-          </button>
+          {(hasPermission('export.create') || hasPermission('export.view')) && (
+            <button
+              onClick={() => selectTabOnMobile('ORDER_PARSER')}
+              className={`w-full py-2.5 px-3.5 text-xs font-bold rounded-xl transition-all flex items-center gap-2.5 cursor-pointer ${sidebarCollapsed ? 'justify-center px-0' : ''} ${
+                activeTab === 'ORDER_PARSER' ? activeButtonClass : sidebarStyle.navDefault
+              }`}
+              title={sidebarCollapsed ? "Kiểm Tra Đơn" : undefined}
+            >
+              <MessageSquare className="w-4 h-4 shrink-0 text-indigo-500" /> 
+              {!sidebarCollapsed && <span>Kiểm Tra Đơn</span>}
+            </button>
+          )}
 
           {/* TAB 1: LẬP PHIẾU XUẤT */}
-          <button
-            onClick={() => selectTabOnMobile('TRANSACTION_XUAT')}
-            className={`w-full py-2.5 px-3.5 text-xs font-bold rounded-xl transition-all flex items-center gap-2.5 cursor-pointer ${sidebarCollapsed ? 'justify-center px-0' : ''} ${
-              activeTab === 'TRANSACTION_XUAT' ? activeButtonClass : sidebarStyle.navDefault
-            }`}
-            title={sidebarCollapsed ? "Lập Phiếu Xuất" : undefined}
-          >
-            <FileUp className="w-4 h-4 shrink-0 text-rose-500" /> 
-            {!sidebarCollapsed && <span>Lập Phiếu Xuất</span>}
-          </button>
+          {hasPermission('export.create') && (
+            <button
+              onClick={() => selectTabOnMobile('TRANSACTION_XUAT')}
+              className={`w-full py-2.5 px-3.5 text-xs font-bold rounded-xl transition-all flex items-center gap-2.5 cursor-pointer ${sidebarCollapsed ? 'justify-center px-0' : ''} ${
+                activeTab === 'TRANSACTION_XUAT' ? activeButtonClass : sidebarStyle.navDefault
+              }`}
+              title={sidebarCollapsed ? "Lập Phiếu Xuất" : undefined}
+            >
+              <FileUp className="w-4 h-4 shrink-0 text-rose-500" /> 
+              {!sidebarCollapsed && <span>Lập Phiếu Xuất</span>}
+            </button>
+          )}
 
           {/* TAB 2: LẬP PHIẾU NHẬP */}
-          <button
-            onClick={() => selectTabOnMobile('TRANSACTION_NHAP')}
-            className={`w-full py-2.5 px-3.5 text-xs font-bold rounded-xl transition-all flex items-center gap-2.5 cursor-pointer ${sidebarCollapsed ? 'justify-center px-0' : ''} ${
-              activeTab === 'TRANSACTION_NHAP' ? activeButtonClass : sidebarStyle.navDefault
-            }`}
-            title={sidebarCollapsed ? "Lập Phiếu Nhập" : undefined}
-          >
-            <FileDown className="w-4 h-4 shrink-0 text-emerald-500" /> 
-            {!sidebarCollapsed && <span>Lập Phiếu Nhập</span>}
-          </button>
+          {hasPermission('import.create') && (
+            <button
+              onClick={() => selectTabOnMobile('TRANSACTION_NHAP')}
+              className={`w-full py-2.5 px-3.5 text-xs font-bold rounded-xl transition-all flex items-center gap-2.5 cursor-pointer ${sidebarCollapsed ? 'justify-center px-0' : ''} ${
+                activeTab === 'TRANSACTION_NHAP' ? activeButtonClass : sidebarStyle.navDefault
+              }`}
+              title={sidebarCollapsed ? "Lập Phiếu Nhập" : undefined}
+            >
+              <FileDown className="w-4 h-4 shrink-0 text-emerald-500" /> 
+              {!sidebarCollapsed && <span>Lập Phiếu Nhập</span>}
+            </button>
+          )}
 
           {/* TAB 3: DASHBOARD */}
-          {currentUser.role === 'ADMIN' && (
+          {hasPermission('dashboard.view') && (
             <button
               onClick={() => selectTabOnMobile('DASHBOARD')}
               className={`w-full py-2.5 px-3.5 text-xs font-bold rounded-xl transition-all flex items-center gap-2.5 cursor-pointer ${sidebarCollapsed ? 'justify-center px-0' : ''} ${
@@ -2111,31 +2258,35 @@ export default function App() {
           )}
 
           {/* TAB 4: QUẢN LÝ SẢN PHẨM */}
-          <button
-            onClick={() => selectTabOnMobile('PRODUCT')}
-            className={`w-full py-2.5 px-3.5 text-xs font-bold rounded-xl transition-all flex items-center gap-2.5 cursor-pointer ${sidebarCollapsed ? 'justify-center px-0' : ''} ${
-              activeTab === 'PRODUCT' ? activeButtonClass : sidebarStyle.navDefault
-            }`}
-            title={sidebarCollapsed ? "Sản phẩm" : undefined}
-          >
-            <Boxes className="w-4 h-4 shrink-0 text-amber-500" /> 
-            {!sidebarCollapsed && <span>Sản phẩm</span>}
-          </button>
+          {hasPermission('product.view') && (
+            <button
+              onClick={() => selectTabOnMobile('PRODUCT')}
+              className={`w-full py-2.5 px-3.5 text-xs font-bold rounded-xl transition-all flex items-center gap-2.5 cursor-pointer ${sidebarCollapsed ? 'justify-center px-0' : ''} ${
+                activeTab === 'PRODUCT' ? activeButtonClass : sidebarStyle.navDefault
+              }`}
+              title={sidebarCollapsed ? "Sản phẩm" : undefined}
+            >
+              <Boxes className="w-4 h-4 shrink-0 text-amber-500" /> 
+              {!sidebarCollapsed && <span>Sản phẩm</span>}
+            </button>
+          )}
 
           {/* TAB 4B: BẢNG ĐỘ */}
-          <button
-            onClick={() => selectTabOnMobile('MATRIX')}
-            className={`w-full py-2.5 px-3.5 text-xs font-bold rounded-xl transition-all flex items-center gap-2.5 cursor-pointer ${sidebarCollapsed ? 'justify-center px-0' : ''} ${
-              activeTab === 'MATRIX' ? activeButtonClass : sidebarStyle.navDefault
-            }`}
-            title={sidebarCollapsed ? "Bảng Độ" : undefined}
-          >
-            <LayoutGrid className="w-4 h-4 shrink-0 text-rose-500" /> 
-            {!sidebarCollapsed && <span>Bảng Độ (Ma Trận)</span>}
-          </button>
+          {hasPermission('product.view') && (
+            <button
+              onClick={() => selectTabOnMobile('MATRIX')}
+              className={`w-full py-2.5 px-3.5 text-xs font-bold rounded-xl transition-all flex items-center gap-2.5 cursor-pointer ${sidebarCollapsed ? 'justify-center px-0' : ''} ${
+                activeTab === 'MATRIX' ? activeButtonClass : sidebarStyle.navDefault
+              }`}
+              title={sidebarCollapsed ? "Bảng Độ" : undefined}
+            >
+              <LayoutGrid className="w-4 h-4 shrink-0 text-rose-500" /> 
+              {!sidebarCollapsed && <span>Bảng Độ (Ma Trận)</span>}
+            </button>
+          )}
 
           {/* TAB 5: KIỂM KHO */}
-          {currentUser.role !== 'NHAN_VIEN' && (
+          {hasPermission('inventory.view') && (
             <button
               onClick={() => selectTabOnMobile('AUDIT')}
               className={`w-full py-2.5 px-3.5 text-xs font-bold rounded-xl transition-all flex items-center gap-2.5 cursor-pointer ${sidebarCollapsed ? 'justify-center px-0' : ''} ${
@@ -2149,19 +2300,21 @@ export default function App() {
           )}
 
           {/* TAB 6: LỊCH SỬ XUẤT NHẬP */}
-          <button
-            onClick={() => selectTabOnMobile('HISTORY')}
-            className={`w-full py-2.5 px-3.5 text-xs font-bold rounded-xl transition-all flex items-center gap-2.5 cursor-pointer ${sidebarCollapsed ? 'justify-center px-0' : ''} ${
-              activeTab === 'HISTORY' ? activeButtonClass : sidebarStyle.navDefault
-            }`}
-            title={sidebarCollapsed ? "Lịch sử xuất nhập" : undefined}
-          >
-            <History className="w-4 h-4 shrink-0 text-indigo-500" /> 
-            {!sidebarCollapsed && <span>Lịch sử xuất nhập</span>}
-          </button>
+          {(hasPermission('import.view') || hasPermission('export.view')) && (
+            <button
+              onClick={() => selectTabOnMobile('HISTORY')}
+              className={`w-full py-2.5 px-3.5 text-xs font-bold rounded-xl transition-all flex items-center gap-2.5 cursor-pointer ${sidebarCollapsed ? 'justify-center px-0' : ''} ${
+                activeTab === 'HISTORY' ? activeButtonClass : sidebarStyle.navDefault
+              }`}
+              title={sidebarCollapsed ? "Lịch sử xuất nhập" : undefined}
+            >
+              <History className="w-4 h-4 shrink-0 text-indigo-500" /> 
+              {!sidebarCollapsed && <span>Lịch sử xuất nhập</span>}
+            </button>
+          )}
 
           {/* TAB 7: CÀI ĐẶT DANH MỤC */}
-          {currentUser.role === 'ADMIN' && (
+          {(hasPermission('user.view') || hasPermission('role.view') || hasPermission('product.edit') || hasPermission('product.create')) && (
             <button
               onClick={() => selectTabOnMobile('CATEGORY')}
               className={`w-full py-2.5 px-3.5 text-xs font-bold rounded-xl transition-all flex items-center gap-2.5 cursor-pointer ${sidebarCollapsed ? 'justify-center px-0' : ''} ${
@@ -2328,7 +2481,7 @@ export default function App() {
               transition={{ duration: 0.15 }}
               className="h-full"
             >
-              {activeTab === 'DASHBOARD' && currentUser.role === 'ADMIN' && (
+              {activeTab === 'DASHBOARD' && hasPermission('dashboard.view') && (
                 <Dashboard 
                   sanPhams={sanPhams}
                   nhapXuats={nhapXuats}
@@ -2341,18 +2494,18 @@ export default function App() {
                 />
               )}
 
-              {activeTab === 'PRODUCT' && (
+              {activeTab === 'PRODUCT' && hasPermission('product.view') && (
                 <ProductManagement 
                   currentUser={currentUser}
                   sanPhams={sanPhams}
                   onAddProduct={handleAddProduct}
                   onUpdateProduct={handleUpdateProduct}
-                  thuongHieus={listBrandNames}
+                  thuongHieus={listBranchNames}
                   brandList={thuongHieus}
                 />
               )}
 
-              {activeTab === 'MATRIX' && (
+              {activeTab === 'MATRIX' && hasPermission('product.view') && (
                 <DiopterMatrix 
                   currentUser={currentUser}
                   sanPhams={sanPhams}
@@ -2366,7 +2519,7 @@ export default function App() {
                 />
               )}
 
-              {activeTab === 'ORDER_PARSER' && (
+              {activeTab === 'ORDER_PARSER' && (hasPermission('export.create') || hasPermission('export.view')) && (
                 <OrderParser 
                   sanPhams={sanPhams}
                   brandList={thuongHieus}
@@ -2377,7 +2530,7 @@ export default function App() {
                 />
               )}
 
-              {activeTab === 'TRANSACTION_XUAT' && (
+              {activeTab === 'TRANSACTION_XUAT' && hasPermission('export.create') && (
                 <TransactionForm 
                   currentUser={currentUser}
                   sanPhams={sanPhams}
@@ -2394,7 +2547,7 @@ export default function App() {
                 />
               )}
 
-              {activeTab === 'TRANSACTION_NHAP' && (
+              {activeTab === 'TRANSACTION_NHAP' && hasPermission('import.create') && (
                 <TransactionForm 
                   currentUser={currentUser}
                   sanPhams={sanPhams}
@@ -2409,7 +2562,7 @@ export default function App() {
                 />
               )}
 
-              {activeTab === 'AUDIT' && currentUser.role !== 'NHAN_VIEN' && (
+              {activeTab === 'AUDIT' && hasPermission('inventory.view') && (
                 <InventoryAudit 
                   currentUser={currentUser}
                   sanPhams={sanPhams}
@@ -2421,7 +2574,7 @@ export default function App() {
                 />
               )}
 
-              {activeTab === 'HISTORY' && (
+              {activeTab === 'HISTORY' && (hasPermission('import.view') || hasPermission('export.view')) && (
                 <TransactionHistory 
                   currentUser={currentUser}
                   sanPhams={sanPhams}
@@ -2432,14 +2585,19 @@ export default function App() {
                       : nhapXuats
                   }
                   nhapXuatCTs={nhapXuatCTs}
+                  kiemKhos={kiemKhos}
                   onUpdateTransaction={handleUpdateTransaction}
                   onDeleteTransaction={handleDeleteTransaction}
+                  onSaveTransaction={handleSaveTransaction}
+                  chiNhanhs={listBranchNames}
+                  thuongHieus={listBrandNames}
                 />
               )}
 
-              {activeTab === 'CATEGORY' && currentUser.role === 'ADMIN' && (
+              {activeTab === 'CATEGORY' && (hasPermission('user.view') || hasPermission('role.view') || hasPermission('product.edit') || hasPermission('product.create')) && (
                 <CategoryManagement 
                   currentUser={currentUser}
+                  hasPermission={hasPermission}
                   thuongHieus={thuongHieus}
                   chiNhanhs={chiNhanhs}
                   nhanViens={nhanViens}
@@ -2453,6 +2611,22 @@ export default function App() {
                   onDeleteChiNhanh={handleDeleteChiNhanh}
                   onUpdateNhanVien={handleUpdateNhanVien}
                   onDeleteNhanVien={handleDeleteNhanVien}
+                  roles={roles}
+                  onAddRole={async (r) => {
+                    const updated = [...roles, r];
+                    setRoles(updated);
+                    await syncRole(r, currentUser.id);
+                  }}
+                  onUpdateRole={async (r) => {
+                    const updated = roles.map(item => item.ROLE_CODE === r.ROLE_CODE ? r : item);
+                    setRoles(updated);
+                    await syncRole(r, currentUser.id);
+                  }}
+                  onDeleteRole={async (roleCode) => {
+                    const updated = roles.filter(item => item.ROLE_CODE !== roleCode);
+                    setRoles(updated);
+                    await deleteRole(roleCode, currentUser.id);
+                  }}
                 />
               )}
 
@@ -2520,24 +2694,65 @@ export default function App() {
           })}
         </div>
 
-        {/* TOAST/MODAL THÀNH CÔNG Ở CHÍNH GIỮA MÀN HÌNH */}
-        <AnimatePresence>
+        {/* HỆ THỐNG THÔNG BÁO TOAST KHÔNG GÂY GIÁN ĐOẠN */}
+        <AnimatePresence mode="wait">
           {successToast && (
-            <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-xs pointer-events-none">
+            <div className="fixed top-5 right-5 z-[9999] p-4 max-w-sm w-full pointer-events-none">
               <motion.div
-                initial={{ scale: 0.85, opacity: 0 }}
-                animate={{ scale: 1, opacity: 1 }}
-                exit={{ scale: 0.85, opacity: 0 }}
-                transition={{ type: 'spring', damping: 20, stiffness: 300 }}
-                className="bg-[#0f172a] text-white p-6 rounded-2xl shadow-2xl flex flex-col items-center gap-3.5 max-w-sm pointer-events-auto border border-emerald-500/30 text-center"
+                key={successToast.id || successToast.message}
+                initial={{ opacity: 0, y: -20, scale: 0.95 }}
+                animate={{ opacity: 1, y: 0, scale: 1 }}
+                exit={{ opacity: 0, y: -20, scale: 0.95 }}
+                transition={{ duration: 0.2 }}
+                onClick={() => setSuccessToast(null)}
+                className={`relative w-full bg-slate-900/95 text-white p-4 rounded-xl shadow-2xl flex items-start gap-3 pointer-events-auto border cursor-pointer select-none transition-all duration-200 hover:bg-slate-900 ${
+                  successToast.type === 'error'
+                    ? 'border-rose-500/30 shadow-rose-500/5'
+                    : successToast.type === 'warning'
+                    ? 'border-amber-500/30 shadow-amber-500/5'
+                    : 'border-emerald-500/30 shadow-emerald-500/5'
+                }`}
               >
-                <div className="w-12 h-12 rounded-full bg-emerald-500/10 text-emerald-400 flex items-center justify-center border border-emerald-500/20">
-                  <CheckCircle className="w-7 h-7" />
+                <div className="flex-shrink-0 mt-0.5">
+                  {successToast.type === 'error' ? (
+                    <div className="w-9 h-9 rounded-full bg-rose-500/10 text-rose-400 flex items-center justify-center border border-rose-500/20">
+                      <AlertCircle className="w-5 h-5" />
+                    </div>
+                  ) : successToast.type === 'warning' ? (
+                    <div className="w-9 h-9 rounded-full bg-amber-500/10 text-amber-400 flex items-center justify-center border border-amber-500/20">
+                      <AlertTriangle className="w-5 h-5" />
+                    </div>
+                  ) : (
+                    <div className="w-9 h-9 rounded-full bg-emerald-500/10 text-emerald-400 flex items-center justify-center border border-emerald-500/20">
+                      <CheckCircle className="w-5 h-5" />
+                    </div>
+                  )}
                 </div>
-                <div>
-                  <h4 className="font-bold text-sm text-slate-100">Thao tác thành công!</h4>
-                  <p className="text-xs text-slate-400 mt-1 leading-relaxed font-medium">{successToast.message}</p>
+                
+                <div className="flex-1 pr-6 text-left">
+                  <h4 className="font-bold text-sm text-slate-100">
+                    {successToast.type === 'error'
+                      ? 'Thao tác thất bại'
+                      : successToast.type === 'warning'
+                      ? 'Cảnh báo'
+                      : 'Thành công'}
+                  </h4>
+                  <p className="text-xs text-slate-300 mt-0.5 leading-relaxed font-medium">
+                    {successToast.message}
+                  </p>
                 </div>
+
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setSuccessToast(null);
+                  }}
+                  className="absolute top-3 right-3 p-1 rounded-lg text-slate-400 hover:text-slate-200 hover:bg-slate-800/50 transition-colors"
+                  aria-label="Đóng"
+                >
+                  <X className="w-4 h-4" />
+                </button>
               </motion.div>
             </div>
           )}

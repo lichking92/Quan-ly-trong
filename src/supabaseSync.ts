@@ -1,5 +1,5 @@
 import { supabase } from './supabaseClient';
-import { SanPham, NhapXuat, NhapXuatCT, KiemKho, ThươngHieu, ChiNhanh, NhanVien, EmailLog } from './types';
+import { SanPham, NhapXuat, NhapXuatCT, KiemKho, ThươngHieu, ChiNhanh, NhanVien, EmailLog, Role, safeParseArray } from './types';
 
 export let isOfflineMode = false;
 
@@ -94,6 +94,7 @@ export interface UserDataPayload {
   thuongHieus: ThươngHieu[];
   chiNhanhs: ChiNhanh[];
   nhanViens: NhanVien[];
+  roles?: Role[];
 }
 
 /**
@@ -178,6 +179,22 @@ export async function tryCreateColumnsOnSupabase() {
 
       BEGIN
         ALTER TABLE b_nhanvien ADD COLUMN IF NOT EXISTS "NGAY_DANG_KY" text;
+      EXCEPTION WHEN others THEN NULL;
+      END;
+
+      BEGIN
+        ALTER TABLE b_nhanvien ADD COLUMN IF NOT EXISTS "ROLES" text[];
+      EXCEPTION WHEN others THEN NULL;
+      END;
+
+      -- Tạo bảng b_role nếu chưa có để lưu cấu hình vai trò và quyền hạn
+      BEGIN
+        CREATE TABLE IF NOT EXISTS public.b_role (
+          "ROLE_CODE" text PRIMARY KEY,
+          "TEN_ROLE" text,
+          "PERMISSIONS" text[],
+          user_id uuid
+        );
       EXCEPTION WHEN others THEN NULL;
       END;
 
@@ -272,6 +289,10 @@ export async function tryCreateColumnsOnSupabase() {
         END;
         BEGIN
           ALTER PUBLICATION supabase_realtime ADD TABLE b_nhanvien;
+        EXCEPTION WHEN others THEN NULL;
+        END;
+        BEGIN
+          ALTER PUBLICATION supabase_realtime ADD TABLE b_role;
         EXCEPTION WHEN others THEN NULL;
         END;
         BEGIN
@@ -467,7 +488,8 @@ export async function fetchAllUserData(userId: string): Promise<UserDataPayload>
       kiemKhos: getCached('B_KIEMKHO'),
       thuongHieus: getCached('B_THUONGHIEU'),
       chiNhanhs: getCached('B_CHINHANH'),
-      nhanViens: getCached('B_NHANVIEN')
+      nhanViens: getCached('B_NHANVIEN'),
+      roles: getCached('B_ROLE')
     };
   }
 
@@ -478,6 +500,7 @@ export async function fetchAllUserData(userId: string): Promise<UserDataPayload>
   let resThuongHieus: any = { data: null, error: null };
   let resChiNhanhs: any = { data: null, error: null };
   let resNhanViens: any = { data: null, error: null };
+  let resRoles: any = { data: null, error: null };
 
   try {
     const results = await Promise.all([
@@ -487,7 +510,11 @@ export async function fetchAllUserData(userId: string): Promise<UserDataPayload>
       supabase.from('b_kiemkho').select('*').eq('user_id', userId),
       supabase.from('b_thuonghieu').select('*').eq('user_id', userId),
       supabase.from('b_chinhanh').select('*').eq('user_id', userId),
-      supabase.from('b_nhanvien').select('*').eq('user_id', userId)
+      supabase.from('b_nhanvien').select('*').eq('user_id', userId),
+      supabase.from('b_role').select('*').eq('user_id', userId).then(
+        r => r,
+        err => ({ data: null, error: err })
+      )
     ]);
 
     // Kiểm tra xem có lỗi kết nối mạng nào từ các direct queries không
@@ -511,6 +538,7 @@ export async function fetchAllUserData(userId: string): Promise<UserDataPayload>
     resThuongHieus = results[4];
     resChiNhanhs = results[5];
     resNhanViens = results[6];
+    resRoles = results[7];
   } catch (err) {
     logDbError('Lỗi tải fetchAllUserData từ Supabase:', err);
     if (isNetworkError(err)) {
@@ -523,7 +551,8 @@ export async function fetchAllUserData(userId: string): Promise<UserDataPayload>
         kiemKhos: getCached('B_KIEMKHO'),
         thuongHieus: getCached('B_THUONGHIEU'),
         chiNhanhs: getCached('B_CHINHANH'),
-        nhanViens: getCached('B_NHANVIEN')
+        nhanViens: getCached('B_NHANVIEN'),
+        roles: getCached('B_ROLE')
       };
     }
   }
@@ -626,7 +655,14 @@ export async function fetchAllUserData(userId: string): Promise<UserDataPayload>
     MAT_KHAU: item.MAT_KHAU || '',
     TRANG_THAI: item.TRANG_THAI || 'Hoạt động',
     YEU_CAU_RESET: item.YEU_CAU_RESET || false,
-    NGAY_DANG_KY: item.NGAY_DANG_KY || ''
+    NGAY_DANG_KY: item.NGAY_DANG_KY || '',
+    ROLES: safeParseArray(item.ROLES)
+  }));
+
+  const roles: Role[] = (resRoles?.data || []).map((item: any) => ({
+    ROLE_CODE: item.ROLE_CODE,
+    TEN_ROLE: item.TEN_ROLE,
+    PERMISSIONS: item.PERMISSIONS || []
   }));
 
   return {
@@ -636,7 +672,8 @@ export async function fetchAllUserData(userId: string): Promise<UserDataPayload>
     kiemKhos,
     thuongHieus,
     chiNhanhs,
-    nhanViens
+    nhanViens,
+    roles
   };
 }
 
@@ -1126,6 +1163,7 @@ export async function syncNhanVien(n: NhanVien, userId: string) {
       "MAT_KHAU": n.MAT_KHAU || '',
       "YEU_CAU_RESET": n.YEU_CAU_RESET || false,
       "TRANG_THAI": n.TRANG_THAI || 'Hoạt động',
+      "ROLES": n.ROLES || [],
       user_id: userId
     };
 
@@ -1165,6 +1203,93 @@ export async function syncNhanVien(n: NhanVien, userId: string) {
     logDbError("Lỗi ngoài dự kiến trong syncNhanVien:", err);
     return { error: err };
   }
+}
+
+/**
+ * Đồng bộ hoặc Thêm/Sửa một Vai trò (Role)
+ */
+export async function syncRole(r: Role, userId: string) {
+  if (isOfflineMode) {
+    return { data: [r], error: null };
+  }
+  userId = await resolveEffectiveUserId();
+  try {
+    const payload = {
+      "ROLE_CODE": r.ROLE_CODE,
+      "TEN_ROLE": r.TEN_ROLE,
+      "PERMISSIONS": r.PERMISSIONS || [],
+      user_id: userId
+    };
+
+    // Kiểm tra xem vai trò này đã tồn tại trong DB chưa
+    const { data: existing, error: checkError } = await supabase
+      .from('b_role')
+      .select('ROLE_CODE')
+      .eq('ROLE_CODE', r.ROLE_CODE)
+      .eq('user_id', userId)
+      .maybeSingle();
+
+    if (checkError) {
+      console.warn("Lỗi kiểm tra b_role tồn tại:", checkError.message);
+    }
+
+    let res;
+    if (existing) {
+      // Đã có -> Cập nhật
+      res = await supabase
+        .from('b_role')
+        .update(payload)
+        .eq('ROLE_CODE', r.ROLE_CODE)
+        .eq('user_id', userId)
+        .select();
+      if (res.error) logDbError("Lỗi syncRole (update):", res.error);
+    } else {
+      // Chưa có -> Thêm mới
+      res = await supabase
+        .from('b_role')
+        .insert(payload)
+        .select();
+      if (res.error) logDbError("Lỗi syncRole (insert):", res.error);
+    }
+
+    return res;
+  } catch (err: any) {
+    logDbError("Lỗi ngoài dự kiến trong syncRole:", err);
+    return { error: err };
+  }
+}
+
+/**
+ * Đồng bộ danh sách vai trò
+ */
+export async function syncRoles(rList: Role[], userId: string) {
+  const results = [];
+  for (const r of rList) {
+    const res = await syncRole(r, userId);
+    results.push(res);
+  }
+  return results;
+}
+
+/**
+ * Xóa một vai trò
+ */
+export async function deleteRole(roleCode: string, userId: string) {
+  if (isOfflineMode) {
+    return { error: null };
+  }
+  userId = await resolveEffectiveUserId();
+  let res = await supabase.from('b_role').delete().eq('ROLE_CODE', roleCode).eq('user_id', userId);
+  if (res.error) {
+    console.warn("Thử xóa b_role bằng user_id thất bại, thử xóa trực tiếp bằng ROLE_CODE", res.error);
+    const res2 = await supabase.from('b_role').delete().eq('ROLE_CODE', roleCode);
+    if (res2.error) {
+      logDbError("Lỗi deleteRole:", res2.error);
+      return res2;
+    }
+    return res2;
+  }
+  return res;
 }
 
 /**

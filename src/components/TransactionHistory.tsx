@@ -21,31 +21,42 @@ import {
   RefreshCw,
   Search,
   Settings,
-  SlidersHorizontal
+  SlidersHorizontal,
+  History,
+  ArrowLeft,
+  Save,
+  CheckSquare
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { NhapXuat, NhapXuatCT, SanPham, LoaiPhieu, User as UserType } from '../types';
+import { NhapXuat, NhapXuatCT, SanPham, LoaiPhieu, User as UserType, KiemKho } from '../types';
 import { formatDop, formatSKUForDisplay, cleanSKU } from '../data/mockData';
 
-/**
- * FILE: TransactionHistory.tsx
- * TÁC GIẢ: Lão làng Lập trình Hệ thống (30+ năm kinh nghiệm)
- * MÔ TẢ: Quản lý lịch sử giao dịch (B_NHAPXUAT và B_NHAPXUATCT) với hiệu năng tối ưu.
- *        Hỗ trợ Tùy chọn độ rộng cột, ghi nhớ cấu hình, Column Chooser, Cố định cột cốt lõi.
- *        Bố cục thích ứng thông minh: 100% khi rỗng, Chia màn hình (Split View) trên Desktop, Drawer (Bottom Sheet) trên Mobile.
- */
+export interface AuditLog {
+  id: string;
+  HOA_DON: string;
+  LOAI_HIEU_CHINH: 'THÊM' | 'SỬA' | 'XÓA';
+  NGUOI_THAO_TAC: string;
+  THOI_GIAN: string;
+  DU_LIEU_TRUOC?: string;
+  DU_LIEU_SAU?: string;
+  GHI_CHU?: string;
+}
 
 interface TransactionHistoryProps {
   currentUser: UserType;
   sanPhams: SanPham[];
   nhapXuats: NhapXuat[];
   nhapXuatCTs: NhapXuatCT[];
+  kiemKhos?: KiemKho[];
   onUpdateTransaction: (
     updatedHeader: NhapXuat, 
     updatedDetails: NhapXuatCT[], 
     skusToRecalc: string[]
   ) => void;
   onDeleteTransaction: (hoaDonId: string, skusToRecalc: string[]) => void;
+  onSaveTransaction?: (header: NhapXuat, details: NhapXuatCT[]) => Promise<void>;
+  chiNhanhs?: string[];
+  thuongHieus?: string[];
 }
 
 export default function TransactionHistory({
@@ -53,12 +64,355 @@ export default function TransactionHistory({
   sanPhams,
   nhapXuats,
   nhapXuatCTs,
+  kiemKhos = [],
   onUpdateTransaction,
-  onDeleteTransaction
+  onDeleteTransaction,
+  onSaveTransaction,
+  chiNhanhs = [],
+  thuongHieus = []
 }: TransactionHistoryProps) {
   
   // --- 1. QUẢN LÝ TRẠNG THÁI GIAO DIỆN ---
   const [selectedInvoice, setSelectedInvoice] = useState<string | null>(null);
+
+  // States for dynamic Voucher Form (Create & Edit)
+  const [isEditingInvoice, setIsEditingInvoice] = useState<boolean>(false);
+  const [isCreatingInvoice, setIsCreatingInvoice] = useState<boolean>(false);
+  const [createInvoiceType, setCreateInvoiceType] = useState<'NHẬP' | 'XUẤT' | 'NHẬP_KIEM_KHO' | 'XUAT_KIEM_KHO'>('NHẬP');
+  
+  const [formInvoiceId, setFormInvoiceId] = useState<string>('');
+  const [formBranch, setFormBranch] = useState<string>('');
+  const [formDate, setFormDate] = useState<string>('');
+  const [formGhiChu, setFormGhiChu] = useState<string>('');
+  const [formItems, setFormItems] = useState<NhapXuatCT[]>([]);
+  
+  const [editorSearchSku, setEditorSearchSku] = useState<string>('');
+  const [editorAddQty, setEditorAddQty] = useState<number>(1);
+  const [editorAddGhiChu, setEditorAddGhiChu] = useState<string>('');
+
+  // States for Audit Logs
+  const [auditLogs, setAuditLogs] = useState<AuditLog[]>(() => {
+    const saved = localStorage.getItem('B_AUDIT_LOG_LIST');
+    return saved ? JSON.parse(saved) : [];
+  });
+  const [showAuditLogModal, setShowAuditLogModal] = useState<boolean>(false);
+
+  // Function to save Audit Logs locally and in-memory
+  const addAuditLog = (loai: 'THÊM' | 'SỬA' | 'XÓA', hoaDonId: string, before?: any, after?: any, notes?: string) => {
+    const newLog: AuditLog = {
+      id: `LOG_${Date.now()}_${Math.random().toString(36).substring(2, 6).toUpperCase()}`,
+      HOA_DON: hoaDonId,
+      LOAI_HIEU_CHINH: loai,
+      NGUOI_THAO_TAC: currentUser.username || 'System',
+      THOI_GIAN: new Date().toLocaleString('vi-VN'),
+      DU_LIEU_TRUOC: before ? JSON.stringify(before, null, 2) : undefined,
+      DU_LIEU_SAU: after ? JSON.stringify(after, null, 2) : undefined,
+      GHI_CHU: notes || ''
+    };
+    const nextLogs = [newLog, ...auditLogs];
+    setAuditLogs(nextLogs);
+    localStorage.setItem('B_AUDIT_LOG_LIST', JSON.stringify(nextLogs));
+  };
+
+  // Stock Level Simulation to PREVENT NEGATIVE INVENTORY (Rule 1)
+  const checkSimulatedStock = (headerId: string, tempDetails: NhapXuatCT[]): { success: boolean; errorSku?: string; negativeValue?: number } => {
+    const oldDetailsOfThisHeader = nhapXuatCTs.filter(d => d.HOA_DON === headerId);
+    const affectedSKUs = Array.from(new Set([
+      ...oldDetailsOfThisHeader.map(d => d.SKU),
+      ...tempDetails.map(d => d.SKU)
+    ]));
+
+    const otherDetails = nhapXuatCTs.filter(d => d.HOA_DON !== headerId);
+    const simulatedDetails = [...otherDetails, ...tempDetails];
+
+    for (const sku of affectedSKUs) {
+      const product = sanPhams.find(p => p.SKU === sku);
+      if (!product) continue;
+
+      const normSku = cleanSKU(sku);
+      
+      const totalNhap = simulatedDetails
+        .filter(d => cleanSKU(d.SKU) === normSku && d.LOAI === 'NHẬP')
+        .reduce((sum, d) => sum + (Number(d.SO_LUONG) || 0), 0);
+
+      const totalXuat = simulatedDetails
+        .filter(d => cleanSKU(d.SKU) === normSku && d.LOAI === 'XUẤT')
+        .reduce((sum, d) => sum + (Number(d.SO_LUONG) || 0), 0);
+
+      const totalAuditNhapBu = (kiemKhos || [])
+        .filter(k => cleanSKU(k.SKU) === normSku && k.LOAI_BU === 'NHẬP BÙ')
+        .filter(k => !simulatedDetails.some(d => cleanSKU(d.SKU) === normSku && (d.GHI_CHU || '').includes(k.MA_PHIEU)))
+        .reduce((sum, k) => sum + (Number(k.LECH) || 0), 0);
+
+      const totalAuditXuatBu = (kiemKhos || [])
+        .filter(k => cleanSKU(k.SKU) === normSku && k.LOAI_BU === 'XUẤT BÙ')
+        .filter(k => !simulatedDetails.some(d => cleanSKU(d.SKU) === normSku && (d.GHI_CHU || '').includes(k.MA_PHIEU)))
+        .reduce((sum, k) => sum + Math.abs(Number(k.LECH) || 0), 0);
+
+      const tonDau = Number(product.TON_DAU) || 0;
+      const simulatedTonCuoi = tonDau + (totalNhap + totalAuditNhapBu) - (totalXuat + totalAuditXuatBu);
+
+      if (simulatedTonCuoi < 0) {
+        return { success: false, errorSku: sku, negativeValue: simulatedTonCuoi };
+      }
+    }
+
+    return { success: true };
+  };
+
+  // Launch edit mode for the selected/active invoice
+  const handleStartEditInvoice = () => {
+    if (!activeHeader) return;
+    setErrorMsg('');
+    setSuccessMsg('');
+    setFormInvoiceId(activeHeader.HOA_DON);
+    setFormBranch(activeHeader.CHI_NHANH);
+    setFormDate(activeHeader.NGAY);
+    setFormGhiChu(activeHeader.GHI_CHU || '');
+    setFormItems([...activeDetails]);
+    setIsEditingInvoice(true);
+  };
+
+  // Launch create mode for a chosen type
+  const handleStartCreateInvoice = (type: 'NHẬP' | 'XUẤT' | 'NHẬP_KIEM_KHO' | 'XUAT_KIEM_KHO') => {
+    setErrorMsg('');
+    setSuccessMsg('');
+    setCreateInvoiceType(type);
+    setFormInvoiceId('');
+    
+    // Choose a fallback branch
+    const defaultBranch = chiNhanhs?.[0] || uniqueBranches?.[0] || 'Kho Trung Tâm';
+    setFormBranch(defaultBranch);
+    setFormDate(new Date().toISOString().split('T')[0]);
+    
+    let defaultGhiChu = '';
+    if (type === 'NHẬP_KIEM_KHO') defaultGhiChu = 'Nhập chênh lệch kiểm kho thừa';
+    else if (type === 'XUAT_KIEM_KHO') defaultGhiChu = 'Xuất chênh lệch kiểm kho thiếu';
+    
+    setFormGhiChu(defaultGhiChu);
+    setFormItems([]);
+    setIsCreatingInvoice(true);
+  };
+
+  // Save changes to edited invoice
+  const handleSaveInvoiceChanges = () => {
+    setErrorMsg('');
+    setSuccessMsg('');
+
+    if (!activeHeader) return;
+    if (formItems.length === 0) {
+      setErrorMsg('Phiếu không được bỏ trống danh sách tròng kính. Phải có ít nhất 1 mặt hàng.');
+      return;
+    }
+
+    // Validate quantities
+    if (formItems.some(i => i.SO_LUONG <= 0)) {
+      setErrorMsg('Số lượng của tất cả mặt hàng phải lớn hơn 0.');
+      return;
+    }
+
+    // Check simulated stock
+    const checkResult = checkSimulatedStock(formInvoiceId, formItems);
+    if (!checkResult.success) {
+      setErrorMsg(`Lỗi (Rule 1): Không cho phép tồn kho âm. SKU [${checkResult.errorSku}] sẽ có tồn kho sau khi sửa đổi là ${checkResult.negativeValue} cái.`);
+      return;
+    }
+
+    // Confirm save
+    if (!window.confirm('Xác nhận lưu lại toàn bộ các sửa đổi cho phiếu này? Hệ thống sẽ cập nhật và tự động tính lại tồn kho.')) {
+      return;
+    }
+
+    const newTotalQty = formItems.reduce((sum, d) => sum + d.SO_LUONG, 0);
+    const updatedHeader: NhapXuat = {
+      ...activeHeader,
+      CHI_NHANH: formBranch,
+      NGAY: formDate,
+      GHI_CHU: formGhiChu,
+      TONG_SL: newTotalQty
+    };
+
+    const updatedFormItems = formItems.map(d => ({
+      ...d,
+      CHI_NHANH: formBranch,
+      NGAY: formDate,
+      LOAI: activeHeader.LOAI
+    }));
+
+    const otherDetails = nhapXuatCTs.filter(d => d.HOA_DON !== formInvoiceId);
+    const updatedDetailsList = [...otherDetails, ...updatedFormItems];
+
+    const affectedSKUs = Array.from(new Set([
+      ...activeDetails.map(d => d.SKU),
+      ...formItems.map(d => d.SKU)
+    ]));
+
+    // Perform Update
+    onUpdateTransaction(updatedHeader, updatedFormItems, affectedSKUs);
+
+    // Save Audit Log
+    addAuditLog(
+      'SỬA', 
+      formInvoiceId, 
+      { header: activeHeader, details: activeDetails }, 
+      { header: updatedHeader, details: updatedFormItems }, 
+      `Chỉnh sửa thông tin phiếu của ${currentUser.username}`
+    );
+
+    setIsEditingInvoice(false);
+    setSuccessMsg('Đã lưu chỉnh sửa phiếu và tự động cập nhật tồn kho thành công!');
+    setTimeout(() => setSuccessMsg(''), 3000);
+  };
+
+  // Submit new voucher creation
+  const handleCreateInvoiceSubmit = async () => {
+    setErrorMsg('');
+    setSuccessMsg('');
+
+    if (formItems.length === 0) {
+      setErrorMsg('Vui lòng thêm ít nhất 1 mặt hàng vào phiếu.');
+      return;
+    }
+
+    if (formItems.some(i => i.SO_LUONG <= 0)) {
+      setErrorMsg('Số lượng của tất cả mặt hàng phải lớn hơn 0.');
+      return;
+    }
+
+    // Determine type & prefix
+    const isNhap = (createInvoiceType === 'NHẬP' || createInvoiceType === 'NHẬP_KIEM_KHO');
+    const prefix = createInvoiceType === 'NHẬP' ? 'PN' : createInvoiceType === 'XUẤT' ? 'PX' : createInvoiceType === 'NHẬP_KIEM_KHO' ? 'PNK' : 'PXK';
+    const loai: LoaiPhieu = isNhap ? 'NHẬP' : 'XUẤT';
+
+    // Check simulated stock
+    const checkResult = checkSimulatedStock('', formItems);
+    if (!checkResult.success) {
+      setErrorMsg(`Lỗi (Rule 1): Không cho phép tồn kho âm. SKU [${checkResult.errorSku}] sẽ có tồn kho sau khi tạo phiếu là ${checkResult.negativeValue} cái.`);
+      return;
+    }
+
+    if (!window.confirm(`Xác nhận lưu phiếu mới (${createInvoiceType.replace('_', ' ')})?`)) {
+      return;
+    }
+
+    // Predict next Invoice No for Logging
+    let maxNum = 0;
+    nhapXuats.forEach(h => {
+      if (h.HOA_DON.startsWith(prefix)) {
+        const numPart = parseInt(h.HOA_DON.substring(prefix.length), 10);
+        if (!isNaN(numPart) && numPart > maxNum) {
+          maxNum = numPart;
+        }
+      }
+    });
+    const predictedInvoiceId = `${prefix}${String(maxNum + 1).padStart(6, '0')}`;
+
+    // Construct mock new header with temp invoice ID
+    const tempId = `${prefix}_temp_${Date.now()}`;
+    const newHeader: NhapXuat = {
+      HOA_DON: tempId,
+      CHI_NHANH: formBranch,
+      NGAY: formDate,
+      LOAI: loai,
+      TONG_SL: formItems.reduce((sum, d) => sum + d.SO_LUONG, 0),
+      NGUOI_TAO: currentUser.username,
+      TEN_NGUOI_TAO: currentUser.fullName || currentUser.username,
+      TG_TAO: new Date().toISOString().replace('T', ' ').substring(0, 19),
+      GHI_CHU: formGhiChu
+    };
+
+    const newDetails: NhapXuatCT[] = formItems.map((item, idx) => ({
+      ...item,
+      ID: `CT_NEW_${Date.now()}_${idx}`,
+      HOA_DON: tempId,
+      LOAI: loai,
+      NGAY: formDate
+    }));
+
+    if (onSaveTransaction) {
+      await onSaveTransaction(newHeader, newDetails);
+
+      // Save Audit Log
+      addAuditLog(
+        'THÊM',
+        predictedInvoiceId,
+        undefined,
+        { header: { ...newHeader, HOA_DON: predictedInvoiceId }, details: newDetails.map(d => ({ ...d, HOA_DON: predictedInvoiceId })) },
+        `Tạo mới phiếu ${prefix} thành công`
+      );
+
+      setIsCreatingInvoice(false);
+      setSuccessMsg(`Tạo phiếu mới thành công: ${predictedInvoiceId}`);
+      setTimeout(() => setSuccessMsg(''), 4000);
+    } else {
+      setErrorMsg('Hệ thống chưa hỗ trợ hàm lưu phiếu mới.');
+    }
+  };
+
+  // Add a selected product item into form details
+  const handleEditorAddItem = () => {
+    setErrorMsg('');
+    if (!editorSearchSku) {
+      setErrorMsg('Vui lòng chọn SKU tròng kính.');
+      return;
+    }
+
+    const targetProduct = sanPhams.find(p => p.SKU === editorSearchSku);
+    if (!targetProduct) {
+      setErrorMsg('Sản phẩm không hợp lệ.');
+      return;
+    }
+
+    if (editorAddQty <= 0) {
+      setErrorMsg('Số lượng bổ sung phải lớn hơn 0.');
+      return;
+    }
+
+    if (formItems.some(item => item.SKU === editorSearchSku)) {
+      setErrorMsg('Sản phẩm SKU này đã tồn tại trong phiếu. Hãy điều chỉnh số lượng ở bảng bên dưới.');
+      return;
+    }
+
+    const isNhap = (isCreatingInvoice && (createInvoiceType === 'NHẬP' || createInvoiceType === 'NHẬP_KIEM_KHO')) || (isEditingInvoice && activeHeader?.LOAI === 'NHẬP');
+    const loai: LoaiPhieu = isNhap ? 'NHẬP' : 'XUẤT';
+
+    const newItem: NhapXuatCT = {
+      ID: `CT_TEMP_${Date.now()}`,
+      HOA_DON: formInvoiceId || 'TEMP',
+      SKU: targetProduct.SKU,
+      TEN_SP: targetProduct.TEN_SAN_PHAM,
+      THUONG_HIEU: targetProduct.THUONG_HIEU,
+      CHIET_XUAT: targetProduct.CHIET_XUAT,
+      TINH_NANG: targetProduct.TINH_NANG,
+      SPH: targetProduct.CAN,
+      CYL: targetProduct.LOAN,
+      SO_LUONG: editorAddQty,
+      DVT: targetProduct.DVT || 'Cái',
+      GHI_CHU: editorAddGhiChu || 'Ghi chú bổ sung',
+      LOAI: loai,
+      NGAY: formDate
+    };
+
+    setFormItems([...formItems, newItem]);
+    setEditorSearchSku('');
+    setEditorAddQty(1);
+    setEditorAddGhiChu('');
+  };
+
+  // Remove a row from the form details
+  const removeItemFromForm = (sku: string) => {
+    setFormItems(prev => prev.filter(i => i.SKU !== sku));
+  };
+
+  // Update a quantity in the form details
+  const updateItemQtyInForm = (sku: string, val: number) => {
+    setFormItems(prev => prev.map(i => i.SKU === sku ? { ...i, SO_LUONG: val } : i));
+  };
+
+  // Update a note in the form details
+  const updateItemNoteInForm = (sku: string, val: string) => {
+    setFormItems(prev => prev.map(i => i.SKU === sku ? { ...i, GHI_CHU: val } : i));
+  };
   const [searchQuery, setSearchQuery] = useState<string>(() => {
     return localStorage.getItem(`${currentUser.username}_HISTORY_FILTER_SEARCH`) || '';
   });
@@ -478,6 +832,14 @@ export default function TransactionHistory({
   // --- 8. HỦY HOÀN TOÀN CẢ PHIẾU (ROLLBACK) ---
   const handleDeleteEntireInvoice = () => {
     if (!activeHeader) return;
+
+    // Verify deleting won't cause negative inventory (Rule 1)
+    const checkResult = checkSimulatedStock(activeHeader.HOA_DON, []);
+    if (!checkResult.success) {
+      setErrorMsg(`Lỗi (Rule 1): Không cho phép hủy/xóa phiếu vì việc hoàn tác sẽ làm tồn kho của SKU [${checkResult.errorSku}] bị âm (${checkResult.negativeValue} cái).`);
+      return;
+    }
+
     if (!window.confirm(`⚠️ CẢNH BÁO QUAN TRỌNG:\nHành động này sẽ XÓA HOÀN TOÀN phiếu ${activeHeader.HOA_DON} và tiến hành HOÀN TỒN KHO (ROLLBACK) của tất cả sản phẩm liên quan.\n\nBạn có chắc chắn muốn tiếp tục thực hiện?`)) {
       return;
     }
@@ -486,6 +848,16 @@ export default function TransactionHistory({
     setSuccessMsg('');
 
     const affectedSKUs = activeDetails.map(d => d.SKU);
+
+    // Save Audit Log
+    addAuditLog(
+      'XÓA',
+      activeHeader.HOA_DON,
+      { header: activeHeader, details: activeDetails },
+      undefined,
+      `Xóa/Hủy hoàn toàn phiếu bởi ${currentUser.username}`
+    );
+
     onDeleteTransaction(activeHeader.HOA_DON, affectedSKUs);
 
     setSelectedInvoice(null);
@@ -518,6 +890,13 @@ export default function TransactionHistory({
           <div className="flex items-center gap-2">
             {currentUser.writeAccess !== false && (
               <>
+                <button
+                  onClick={handleStartEditInvoice}
+                  className="flex items-center gap-1 text-[11px] font-bold py-1.5 px-3 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 text-slate-600 cursor-pointer transition-all"
+                >
+                  <Edit2 className="w-3.5 h-3.5 text-indigo-500" /> Sửa Phiếu
+                </button>
+
                 <button
                   onClick={() => setShowAddRowForm(!showAddRowForm)}
                   className="flex items-center gap-1 text-[11px] font-bold py-1.5 px-3 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 text-slate-600 cursor-pointer transition-all"
@@ -895,9 +1274,458 @@ export default function TransactionHistory({
     }
   };
 
+  const [selectedAuditLog, setSelectedAuditLog] = useState<AuditLog | null>(null);
+
+  const renderAuditLogModal = () => {
+    return (
+      <AnimatePresence>
+        {showAuditLogModal && (
+          <>
+            {/* Backdrop */}
+            <div 
+              className="fixed inset-0 bg-slate-900/45 backdrop-blur-xs z-50 transition-opacity"
+              onClick={() => { setShowAuditLogModal(false); setSelectedAuditLog(null); }}
+            />
+            
+            {/* Modal Body */}
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 20 }}
+              className="fixed inset-x-4 top-10 bottom-10 md:inset-x-12 md:top-14 md:bottom-14 lg:inset-x-24 bg-white rounded-3xl shadow-2xl z-55 flex flex-col overflow-hidden border border-slate-150"
+            >
+              {/* Header */}
+              <div className="bg-slate-50 px-6 py-4 border-b border-slate-100 flex items-center justify-between shrink-0">
+                <div className="flex items-center gap-2.5">
+                  <History className="w-5 h-5 text-indigo-500" />
+                  <div>
+                    <h3 className="text-sm font-extrabold text-slate-800">Nhật Ký Chỉnh Sửa & Giao Dịch (Audit Log)</h3>
+                    <p className="text-[10px] text-slate-400 font-semibold uppercase tracking-wider">Lịch sử tác động tồn kho chi tiết</p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => { setShowAuditLogModal(false); setSelectedAuditLog(null); }}
+                  className="p-1.5 hover:bg-slate-200 text-slate-500 hover:text-slate-800 rounded-full transition-all cursor-pointer"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              {/* Main Split Layout */}
+              <div className="grow grid grid-cols-1 md:grid-cols-12 overflow-hidden">
+                {/* Left side: Log List */}
+                <div className="md:col-span-5 border-r border-slate-100 overflow-y-auto p-4 space-y-3 bg-slate-50/30">
+                  {auditLogs.length === 0 ? (
+                    <div className="text-center py-12 text-slate-400 font-medium italic">
+                      Chưa ghi nhận hoạt động chỉnh sửa nào trong phiên này.
+                    </div>
+                  ) : (
+                    auditLogs.map(log => {
+                      const isSua = log.LOAI_HIEU_CHINH === 'SỬA';
+                      const isThem = log.LOAI_HIEU_CHINH === 'THÊM';
+                      const colorClass = isThem 
+                        ? 'bg-emerald-50 text-emerald-700 border-emerald-100' 
+                        : isSua 
+                          ? 'bg-blue-50 text-blue-700 border-blue-100' 
+                          : 'bg-rose-50 text-rose-700 border-rose-100';
+                      
+                      return (
+                        <div
+                          key={log.id}
+                          onClick={() => setSelectedAuditLog(log)}
+                          className={`p-3 rounded-xl border transition-all cursor-pointer text-left ${
+                            selectedAuditLog?.id === log.id 
+                              ? 'bg-white border-indigo-500 shadow-md ring-1 ring-indigo-500' 
+                              : 'bg-white hover:bg-slate-50 border-slate-150 shadow-2xs'
+                          }`}
+                        >
+                          <div className="flex items-center justify-between gap-2 mb-1.5">
+                            <span className="text-[10px] font-mono font-bold text-slate-500">{log.HOA_DON}</span>
+                            <span className={`text-[9px] font-extrabold px-2 py-0.5 rounded-full border ${colorClass}`}>
+                              {log.LOAI_HIEU_CHINH}
+                            </span>
+                          </div>
+                          <p className="text-xs font-bold text-slate-700 truncate">{log.GHI_CHU}</p>
+                          <div className="flex items-center justify-between text-[10px] text-slate-400 mt-2 font-semibold">
+                            <span>Người tạo: {log.NGUOI_THAO_TAC}</span>
+                            <span>{log.THOI_GIAN}</span>
+                          </div>
+                        </div>
+                      );
+                    })
+                  )}
+                </div>
+
+                {/* Right side: Log Details */}
+                <div className="md:col-span-7 overflow-y-auto p-6 space-y-4">
+                  {selectedAuditLog ? (
+                    <div className="space-y-4 text-left">
+                      <div className="border-b border-slate-100 pb-3">
+                        <div className="text-[10px] font-bold text-indigo-500 uppercase tracking-wider mb-0.5">Mã Nhật Ký</div>
+                        <div className="font-mono font-bold text-sm text-slate-700">{selectedAuditLog.id}</div>
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-4 text-xs">
+                        <div>
+                          <span className="text-slate-400 font-semibold">Thao tác: </span>
+                          <strong className="text-slate-700">{selectedAuditLog.LOAI_HIEU_CHINH}</strong>
+                        </div>
+                        <div>
+                          <span className="text-slate-400 font-semibold">Thời gian: </span>
+                          <strong className="text-slate-700">{selectedAuditLog.THOI_GIAN}</strong>
+                        </div>
+                        <div>
+                          <span className="text-slate-400 font-semibold">Người thực hiện: </span>
+                          <strong className="text-slate-700">{selectedAuditLog.NGUOI_THAO_TAC}</strong>
+                        </div>
+                        <div>
+                          <span className="text-slate-400 font-semibold">Số phiếu: </span>
+                          <strong className="text-slate-700">{selectedAuditLog.HOA_DON}</strong>
+                        </div>
+                      </div>
+
+                      <div className="space-y-2">
+                        <div className="text-xs font-bold text-slate-500 uppercase tracking-wider">Chi tiết sự thay đổi</div>
+                        <div className="text-xs text-slate-600 bg-slate-50 p-3 rounded-xl leading-relaxed italic">
+                          {selectedAuditLog.GHI_CHU}
+                        </div>
+                      </div>
+
+                      {/* Diff Comparison */}
+                      <div className="space-y-4 pt-2">
+                        {selectedAuditLog.DU_LIEU_TRUOC && (
+                          <div className="space-y-1">
+                            <span className="text-[10px] font-extrabold text-rose-500 uppercase tracking-wider">Dữ liệu trước hiệu chỉnh</span>
+                            <pre className="text-[10px] font-mono p-3 bg-slate-900 text-slate-100 rounded-xl max-h-56 overflow-y-auto whitespace-pre-wrap">
+                              {selectedAuditLog.DU_LIEU_TRUOC}
+                            </pre>
+                          </div>
+                        )}
+                        {selectedAuditLog.DU_LIEU_SAU && (
+                          <div className="space-y-1">
+                            <span className="text-[10px] font-extrabold text-emerald-500 uppercase tracking-wider">Dữ liệu sau hiệu chỉnh</span>
+                            <pre className="text-[10px] font-mono p-3 bg-slate-900 text-slate-100 rounded-xl max-h-56 overflow-y-auto whitespace-pre-wrap">
+                              {selectedAuditLog.DU_LIEU_SAU}
+                            </pre>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="h-full flex flex-col items-center justify-center text-slate-400 space-y-2">
+                      <History className="w-12 h-12 text-slate-200" />
+                      <p className="text-xs font-medium italic">Chọn một dòng nhật ký ở bên trái để xem so sánh dữ liệu trước và sau.</p>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </motion.div>
+          </>
+        )}
+      </AnimatePresence>
+    );
+  };
+
+  const renderVoucherForm = () => {
+    const isEdit = isEditingInvoice;
+    const title = isEdit ? `Chỉnh Sửa Phiếu: ${formInvoiceId}` : `Lập Phiếu Mới: ${createInvoiceType.replace('_', ' ')}`;
+    
+    return (
+      <div className="space-y-6 max-w-5xl mx-auto bg-white p-6 rounded-3xl border border-slate-100 shadow-sm animate-fade-in text-left">
+        {/* Form Header */}
+        <div className="flex items-center justify-between pb-4 border-b border-slate-100">
+          <div className="flex items-center gap-3">
+            <button
+              onClick={() => { setIsEditingInvoice(false); setIsCreatingInvoice(false); }}
+              className="p-2 hover:bg-slate-50 rounded-xl border border-slate-200 text-slate-500 hover:text-slate-800 transition-all cursor-pointer"
+              title="Quay lại"
+            >
+              <ArrowLeft className="w-4 h-4" />
+            </button>
+            <div>
+              <h2 className="text-base font-extrabold text-slate-800">{title}</h2>
+              <p className="text-[11px] text-slate-500 font-semibold">
+                {isEdit ? 'Chỉnh sửa chi tiết phiếu và tự động cập nhật lại tồn kho' : 'Tạo mới phiếu nhập/xuất và đồng bộ hóa tức thì'}
+              </p>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => { setIsEditingInvoice(false); setIsCreatingInvoice(false); }}
+              className="px-4 py-2 text-xs font-bold bg-slate-50 hover:bg-slate-100 border border-slate-150 text-slate-600 hover:text-slate-800 rounded-xl transition-all cursor-pointer"
+            >
+              Hủy Bỏ
+            </button>
+            <button
+              onClick={isEdit ? handleSaveInvoiceChanges : handleCreateInvoiceSubmit}
+              className="flex items-center gap-1.5 px-5 py-2 text-xs font-extrabold bg-red-650 hover:bg-red-700 text-white rounded-xl shadow-xs transition-all cursor-pointer"
+            >
+              <Save className="w-4 h-4" />
+              Lưu Phiếu
+            </button>
+          </div>
+        </div>
+
+        {errorMsg && (
+          <div className="p-4 bg-red-50 border border-red-100 text-red-700 rounded-xl text-xs flex items-center gap-2.5 animate-fade-in">
+            <AlertTriangle className="w-4.5 h-4.5 text-red-500 shrink-0" />
+            <span className="font-semibold">{errorMsg}</span>
+          </div>
+        )}
+
+        {/* Header Metadata Info */}
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 bg-slate-50/50 p-4 rounded-2xl border border-slate-100">
+          <div className="space-y-1">
+            <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Chi nhánh thực hiện</label>
+            <select
+              value={formBranch}
+              onChange={(e) => setFormBranch(e.target.value)}
+              className="w-full text-xs font-semibold text-slate-700 bg-white border border-slate-200 rounded-xl px-3 py-2.5 focus:outline-hidden"
+            >
+              {(chiNhanhs.length > 0 ? chiNhanhs : uniqueBranches).map(b => (
+                <option key={b} value={b}>{b}</option>
+              ))}
+            </select>
+          </div>
+
+          <div className="space-y-1">
+            <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Ngày chứng từ</label>
+            <input
+              type="date"
+              value={formDate}
+              onChange={(e) => setFormDate(e.target.value)}
+              className="w-full text-xs font-semibold text-slate-700 bg-white border border-slate-200 rounded-xl px-3 py-2.5 focus:outline-hidden font-mono"
+            />
+          </div>
+
+          <div className="space-y-1">
+            <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Ghi chú chung</label>
+            <input
+              type="text"
+              placeholder="Nhập ghi chú tổng quát..."
+              value={formGhiChu}
+              onChange={(e) => setFormGhiChu(e.target.value)}
+              className="w-full text-xs font-semibold text-slate-700 bg-white border border-slate-200 rounded-xl px-3 py-2.5 focus:outline-hidden"
+            />
+          </div>
+        </div>
+
+        {/* Item Adder Tool */}
+        <div className="p-4 bg-indigo-50/20 border border-indigo-100/50 rounded-2xl space-y-3">
+          <h3 className="text-xs font-bold text-slate-700 flex items-center gap-1.5 uppercase tracking-wide">
+            <Plus className="w-4 h-4 text-indigo-500" /> Bổ Sung Tròng Kính Vào Danh Sách
+          </h3>
+          <div className="grid grid-cols-1 md:grid-cols-12 gap-3 items-end">
+            <div className="md:col-span-5 space-y-1">
+              <label className="text-[9px] font-bold text-slate-400 uppercase tracking-wider">Chọn Tròng Kính (SKU)</label>
+              <select
+                value={editorSearchSku}
+                onChange={(e) => setEditorSearchSku(e.target.value)}
+                className="w-full text-xs font-semibold text-slate-700 bg-white border border-slate-200 rounded-xl px-3 py-2 focus:outline-hidden"
+              >
+                <option value="">-- Chọn tròng kính từ danh mục --</option>
+                {sanPhams.map(p => (
+                  <option key={p.SKU} value={p.SKU}>
+                    [{p.SKU}] {p.TEN_SAN_PHAM} (Kho: {p.TON_CUOI})
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div className="md:col-span-2 space-y-1">
+              <label className="text-[9px] font-bold text-slate-400 uppercase tracking-wider">Số lượng</label>
+              <input
+                type="number"
+                min="1"
+                value={editorAddQty}
+                onChange={(e) => setEditorAddQty(Math.max(1, parseInt(e.target.value, 10) || 1))}
+                className="w-full text-xs font-mono font-bold text-slate-700 bg-white border border-slate-200 rounded-xl px-3 py-2 focus:outline-hidden"
+              />
+            </div>
+
+            <div className="md:col-span-3 space-y-1">
+              <label className="text-[9px] font-bold text-slate-400 uppercase tracking-wider">Ghi chú dòng</label>
+              <input
+                type="text"
+                placeholder="Ví dụ: Giao gấp..."
+                value={editorAddGhiChu}
+                onChange={(e) => setEditorAddGhiChu(e.target.value)}
+                className="w-full text-xs font-semibold text-slate-700 bg-white border border-slate-200 rounded-xl px-3 py-2 focus:outline-hidden"
+              />
+            </div>
+
+            <div className="md:col-span-2">
+              <button
+                type="button"
+                onClick={handleEditorAddItem}
+                className="w-full py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-extrabold text-xs rounded-xl shadow-2xs transition-all cursor-pointer"
+              >
+                Bổ Sung +
+              </button>
+            </div>
+          </div>
+        </div>
+
+        {/* Items Table */}
+        <div className="border border-slate-100 rounded-2xl overflow-hidden">
+          <table className="w-full text-left text-xs border-collapse">
+            <thead>
+              <tr className="bg-slate-50 text-slate-400 font-bold uppercase tracking-wider text-[9px] border-b border-slate-100">
+                <th className="py-2.5 px-4">Thông tin Tròng Kính (SKU)</th>
+                <th className="py-2.5 px-4 w-32">Độ Cầu/Loạn</th>
+                <th className="py-2.5 px-4 w-32 text-center">Số lượng</th>
+                <th className="py-2.5 px-4">Ghi chú mặt hàng</th>
+                <th className="py-2.5 px-4 w-16 text-center">Xóa</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100">
+              {formItems.length === 0 ? (
+                <tr>
+                  <td colSpan={5} className="py-8 text-center text-slate-400 font-medium italic">
+                    Danh sách trống. Hãy chọn và bổ sung tròng kính phía trên.
+                  </td>
+                </tr>
+              ) : (
+                formItems.map((item, index) => (
+                  <tr key={item.SKU} className="hover:bg-slate-50/50">
+                    <td className="py-3 px-4">
+                      <div className="font-bold text-slate-700">{item.TEN_SP}</div>
+                      <div className="text-[10px] text-slate-400 font-mono font-bold mt-0.5">
+                        SKU: {item.SKU} | {item.THUONG_HIEU} | {item.CHIET_XUAT}
+                      </div>
+                    </td>
+                    <td className="py-3 px-4 font-mono text-slate-600 font-semibold">
+                      SPH: {formatDop(item.SPH)}<br/>
+                      CYL: {formatDop(item.CYL)}
+                    </td>
+                    <td className="py-3 px-4">
+                      <div className="flex items-center justify-center gap-1.5">
+                        <button
+                          type="button"
+                          onClick={() => updateItemQtyInForm(item.SKU, Math.max(1, item.SO_LUONG - 1))}
+                          className="w-6 h-6 rounded-full border border-slate-200 flex items-center justify-center text-slate-500 font-bold hover:bg-slate-50 cursor-pointer"
+                        >
+                          -
+                        </button>
+                        <input
+                          type="number"
+                          min="1"
+                          value={item.SO_LUONG}
+                          onChange={(e) => updateItemQtyInForm(item.SKU, Math.max(1, parseInt(e.target.value, 10) || 1))}
+                          className="w-16 text-center font-mono font-bold text-xs border border-slate-200 rounded py-1"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => updateItemQtyInForm(item.SKU, item.SO_LUONG + 1)}
+                          className="w-6 h-6 rounded-full border border-slate-200 flex items-center justify-center text-slate-500 font-bold hover:bg-slate-50 cursor-pointer"
+                        >
+                          +
+                        </button>
+                      </div>
+                    </td>
+                    <td className="py-3 px-4">
+                      <input
+                        type="text"
+                        value={item.GHI_CHU || ''}
+                        onChange={(e) => updateItemNoteInForm(item.SKU, e.target.value)}
+                        placeholder="Nhập ghi chú chi tiết..."
+                        className="w-full border-b border-slate-100 hover:border-slate-300 focus:border-indigo-500 py-1 focus:outline-hidden text-xs text-slate-600 font-semibold"
+                      />
+                    </td>
+                    <td className="py-3 px-4 text-center">
+                      <button
+                        type="button"
+                        onClick={() => removeItemFromForm(item.SKU)}
+                        className="p-1.5 hover:bg-rose-50 text-rose-500 hover:text-rose-700 rounded-lg transition-all cursor-pointer"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    </td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    );
+  };
+
+  if (isEditingInvoice || isCreatingInvoice) {
+    return (
+      <div className="space-y-6">
+        {renderVoucherForm()}
+        {renderAuditLogModal()}
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-6">
-      
+
+      {/* HEADER TAB LỊCH SỬ VỚI CÁC CHỨC NĂNG THÊM PHIẾU CHUYÊN NGHIỆP */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-slate-50 p-4 rounded-2xl border border-slate-150 shadow-2xs">
+        <div className="text-left col-span-2">
+          <h2 className="text-sm font-extrabold text-slate-800 flex items-center gap-2">
+            <History className="w-5 h-5 text-red-650" />
+            Lịch sử & Quản lý Phiếu Nhập Xuất Kho
+          </h2>
+          <p className="text-[11px] text-slate-500 font-semibold leading-normal">
+            Tra cứu, lập mới, chỉnh sửa, hủy phiếu và tự động cập nhật tồn kho an toàn.
+          </p>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-2">
+          {currentUser.writeAccess !== false && (
+            <div className="relative group">
+              <button className="flex items-center gap-1.5 bg-red-650 hover:bg-red-700 text-white font-extrabold text-xs py-2 px-4 rounded-xl shadow-2xs transition-all cursor-pointer">
+                <Plus className="w-4 h-4" />
+                Lập Phiếu Mới
+              </button>
+              <div className="absolute right-0 mt-1.5 w-56 bg-white border border-slate-150 rounded-xl shadow-lg hidden group-hover:block hover:block z-45 py-1.5">
+                <button
+                  onClick={() => handleStartCreateInvoice('NHẬP')}
+                  className="w-full text-left px-4 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 flex items-center gap-2 cursor-pointer"
+                >
+                  <span className="w-2 h-2 rounded-full bg-emerald-500" />
+                  Phiếu Nhập Hàng (PN)
+                </button>
+                <button
+                  onClick={() => handleStartCreateInvoice('XUẤT')}
+                  className="w-full text-left px-4 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 flex items-center gap-2 cursor-pointer"
+                >
+                  <span className="w-2 h-2 rounded-full bg-amber-500" />
+                  Phiếu Xuất Hàng (PX)
+                </button>
+                <button
+                  onClick={() => handleStartCreateInvoice('NHẬP_KIEM_KHO')}
+                  className="w-full text-left px-4 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 flex items-center gap-2 cursor-pointer"
+                >
+                  <span className="w-2 h-2 rounded-full bg-blue-500" />
+                  Phiếu Nhập Kiểm Kho (PNK)
+                </button>
+                <button
+                  onClick={() => handleStartCreateInvoice('XUAT_KIEM_KHO')}
+                  className="w-full text-left px-4 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 flex items-center gap-2 cursor-pointer"
+                >
+                  <span className="w-2 h-2 rounded-full bg-purple-500" />
+                  Phiếu Xuất Kiểm Kho (PXK)
+                </button>
+              </div>
+            </div>
+          )}
+
+          <button
+            onClick={() => setShowAuditLogModal(true)}
+            className="flex items-center gap-1.5 bg-white hover:bg-slate-50 border border-slate-200 text-slate-600 hover:text-slate-800 font-extrabold text-xs py-2 px-4 rounded-xl shadow-2xs transition-all cursor-pointer"
+          >
+            <History className="w-4 h-4 text-slate-400" />
+            Nhật Ký Chỉnh Sửa ({auditLogs.length})
+          </button>
+        </div>
+      </div>
+
       {/* 1. KHU VỰC BỘ LỌC VÀ TÌM KIẾM PHIẾU */}
       <div className="bg-white rounded-2xl border border-slate-100 p-4 shadow-2xs space-y-4">
         
@@ -1342,6 +2170,8 @@ export default function TransactionHistory({
           </div>
         )}
       </AnimatePresence>
+
+      {renderAuditLogModal()}
 
     </div>
   );

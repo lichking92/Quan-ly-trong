@@ -25,7 +25,7 @@ import {
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { SanPham, KiemKho, User as UserType, ThươngHieu } from '../types';
-import { generateSKUString, formatDop, getVietnamDateString, getVietnamDateTimeString, generateSphOptions } from '../data/mockData';
+import { generateSKUString, formatDop, getVietnamDateString, getVietnamDateTimeString, generateSphOptions, cleanSKU, formatSKUForDisplay } from '../data/mockData';
 
 /**
  * FILE: InventoryAudit.tsx
@@ -243,7 +243,7 @@ export default function InventoryAudit({
   }, [selectBrand, selectChietXuat, selectTinhNang, selectDoSph, selectDoCyl]);
 
   const matchedProduct = useMemo(() => {
-    return sanPhams.find(p => p.SKU.toUpperCase() === calculatedSKU.toUpperCase()) || null;
+    return sanPhams.find(p => cleanSKU(p.SKU) === cleanSKU(calculatedSKU)) || null;
   }, [calculatedSKU, sanPhams]);
 
   // Cập nhật tồn thực tế mặc định bằng tồn hệ thống khi sản phẩm thay đổi
@@ -258,8 +258,8 @@ export default function InventoryAudit({
   // --- LỌC SKU ĐỂ SEARCH NHANH ---
   const filteredSKUOptions = useMemo(() => {
     if (!searchSKUQuery) return [];
-    const query = searchSKUQuery.toLowerCase();
-    return sanPhams.filter(p => p.SKU.toLowerCase().includes(query) || p.TEN_SAN_PHAM.toLowerCase().includes(query));
+    const query = cleanSKU(searchSKUQuery).toLowerCase();
+    return sanPhams.filter(p => cleanSKU(p.SKU).toLowerCase().includes(query) || p.TEN_SAN_PHAM.toLowerCase().includes(searchSKUQuery.toLowerCase()));
   }, [sanPhams, searchSKUQuery]);
 
   // --- CHỌN NHANH SẢN PHẨM TỪ SEARCH SKU dropdown ---

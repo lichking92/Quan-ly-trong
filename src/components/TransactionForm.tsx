@@ -126,7 +126,7 @@ export default function TransactionForm({
   // Tự động điền dữ liệu khi có SKU cần restock nhanh từ Dashboard
   useEffect(() => {
     if (prefilledSku) {
-      const found = sanPhams.find(p => p.SKU.toUpperCase() === prefilledSku.toUpperCase());
+      const found = sanPhams.find(p => cleanSKU(p.SKU) === cleanSKU(prefilledSku));
       if (found) {
         setErrorMsg('');
         setLoaiPhieu('NHẬP');
@@ -160,7 +160,7 @@ export default function TransactionForm({
     if (prefilledCartItems && prefilledCartItems.length > 0) {
       const newItems: CartItem[] = [];
       prefilledCartItems.forEach((item, idx) => {
-        const found = sanPhams.find(p => p.SKU.toUpperCase() === item.sku.toUpperCase());
+        const found = sanPhams.find(p => cleanSKU(p.SKU) === cleanSKU(item.sku));
         if (found) {
           newItems.push({
             id: `CART_${Date.now()}_${idx}_${Math.random().toString(36).substr(2, 5)}`,
@@ -337,7 +337,7 @@ export default function TransactionForm({
   // Tìm sản phẩm tương ứng trong cơ sở dữ liệu
   const matchedProductInDB = useMemo(() => {
     if (!calculatedSKU) return null;
-    return sanPhams.find(p => p.SKU.toUpperCase() === calculatedSKU.toUpperCase()) || null;
+    return sanPhams.find(p => cleanSKU(p.SKU) === cleanSKU(calculatedSKU)) || null;
   }, [calculatedSKU, sanPhams]);
 
   // Tên sản phẩm hiển thị thông tin
@@ -370,8 +370,8 @@ export default function TransactionForm({
   // --- 6. XỬ LÝ QUÉT MÃ BARCODE GIẢ LẬP NHANH ---
   const handleApplyBarcode = () => {
     if (!barcodeInput.trim()) return;
-    const skuToFind = barcodeInput.trim().toUpperCase();
-    const found = sanPhams.find(p => p.SKU.toUpperCase() === skuToFind);
+    const skuToFind = barcodeInput.trim();
+    const found = sanPhams.find(p => cleanSKU(p.SKU) === cleanSKU(skuToFind));
     if (found) {
       setErrorMsg('');
       setSelectBrand(found.THUONG_HIEU);
@@ -406,7 +406,7 @@ export default function TransactionForm({
 
     // Tính lượng đã có sẵn trong giỏ của SKU này để kiểm tra tồn dồn tích
     const existingQtyInCart = cart
-      .filter(item => item.sku.toUpperCase() === calculatedSKU.toUpperCase())
+      .filter(item => cleanSKU(item.sku) === cleanSKU(calculatedSKU))
       .reduce((sum, item) => sum + item.soLuong, 0);
 
     const totalRequestedQty = existingQtyInCart + selectSoLuong;
@@ -467,7 +467,7 @@ export default function TransactionForm({
     const errors: Record<string, string> = {};
     cart.forEach(item => {
       if (loaiPhieu === 'XUẤT') {
-        const prod = sanPhams.find(p => p.SKU.toUpperCase() === item.sku.toUpperCase());
+        const prod = sanPhams.find(p => cleanSKU(p.SKU) === cleanSKU(item.sku));
         const stock = prod ? prod.TON_CUOI : 0;
         if (item.soLuong > stock) {
           errors[item.id] = `Yêu cầu (${item.soLuong} miếng) vượt quá tồn kho hiện có (${stock} miếng).`;

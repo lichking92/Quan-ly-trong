@@ -14,6 +14,13 @@
 // Định nghĩa phân quyền người dùng trong hệ thống
 export type UserRole = 'ADMIN' | 'KHO' | 'NHAN_VIEN';
 
+export interface Role {
+  ROLE_CODE: string;    // e.g. 'ADMIN', 'MANAGER', 'STAFF'
+  TEN_ROLE: string;     // Tên vai trò, e.g. 'Quản trị viên', 'Quản lý', 'Nhân viên bán hàng'
+  PERMISSIONS: string[]; // Danh sách mã quyền, e.g. ['dashboard.view', 'product.view', ...]
+  user_id?: string;     // Supabase user_id
+}
+
 export interface User {
   username: string;
   fullName: string;
@@ -23,6 +30,7 @@ export interface User {
   writeAccess?: boolean;  // Có quyền Thêm, Sửa, Xóa hay chỉ xem
   WRITE_ACCESS?: boolean; // Tương thích ngược cho các component dùng chữ hoa
   id?: string;            // Supabase auth user_id
+  ROLES?: string[];       // Danh sách các vai trò được gán theo RBAC
 }
 
 // B_SANPHAM: Lưu trữ thông tin sản phẩm và số lượng tồn kho của từng SKU
@@ -131,6 +139,7 @@ export interface NhanVien {
   TRANG_THAI?: string;     // Trạng thái tài khoản (Hoạt động, khóa...)
   YEU_CAU_RESET?: boolean; // Yêu cầu khôi phục mật khẩu
   NGAY_DANG_KY?: string;   // Ngày đăng ký tài khoản mới
+  ROLES?: string[];        // Danh sách vai trò được gán theo RBAC
 }
 
 // B_EMAILLOG: Nhật ký gửi email thông báo từ hệ thống
@@ -144,3 +153,29 @@ export interface EmailLog {
   LOAI_EMAIL: string; // 'Đăng ký' | 'Phê duyệt' | 'Từ chối' | 'Quên mật khẩu' | 'Khóa tài khoản'
   user_id?: string;
 }
+
+export function safeParseArray(val: any): string[] {
+  if (!val) return [];
+  if (Array.isArray(val)) return val;
+  if (typeof val === 'string') {
+    const trimmed = val.trim();
+    if (trimmed.startsWith('{') && trimmed.endsWith('}')) {
+      return trimmed
+        .slice(1, -1)
+        .split(',')
+        .map(s => s.trim().replace(/^"|"$/g, ''))
+        .filter(Boolean);
+    }
+    if (trimmed.startsWith('[') && trimmed.endsWith(']')) {
+      try {
+        const parsed = JSON.parse(trimmed);
+        if (Array.isArray(parsed)) return parsed;
+      } catch {
+        // ignore
+      }
+    }
+    return [trimmed];
+  }
+  return [];
+}
+

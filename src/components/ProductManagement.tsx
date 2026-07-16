@@ -270,7 +270,8 @@ export default function ProductManagement({ sanPhams = [], onAddProduct, onUpdat
 
   const filteredProducts = useMemo(() => {
     return sanPhams.filter(p => {
-      const matchSearch = p.SKU.toLowerCase().includes(searchTerm.toLowerCase()) || 
+      const cleanedSearch = cleanSKU(searchTerm).toLowerCase();
+      const matchSearch = cleanSKU(p.SKU).toLowerCase().includes(cleanedSearch) || 
                           p.TEN_SAN_PHAM.toLowerCase().includes(searchTerm.toLowerCase());
       const matchBrand = filterBrand === 'Tất cả' || p.THUONG_HIEU === filterBrand;
       
