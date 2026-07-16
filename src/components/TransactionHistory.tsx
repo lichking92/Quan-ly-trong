@@ -223,50 +223,60 @@ export default function TransactionHistory({
       return;
     }
 
-    // Confirm save
-    if (!window.confirm('Xác nhận lưu lại toàn bộ các sửa đổi cho phiếu này? Hệ thống sẽ cập nhật và tự động tính lại tồn kho.')) {
-      return;
-    }
+    // Custom confirm dialog instead of window.confirm
+    setConfirmModal({
+      isOpen: true,
+      title: 'Xác nhận sửa đổi phiếu',
+      message: 'Bạn có chắc chắn muốn lưu lại toàn bộ các sửa đổi cho phiếu này? Hệ thống sẽ cập nhật và tự động tính lại tồn kho.',
+      confirmText: 'Lưu thay đổi',
+      cancelText: 'Hủy bỏ',
+      isDanger: false,
+      onConfirm: () => {
+        setConfirmModal(prev => ({ ...prev, isOpen: false }));
+        try {
+          const newTotalQty = formItems.reduce((sum, d) => sum + d.SO_LUONG, 0);
+          const updatedHeader: NhapXuat = {
+            ...activeHeader,
+            CHI_NHANH: formBranch,
+            NGAY: formDate,
+            GHI_CHU: formGhiChu,
+            TONG_SL: newTotalQty
+          };
 
-    const newTotalQty = formItems.reduce((sum, d) => sum + d.SO_LUONG, 0);
-    const updatedHeader: NhapXuat = {
-      ...activeHeader,
-      CHI_NHANH: formBranch,
-      NGAY: formDate,
-      GHI_CHU: formGhiChu,
-      TONG_SL: newTotalQty
-    };
+          const updatedFormItems = formItems.map(d => ({
+            ...d,
+            CHI_NHANH: formBranch,
+            NGAY: formDate,
+            LOAI: activeHeader.LOAI
+          }));
 
-    const updatedFormItems = formItems.map(d => ({
-      ...d,
-      CHI_NHANH: formBranch,
-      NGAY: formDate,
-      LOAI: activeHeader.LOAI
-    }));
+          const otherDetails = nhapXuatCTs.filter(d => d.HOA_DON !== formInvoiceId);
+          const updatedDetailsList = [...otherDetails, ...updatedFormItems];
 
-    const otherDetails = nhapXuatCTs.filter(d => d.HOA_DON !== formInvoiceId);
-    const updatedDetailsList = [...otherDetails, ...updatedFormItems];
+          const affectedSKUs = Array.from(new Set([
+            ...activeDetails.map(d => d.SKU),
+            ...formItems.map(d => d.SKU)
+          ]));
 
-    const affectedSKUs = Array.from(new Set([
-      ...activeDetails.map(d => d.SKU),
-      ...formItems.map(d => d.SKU)
-    ]));
+          // Perform Update
+          onUpdateTransaction(updatedHeader, updatedDetailsList, affectedSKUs);
 
-    // Perform Update
-    onUpdateTransaction(updatedHeader, updatedFormItems, affectedSKUs);
+          // Save Audit Log
+          addAuditLog(
+            'SỬA', 
+            formInvoiceId, 
+            { header: activeHeader, details: activeDetails }, 
+            { header: updatedHeader, details: updatedFormItems }, 
+            `Chỉnh sửa thông tin phiếu của ${currentUser.username}`
+          );
 
-    // Save Audit Log
-    addAuditLog(
-      'SỬA', 
-      formInvoiceId, 
-      { header: activeHeader, details: activeDetails }, 
-      { header: updatedHeader, details: updatedFormItems }, 
-      `Chỉnh sửa thông tin phiếu của ${currentUser.username}`
-    );
-
-    setIsEditingInvoice(false);
-    setSuccessMsg('Đã lưu chỉnh sửa phiếu và tự động cập nhật tồn kho thành công!');
-    setTimeout(() => setSuccessMsg(''), 3000);
+          setIsEditingInvoice(false);
+          triggerHistoryToast('Sửa phiếu thành công', 'success');
+        } catch (err) {
+          triggerHistoryToast('Thao tác thất bại, vui lòng thử lại', 'error');
+        }
+      }
+    });
   };
 
   // Submit new voucher creation
@@ -296,62 +306,73 @@ export default function TransactionHistory({
       return;
     }
 
-    if (!window.confirm(`Xác nhận lưu phiếu mới (${createInvoiceType.replace('_', ' ')})?`)) {
-      return;
-    }
+    setConfirmModal({
+      isOpen: true,
+      title: 'Xác nhận tạo phiếu mới',
+      message: `Bạn có chắc chắn muốn lưu phiếu mới (${createInvoiceType.replace('_', ' ')})?`,
+      confirmText: 'Tạo phiếu',
+      cancelText: 'Hủy bỏ',
+      isDanger: false,
+      onConfirm: async () => {
+        setConfirmModal(prev => ({ ...prev, isOpen: false }));
+        try {
+          // Predict next Invoice No for Logging
+          let maxNum = 0;
+          nhapXuats.forEach(h => {
+            if (h.HOA_DON.startsWith(prefix)) {
+              const numPart = parseInt(h.HOA_DON.substring(prefix.length), 10);
+              if (!isNaN(numPart) && numPart > maxNum) {
+                maxNum = numPart;
+              }
+            }
+          });
+          const predictedInvoiceId = `${prefix}${String(maxNum + 1).padStart(6, '0')}`;
 
-    // Predict next Invoice No for Logging
-    let maxNum = 0;
-    nhapXuats.forEach(h => {
-      if (h.HOA_DON.startsWith(prefix)) {
-        const numPart = parseInt(h.HOA_DON.substring(prefix.length), 10);
-        if (!isNaN(numPart) && numPart > maxNum) {
-          maxNum = numPart;
+          // Construct mock new header with temp invoice ID
+          const tempId = `${prefix}_temp_${Date.now()}`;
+          const newHeader: NhapXuat = {
+            HOA_DON: tempId,
+            CHI_NHANH: formBranch,
+            NGAY: formDate,
+            LOAI: loai,
+            TONG_SL: formItems.reduce((sum, d) => sum + d.SO_LUONG, 0),
+            NGUOI_TAO: currentUser.username,
+            TEN_NGUOI_TAO: currentUser.fullName || currentUser.username,
+            TG_TAO: new Date().toISOString().replace('T', ' ').substring(0, 19),
+            GHI_CHU: formGhiChu
+          };
+
+          const newDetails: NhapXuatCT[] = formItems.map((item, idx) => ({
+            ...item,
+            ID: `CT_NEW_${Date.now()}_${idx}`,
+            HOA_DON: tempId,
+            LOAI: loai,
+            NGAY: formDate
+          }));
+
+          if (onSaveTransaction) {
+            await onSaveTransaction(newHeader, newDetails);
+
+            // Save Audit Log
+            addAuditLog(
+              'THÊM',
+              predictedInvoiceId,
+              undefined,
+              { header: { ...newHeader, HOA_DON: predictedInvoiceId }, details: newDetails.map(d => ({ ...d, HOA_DON: predictedInvoiceId })) },
+              `Tạo mới phiếu ${prefix} thành công`
+            );
+
+            setIsCreatingInvoice(false);
+            triggerHistoryToast(`Tạo phiếu mới thành công: ${predictedInvoiceId}`, 'success');
+          } else {
+            setErrorMsg('Hệ thống chưa hỗ trợ hàm lưu phiếu mới.');
+            triggerHistoryToast('Thao tác thất bại, vui lòng thử lại', 'error');
+          }
+        } catch (err) {
+          triggerHistoryToast('Thao tác thất bại, vui lòng thử lại', 'error');
         }
       }
     });
-    const predictedInvoiceId = `${prefix}${String(maxNum + 1).padStart(6, '0')}`;
-
-    // Construct mock new header with temp invoice ID
-    const tempId = `${prefix}_temp_${Date.now()}`;
-    const newHeader: NhapXuat = {
-      HOA_DON: tempId,
-      CHI_NHANH: formBranch,
-      NGAY: formDate,
-      LOAI: loai,
-      TONG_SL: formItems.reduce((sum, d) => sum + d.SO_LUONG, 0),
-      NGUOI_TAO: currentUser.username,
-      TEN_NGUOI_TAO: currentUser.fullName || currentUser.username,
-      TG_TAO: new Date().toISOString().replace('T', ' ').substring(0, 19),
-      GHI_CHU: formGhiChu
-    };
-
-    const newDetails: NhapXuatCT[] = formItems.map((item, idx) => ({
-      ...item,
-      ID: `CT_NEW_${Date.now()}_${idx}`,
-      HOA_DON: tempId,
-      LOAI: loai,
-      NGAY: formDate
-    }));
-
-    if (onSaveTransaction) {
-      await onSaveTransaction(newHeader, newDetails);
-
-      // Save Audit Log
-      addAuditLog(
-        'THÊM',
-        predictedInvoiceId,
-        undefined,
-        { header: { ...newHeader, HOA_DON: predictedInvoiceId }, details: newDetails.map(d => ({ ...d, HOA_DON: predictedInvoiceId })) },
-        `Tạo mới phiếu ${prefix} thành công`
-      );
-
-      setIsCreatingInvoice(false);
-      setSuccessMsg(`Tạo phiếu mới thành công: ${predictedInvoiceId}`);
-      setTimeout(() => setSuccessMsg(''), 4000);
-    } else {
-      setErrorMsg('Hệ thống chưa hỗ trợ hàm lưu phiếu mới.');
-    }
   };
 
   // Add a selected product item into form details
@@ -555,6 +576,45 @@ export default function TransactionHistory({
   const [errorMsg, setErrorMsg] = useState<string>('');
   const [successMsg, setSuccessMsg] = useState<string>('');
 
+  // --- CUSTOM DIALOGS & TOAST FOR TRANSACTION HISTORY ---
+  interface ConfirmModalState {
+    isOpen: boolean;
+    title: string;
+    message: string;
+    onConfirm: () => void;
+    onCancel?: () => void;
+    confirmText?: string;
+    cancelText?: string;
+    isDanger?: boolean;
+  }
+  const [confirmModal, setConfirmModal] = useState<ConfirmModalState>({
+    isOpen: false,
+    title: '',
+    message: '',
+    onConfirm: () => {}
+  });
+
+  interface HistoryToastState {
+    show: boolean;
+    message: string;
+    type: 'success' | 'error' | 'warning';
+    id: number;
+  }
+  const [historyToast, setHistoryToast] = useState<HistoryToastState | null>(null);
+
+  const triggerHistoryToast = (message: string, type: 'success' | 'error' | 'warning' = 'success') => {
+    setHistoryToast({ show: true, message, type, id: Date.now() });
+  };
+
+  useEffect(() => {
+    if (historyToast) {
+      const timer = setTimeout(() => {
+        setHistoryToast(null);
+      }, 2000);
+      return () => clearTimeout(timer);
+    }
+  }, [historyToast]);
+
   // --- 2. LỌC DANH SÁCH HÓA ĐƠN HIỂN THỊ ---
   const filteredInvoices = useMemo(() => {
     const list = nhapXuats.filter(h => {
@@ -577,7 +637,17 @@ export default function TransactionHistory({
       if (sortBy === 'HOA_DON') {
         comparison = a.HOA_DON.localeCompare(b.HOA_DON);
       } else {
-        comparison = (a.TG_TAO || a.NGAY).localeCompare(b.TG_TAO || b.NGAY);
+        // Sắp xếp nghiêm ngặt theo Ngày chứng từ (NGAY) trước
+        const dateA = a.NGAY || '';
+        const dateB = b.NGAY || '';
+        comparison = dateA.localeCompare(dateB);
+        
+        // Nếu cùng ngày chứng từ, sắp xếp phụ theo thời gian tạo hoặc số phiếu
+        if (comparison === 0) {
+          const secondaryA = a.TG_TAO || a.HOA_DON;
+          const secondaryB = b.TG_TAO || b.HOA_DON;
+          comparison = secondaryA.localeCompare(secondaryB);
+        }
       }
       return sortOrder === 'asc' ? comparison : -comparison;
     });
@@ -586,13 +656,15 @@ export default function TransactionHistory({
   }, [nhapXuats, historyTypeFilter, searchQuery, sortBy, sortOrder, branchFilter, warehouseFilter, fromDate, toDate]);
 
   const groupedInvoicesByDate = useMemo(() => {
-    const groups: Record<string, NhapXuat[]> = {};
+    const groups: { dateStr: string; invoices: NhapXuat[] }[] = [];
     filteredInvoices.forEach(h => {
       const dateStr = h.NGAY || (h.TG_TAO ? h.TG_TAO.split(' ')[0] : 'Chưa rõ');
-      if (!groups[dateStr]) {
-        groups[dateStr] = [];
+      let group = groups.find(g => g.dateStr === dateStr);
+      if (!group) {
+        group = { dateStr, invoices: [] };
+        groups.push(group);
       }
-      groups[dateStr].push(h);
+      group.invoices.push(h);
     });
     return groups;
   }, [filteredInvoices]);
@@ -816,24 +888,33 @@ export default function TransactionHistory({
       return;
     }
 
-    if (!window.confirm(`Xác nhận xóa dòng sản phẩm [${row.SKU}] khỏi phiếu này? Số tồn kho sẽ tự động tính toán lại.`)) {
-      return;
-    }
+    setConfirmModal({
+      isOpen: true,
+      title: 'Xác nhận xóa sản phẩm',
+      message: 'Bạn có chắc muốn xóa SKU này khỏi phiếu?',
+      confirmText: 'Xóa dòng',
+      cancelText: 'Quay lại',
+      isDanger: true,
+      onConfirm: () => {
+        setConfirmModal(prev => ({ ...prev, isOpen: false }));
+        setErrorMsg('');
+        setSuccessMsg('');
 
-    setErrorMsg('');
-    setSuccessMsg('');
+        try {
+          const updatedDetails = nhapXuatCTs.filter(d => d.ID !== row.ID);
+          const newTotalQty = updatedDetails
+            .filter(d => d.HOA_DON === selectedInvoice)
+            .reduce((sum, d) => sum + d.SO_LUONG, 0);
 
-    const updatedDetails = nhapXuatCTs.filter(d => d.ID !== row.ID);
-    const newTotalQty = updatedDetails
-      .filter(d => d.HOA_DON === selectedInvoice)
-      .reduce((sum, d) => sum + d.SO_LUONG, 0);
+          const updatedHeader = { ...activeHeader, TONG_SL: newTotalQty };
 
-    const updatedHeader = { ...activeHeader, TONG_SL: newTotalQty };
-
-    onUpdateTransaction(updatedHeader, updatedDetails, [row.SKU]);
-
-    setSuccessMsg('Xóa dòng và tái cấu trúc tồn kho thành công!');
-    setTimeout(() => setSuccessMsg(''), 3000);
+          onUpdateTransaction(updatedHeader, updatedDetails, [row.SKU]);
+          triggerHistoryToast('Xóa sản phẩm thành công', 'success');
+        } catch (err) {
+          triggerHistoryToast('Thao tác thất bại, vui lòng thử lại', 'error');
+        }
+      }
+    });
   };
 
   // --- 8. HỦY HOÀN TOÀN CẢ PHIẾU (ROLLBACK) ---
@@ -852,33 +933,43 @@ export default function TransactionHistory({
       return;
     }
 
-    if (!window.confirm(`⚠️ CẢNH BÁO QUAN TRỌNG:\nHành động này sẽ HỦY phiếu ${activeHeader.HOA_DON} và tiến hành HOÀN TỒN KHO (ROLLBACK) của tất cả sản phẩm liên quan.\n\nBạn có chắc chắn muốn tiếp tục thực hiện?`)) {
-      return;
-    }
+    setConfirmModal({
+      isOpen: true,
+      title: 'Xác nhận hủy phiếu',
+      message: `Bạn có chắc muốn hủy phiếu ${activeHeader.HOA_DON}?`,
+      confirmText: 'Hủy phiếu',
+      cancelText: 'Quay lại',
+      isDanger: true,
+      onConfirm: async () => {
+        setConfirmModal(prev => ({ ...prev, isOpen: false }));
+        setErrorMsg('');
+        setSuccessMsg('');
 
-    setErrorMsg('');
-    setSuccessMsg('');
+        const affectedSKUs = activeDetails.map(d => d.SKU);
 
-    const affectedSKUs = activeDetails.map(d => d.SKU);
+        // Save Audit Log
+        addAuditLog(
+          'XÓA',
+          activeHeader.HOA_DON,
+          { header: activeHeader, details: activeDetails },
+          undefined,
+          `Hủy hoàn toàn phiếu bởi ${currentUser.username}`
+        );
 
-    // Save Audit Log
-    addAuditLog(
-      'XÓA',
-      activeHeader.HOA_DON,
-      { header: activeHeader, details: activeDetails },
-      undefined,
-      `Hủy hoàn toàn phiếu bởi ${currentUser.username}`
-    );
+        try {
+          const success = await onDeleteTransaction(activeHeader.HOA_DON, affectedSKUs);
 
-    const success = await onDeleteTransaction(activeHeader.HOA_DON, affectedSKUs);
-
-    if (success) {
-      setSelectedInvoice(null);
-      setSuccessMsg(`✅ Hủy phiếu thành công. Đã hoàn tất Rollback kho cho các sản phẩm liên quan!`);
-      setTimeout(() => setSuccessMsg(''), 4000);
-    } else {
-      setErrorMsg(`❌ Hủy phiếu thất bại. Vui lòng liên hệ quản trị viên.`);
-    }
+          if (success) {
+            setSelectedInvoice(null);
+            triggerHistoryToast('Hủy phiếu thành công', 'success');
+          } else {
+            triggerHistoryToast('Thao tác thất bại, vui lòng thử lại', 'error');
+          }
+        } catch (err) {
+          triggerHistoryToast('Thao tác thất bại, vui lòng thử lại', 'error');
+        }
+      }
+    });
   };
 
   // --- 9. RENDER GIAO DIỆN CHI TIẾT PHIẾU ---
@@ -2028,8 +2119,7 @@ export default function TransactionHistory({
             {filteredInvoices.length > 0 ? (
               isGroupedByDate ? (
                 <div className="space-y-4 p-4">
-                  {Object.entries(groupedInvoicesByDate).map(([dateStr, anyInvoices]) => {
-                    const invoices = anyInvoices as NhapXuat[];
+                  {groupedInvoicesByDate.map(({ dateStr, invoices }) => {
                     const isExpanded = expandedDates[dateStr] !== false;
                     const totalInvoices = invoices.length;
                     const totalQty = invoices.reduce((sum, h) => sum + h.TONG_SL, 0);
@@ -2219,6 +2309,111 @@ export default function TransactionHistory({
       </AnimatePresence>
 
       {renderAuditLogModal()}
+
+      {/* SYSTEM-WIDE ALIGNED CUSTOM CONFIRMATION MODAL */}
+      <AnimatePresence>
+        {confirmModal.isOpen && (
+          <div className="fixed inset-0 z-[10000] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs">
+            <motion.div
+              initial={{ scale: 0.95, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.95, opacity: 0 }}
+              transition={{ duration: 0.2 }}
+              className="bg-white rounded-2xl max-w-sm w-full shadow-2xl overflow-hidden border border-slate-100"
+            >
+              <div className="p-6 space-y-4 text-left">
+                <div className="flex items-start gap-3">
+                  <div className={`p-2 rounded-xl flex-shrink-0 ${confirmModal.isDanger ? 'bg-rose-50 text-rose-600 border border-rose-100' : 'bg-blue-50 text-blue-600 border border-blue-100'}`}>
+                    <AlertTriangle className="w-5 h-5" />
+                  </div>
+                  <div className="space-y-1">
+                    <h3 className="text-sm font-bold text-slate-800 uppercase tracking-wide">
+                      {confirmModal.title}
+                    </h3>
+                    <p className="text-xs text-slate-500 leading-relaxed font-semibold">
+                      {confirmModal.message}
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex justify-end gap-2.5 pt-2">
+                  <button
+                    onClick={() => {
+                      if (confirmModal.onCancel) confirmModal.onCancel();
+                      setConfirmModal(prev => ({ ...prev, isOpen: false }));
+                    }}
+                    className="px-4 py-2 bg-slate-50 hover:bg-slate-100 border border-slate-200 text-slate-600 text-xs font-bold rounded-xl transition-colors cursor-pointer"
+                  >
+                    {confirmModal.cancelText || 'Hủy bỏ'}
+                  </button>
+                  <button
+                    onClick={confirmModal.onConfirm}
+                    className={`px-4 py-2 text-white text-xs font-bold rounded-xl transition-colors cursor-pointer ${
+                      confirmModal.isDanger
+                        ? 'bg-rose-600 hover:bg-rose-700 shadow-xs'
+                        : 'bg-blue-600 hover:bg-blue-700 shadow-xs'
+                    }`}
+                  >
+                    {confirmModal.confirmText || 'Xác nhận'}
+                  </button>
+                </div>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* SYSTEM-WIDE ALIGNED CUSTOM TOAST FOR TRANSACTION HISTORY */}
+      <AnimatePresence>
+        {historyToast && historyToast.show && (
+          <div className="fixed top-5 right-5 z-[9999] p-4 max-w-sm w-full pointer-events-none">
+            <motion.div
+              key={historyToast.id}
+              initial={{ opacity: 0, y: -20, scale: 0.95 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, y: -20, scale: 0.95 }}
+              transition={{ duration: 0.2 }}
+              onClick={() => setHistoryToast(null)}
+              className={`relative w-full bg-slate-900/95 text-white p-4 rounded-xl shadow-2xl flex items-start gap-3 pointer-events-auto border cursor-pointer select-none transition-all duration-200 hover:bg-slate-900 ${
+                historyToast.type === 'error'
+                  ? 'border-rose-500/30 shadow-rose-500/5'
+                  : 'border-emerald-500/30 shadow-emerald-500/5'
+              }`}
+            >
+              <div className="flex-shrink-0 mt-0.5">
+                {historyToast.type === 'error' ? (
+                  <div className="w-9 h-9 rounded-full bg-rose-500/10 text-rose-400 flex items-center justify-center border border-rose-500/20">
+                    <AlertTriangle className="w-5 h-5" />
+                  </div>
+                ) : (
+                  <div className="w-9 h-9 rounded-full bg-emerald-500/10 text-emerald-400 flex items-center justify-center border border-emerald-500/20">
+                    <Check className="w-5 h-5" />
+                  </div>
+                )}
+              </div>
+              
+              <div className="flex-1 pr-6 text-left">
+                <h4 className="font-bold text-sm text-slate-100">
+                  {historyToast.type === 'error' ? 'Thao tác thất bại' : 'Thành công'}
+                </h4>
+                <p className="text-xs text-slate-300 mt-0.5 leading-relaxed font-medium">
+                  {historyToast.message}
+                </p>
+              </div>
+
+              <button 
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setHistoryToast(null);
+                }}
+                className="absolute top-4 right-4 text-slate-400 hover:text-white transition-colors cursor-pointer"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
 
     </div>
   );
