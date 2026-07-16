@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useMemo, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useMemo, useEffect, useRef, useCallback, Component, ReactNode } from 'react';
 
 // Intercept and demote non-fatal network/Supabase errors from console.error to console.warn
 const originalAppError = console.error;
@@ -162,13 +162,87 @@ const DEFAULT_ROLES: Role[] = [
   }
 ];
 
+const deduplicateProducts = (products: SanPham[]): SanPham[] => {
+  const seen = new Set<string>();
+  return products.filter(p => {
+    const sku = cleanSKU(p.SKU);
+    if (seen.has(sku)) return false;
+    seen.add(sku);
+    return true;
+  });
+};
+
+interface ErrorBoundaryProps {
+  children: React.ReactNode;
+  fallbackTitle?: string;
+  key?: React.Key;
+}
+
+interface ErrorBoundaryState {
+  hasError: boolean;
+  error: Error | null;
+}
+
+class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryState> {
+  constructor(props: ErrorBoundaryProps) {
+    super(props);
+    (this as any).state = { hasError: false, error: null };
+  }
+
+  static getDerivedStateFromError(error: Error): ErrorBoundaryState {
+    return { hasError: true, error };
+  }
+
+  componentDidCatch(error: Error, errorInfo: React.ErrorInfo) {
+    console.error("ErrorBoundary caught an error", error, errorInfo);
+  }
+
+  render() {
+    const self = this as any;
+    if (self.state.hasError) {
+      return (
+        <div className="p-6 bg-rose-50 border border-rose-150 rounded-2xl text-rose-800 space-y-4 shadow-xs animate-fade-in max-w-2xl mx-auto my-8">
+          <div className="flex items-start gap-3.5">
+            <div className="w-10 h-10 rounded-full bg-rose-100 flex items-center justify-center text-rose-600 shrink-0 border border-rose-250">
+              <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+              </svg>
+            </div>
+            <div className="space-y-1.5 flex-1 text-left">
+              <h3 className="font-extrabold text-sm text-rose-900">{self.props.fallbackTitle || "Đã xảy ra lỗi không mong muốn"}</h3>
+              <p className="text-[11px] text-rose-700 font-semibold leading-relaxed">
+                Hệ thống gặp lỗi trong quá trình kết xuất (render) cấu trúc giao diện này. Bạn có thể thử chuyển qua tab khác hoặc tải lại trang (F5).
+              </p>
+              {self.state.error && (
+                <pre className="p-3 bg-rose-100 border border-rose-200 rounded-xl text-[10px] font-mono text-rose-900 whitespace-pre-wrap break-all max-h-40 overflow-y-auto mt-2">
+                  {self.state.error.toString()}
+                </pre>
+              )}
+            </div>
+          </div>
+          <div className="flex justify-end pt-1">
+            <button
+              onClick={() => self.setState({ hasError: false, error: null })}
+              className="px-4 py-2 bg-rose-600 hover:bg-rose-700 text-white rounded-xl text-xs font-bold shadow-xs transition-colors cursor-pointer"
+            >
+              Thử tải lại Tab này
+            </button>
+          </div>
+        </div>
+      );
+    }
+
+    return self.props.children;
+  }
+}
+
 export default function App() {
   const ignoreRealtimeRef = useRef<boolean>(false);
 
   // --- 1. KHỞI TẠO STATE CƠ SỞ DỮ LIỆU ĐỒNG BỘ LOCALSTORAGE ---
   const [sanPhams, setSanPhams] = useState<SanPham[]>(() => {
     const saved = localStorage.getItem('B_SANPHAM');
-    return saved ? JSON.parse(saved) : [];
+    return saved ? deduplicateProducts(JSON.parse(saved)) : [];
   });
 
   const [nhapXuats, setNhapXuats] = useState<NhapXuat[]>(() => {
@@ -324,8 +398,9 @@ export default function App() {
       try {
         console.log("Background Polling: Đang âm thầm kiểm tra cập nhật mới...");
         const payload = await ensureUserOnboarded(currentUser.id);
+        const uniqueProducts = deduplicateProducts(payload.sanPhams);
         
-        setSanPhams(payload.sanPhams);
+        setSanPhams(uniqueProducts);
         setNhapXuats(payload.nhapXuats);
         setNhapXuatCTs(payload.nhapXuatCTs);
         setKiemKhos(payload.kiemKhos);
@@ -337,7 +412,7 @@ export default function App() {
           localStorage.setItem('B_ROLE', JSON.stringify(payload.roles));
         }
 
-        localStorage.setItem('B_SANPHAM', JSON.stringify(payload.sanPhams));
+        localStorage.setItem('B_SANPHAM', JSON.stringify(uniqueProducts));
         localStorage.setItem('B_NHAPXUAT', JSON.stringify(payload.nhapXuats));
         localStorage.setItem('B_NHAPXUATCT', JSON.stringify(payload.nhapXuatCTs));
         localStorage.setItem('B_KIEMKHO', JSON.stringify(payload.kiemKhos));
@@ -367,7 +442,8 @@ export default function App() {
     try {
       console.log('Bắt đầu đồng bộ dữ liệu mới nhất từ Supabase Cloud cho tài khoản:', email);
       const payload = await ensureUserOnboarded(userId);
-      setSanPhams(payload.sanPhams);
+      const uniqueProducts = deduplicateProducts(payload.sanPhams);
+      setSanPhams(uniqueProducts);
       setNhapXuats(payload.nhapXuats);
       setNhapXuatCTs(payload.nhapXuatCTs);
       setKiemKhos(payload.kiemKhos);
@@ -380,7 +456,7 @@ export default function App() {
       }
 
       // Lưu trữ đồng bộ tức thì vào LocalStorage để đảm bảo tính sẵn sàng
-      localStorage.setItem('B_SANPHAM', JSON.stringify(payload.sanPhams));
+      localStorage.setItem('B_SANPHAM', JSON.stringify(uniqueProducts));
       localStorage.setItem('B_NHAPXUAT', JSON.stringify(payload.nhapXuats));
       localStorage.setItem('B_NHAPXUATCT', JSON.stringify(payload.nhapXuatCTs));
       localStorage.setItem('B_KIEMKHO', JSON.stringify(payload.kiemKhos));
@@ -509,7 +585,8 @@ export default function App() {
               console.log('Phát hiện thay đổi dữ liệu của bạn trên Supabase Cloud. Tiến hành đồng bộ thời gian thực tự động...');
               try {
                 const payloadDb = await ensureUserOnboarded(userId);
-                setSanPhams(payloadDb.sanPhams);
+                const uniqueProducts = deduplicateProducts(payloadDb.sanPhams);
+                setSanPhams(uniqueProducts);
                 setNhapXuats(payloadDb.nhapXuats);
                 setNhapXuatCTs(payloadDb.nhapXuatCTs);
                 setKiemKhos(payloadDb.kiemKhos);
@@ -518,7 +595,7 @@ export default function App() {
                 setNhanViens(payloadDb.nhanViens);
 
                 // Cập nhật LocalStorage tức thì
-                localStorage.setItem('B_SANPHAM', JSON.stringify(payloadDb.sanPhams));
+                localStorage.setItem('B_SANPHAM', JSON.stringify(uniqueProducts));
                 localStorage.setItem('B_NHAPXUAT', JSON.stringify(payloadDb.nhapXuats));
                 localStorage.setItem('B_NHAPXUATCT', JSON.stringify(payloadDb.nhapXuatCTs));
                 localStorage.setItem('B_KIEMKHO', JSON.stringify(payloadDb.kiemKhos));
@@ -2537,166 +2614,215 @@ export default function App() {
               transition={{ duration: 0.15 }}
               className="h-full"
             >
-              {activeTab === 'DASHBOARD' && hasPermission('dashboard.view') && (
-                <Dashboard 
-                  sanPhams={sanPhams}
-                  nhapXuats={nhapXuats}
-                  nhapXuatCTs={nhapXuatCTs}
-                  chiNhanhs={listBranchNames}
-                  onQuickRestock={(sku) => {
-                    setPrefilledSku(sku);
-                    setActiveTab('TRANSACTION_NHAP'); // Lập phiếu nhập kho trực tiếp
-                  }}
-                />
-              )}
+              <ErrorBoundary key={activeTab} fallbackTitle={`Lỗi kết xuất chức năng ${activeTab}`}>
+                {activeTab === 'ORDER_PARSER' && (hasPermission('export.create') || hasPermission('export.view')) && (
+                  <OrderParser
+                    sanPhams={sanPhams}
+                    brandList={thuongHieus}
+                    onCreateXuatPhieu={(items) => {
+                      setPrefilledCartItems(items);
+                      setActiveTab('TRANSACTION_XUAT');
+                    }}
+                  />
+                )}
 
-              {activeTab === 'PRODUCT' && hasPermission('product.view') && (
-                <ProductManagement 
-                  currentUser={currentUser}
-                  sanPhams={sanPhams}
-                  onAddProduct={handleAddProduct}
-                  onUpdateProduct={handleUpdateProduct}
-                  thuongHieus={listBranchNames}
-                  brandList={thuongHieus}
-                />
-              )}
+                {activeTab === 'TRANSACTION_NHAP' && hasPermission('import.create') && (
+                  <TransactionForm
+                    currentUser={currentUser}
+                    sanPhams={sanPhams}
+                    chiNhanhs={listBranchNames}
+                    thuongHieus={listBrandNames}
+                    brandList={thuongHieus}
+                    loaiPhieuMacDinh="NHẬP"
+                    prefilledSku={prefilledSku || undefined}
+                    onClearPrefilledSku={() => setPrefilledSku(null)}
+                    prefilledCartItems={prefilledCartItems || undefined}
+                    onClearPrefilledCartItems={() => setPrefilledCartItems(null)}
+                    onSaveTransaction={handleSaveTransaction}
+                    onNavigateToHistory={() => setActiveTab('HISTORY')}
+                    onTriggerToast={(msg) => setSuccessToast({ show: true, message: msg, type: 'success' })}
+                  />
+                )}
 
-              {activeTab === 'MATRIX' && hasPermission('product.view') && (
-                <DiopterMatrix 
-                  currentUser={currentUser}
-                  sanPhams={sanPhams}
-                  nhapXuats={nhapXuats}
-                  nhapXuatCTs={nhapXuatCTs}
-                  kiemKhos={kiemKhos}
-                  chiNhanhs={listBranchNames}
-                  thuongHieus={listBrandNames}
-                  brandList={thuongHieus}
-                  onUpdateMatrixCell={handleUpdateMatrixCell}
-                />
-              )}
+                {activeTab === 'TRANSACTION_XUAT' && hasPermission('export.create') && (
+                  <TransactionForm
+                    currentUser={currentUser}
+                    sanPhams={sanPhams}
+                    chiNhanhs={listBranchNames}
+                    thuongHieus={listBrandNames}
+                    brandList={thuongHieus}
+                    loaiPhieuMacDinh="XUẤT"
+                    prefilledSku={prefilledSku || undefined}
+                    onClearPrefilledSku={() => setPrefilledSku(null)}
+                    prefilledCartItems={prefilledCartItems || undefined}
+                    onClearPrefilledCartItems={() => setPrefilledCartItems(null)}
+                    onSaveTransaction={handleSaveTransaction}
+                    onNavigateToHistory={() => setActiveTab('HISTORY')}
+                    onTriggerToast={(msg) => setSuccessToast({ show: true, message: msg, type: 'success' })}
+                  />
+                )}
 
-              {activeTab === 'AUDIT' && hasPermission('inventory.view') && (
-                <InventoryAudit 
-                  currentUser={currentUser}
-                  sanPhams={sanPhams}
-                  kiemKhos={kiemKhos}
-                  onSaveAudit={handleSaveAudit}
-                  thuongHieus={listBrandNames}
-                  brandList={thuongHieus}
-                  chiNhanhs={listBranchNames}
-                />
-              )}
+                {activeTab === 'DASHBOARD' && hasPermission('dashboard.view') && (
+                  <Dashboard 
+                    sanPhams={sanPhams}
+                    nhapXuats={nhapXuats}
+                    nhapXuatCTs={nhapXuatCTs}
+                    chiNhanhs={listBranchNames}
+                    onQuickRestock={(sku) => {
+                      setPrefilledSku(sku);
+                      setActiveTab('TRANSACTION_NHAP'); // Lập phiếu nhập kho trực tiếp
+                    }}
+                  />
+                )}
 
-              {activeTab === 'HISTORY' && (hasPermission('import.view') || hasPermission('export.view')) && (
-                <TransactionHistory 
-                  currentUser={currentUser}
-                  sanPhams={sanPhams}
-                  nhapXuats={
-                    // Nhân viên chỉ được xem lịch sử phiếu của chính bản thân tạo ra
-                    currentUser.role === 'NHAN_VIEN'
-                      ? nhapXuats.filter(h => h.NGUOI_TAO === currentUser.username)
-                      : nhapXuats
-                  }
-                  nhapXuatCTs={nhapXuatCTs}
-                  kiemKhos={kiemKhos}
-                  onUpdateTransaction={handleUpdateTransaction}
-                  onDeleteTransaction={handleDeleteTransaction}
-                  onSaveTransaction={handleSaveTransaction}
-                  chiNhanhs={listBranchNames}
-                  thuongHieus={listBrandNames}
-                />
-              )}
+                {activeTab === 'PRODUCT' && hasPermission('product.view') && (
+                  <ProductManagement 
+                    currentUser={currentUser}
+                    sanPhams={sanPhams}
+                    onAddProduct={handleAddProduct}
+                    onUpdateProduct={handleUpdateProduct}
+                    thuongHieus={listBranchNames}
+                    brandList={thuongHieus}
+                  />
+                )}
 
-              {activeTab === 'CATEGORY' && (hasPermission('user.view') || hasPermission('role.view') || hasPermission('product.edit') || hasPermission('product.create')) && (
-                <CategoryManagement 
-                  currentUser={currentUser}
-                  hasPermission={hasPermission}
-                  thuongHieus={thuongHieus}
-                  chiNhanhs={chiNhanhs}
-                  nhanViens={nhanViens}
-                  emailLogs={emailLogs}
-                  onAddThuongHieu={handleAddThuongHieu}
-                  onAddChiNhanh={handleAddChiNhanh}
-                  onAddNhanVien={handleAddNhanVien}
-                  onUpdateThuongHieu={handleUpdateThuongHieu}
-                  onDeleteThuongHieu={handleDeleteThuongHieu}
-                  onUpdateChiNhanh={handleUpdateChiNhanh}
-                  onDeleteChiNhanh={handleDeleteChiNhanh}
-                  onUpdateNhanVien={handleUpdateNhanVien}
-                  onDeleteNhanVien={handleDeleteNhanVien}
-                  roles={roles}
-                  onAddRole={async (r) => {
-                    ignoreRealtimeRef.current = true;
-                    try {
-                      const res = await syncRole(r, currentUser.id);
-                      if (res.error) {
-                        setSyncError({
-                          table: 'b_role',
-                          action: 'Thêm vai trò mới',
-                          message: res.error.message || JSON.stringify(res.error)
-                        });
-                        throw new Error(res.error.message || "Lỗi lưu lên Supabase");
-                      }
-                      await reloadRoles();
-                    } finally {
-                      setTimeout(() => {
-                        ignoreRealtimeRef.current = false;
-                      }, 1000);
+                {activeTab === 'MATRIX' && hasPermission('product.view') && (
+                  <DiopterMatrix 
+                    currentUser={currentUser}
+                    sanPhams={sanPhams}
+                    nhapXuats={nhapXuats}
+                    nhapXuatCTs={nhapXuatCTs}
+                    kiemKhos={kiemKhos}
+                    chiNhanhs={listBranchNames}
+                    thuongHieus={listBrandNames}
+                    brandList={thuongHieus}
+                    onUpdateMatrixCell={handleUpdateMatrixCell}
+                  />
+                )}
+
+                {activeTab === 'AUDIT' && hasPermission('inventory.view') && (
+                  <InventoryAudit 
+                    currentUser={currentUser}
+                    sanPhams={sanPhams}
+                    kiemKhos={kiemKhos}
+                    onSaveAudit={handleSaveAudit}
+                    thuongHieus={listBrandNames}
+                    brandList={thuongHieus}
+                    chiNhanhs={listBranchNames}
+                  />
+                )}
+
+                {activeTab === 'HISTORY' && (hasPermission('import.view') || hasPermission('export.view')) && (
+                  <TransactionHistory 
+                    currentUser={currentUser}
+                    sanPhams={sanPhams}
+                    nhapXuats={
+                      // Nhân viên chỉ được xem lịch sử phiếu của chính bản thân tạo ra
+                      currentUser.role === 'NHAN_VIEN'
+                        ? nhapXuats.filter(h => h.NGUOI_TAO === currentUser.username)
+                        : nhapXuats
                     }
-                  }}
-                  onUpdateRole={async (r) => {
-                    ignoreRealtimeRef.current = true;
-                    try {
-                      const res = await syncRole(r, currentUser.id);
-                      if (res.error) {
-                        setSyncError({
-                          table: 'b_role',
-                          action: 'Cập nhật vai trò',
-                          message: res.error.message || JSON.stringify(res.error)
-                        });
-                        throw new Error(res.error.message || "Lỗi cập nhật trên Supabase");
-                      }
-                      await reloadRoles();
-                    } finally {
-                      setTimeout(() => {
-                        ignoreRealtimeRef.current = false;
-                      }, 1000);
-                    }
-                  }}
-                  onDeleteRole={async (roleCode) => {
-                    ignoreRealtimeRef.current = true;
-                    try {
-                      const res = await deleteRole(roleCode, currentUser.id);
-                      if (res.error) {
-                        setSyncError({
-                          table: 'b_role',
-                          action: 'Xóa vai trò',
-                          message: res.error.message || JSON.stringify(res.error)
-                        });
-                        throw new Error(res.error.message || "Lỗi xóa trên Supabase");
-                      }
-                      await reloadRoles();
-                    } finally {
-                      setTimeout(() => {
-                        ignoreRealtimeRef.current = false;
-                      }, 1000);
-                    }
-                  }}
-                  onTriggerToast={(message, type) => {
-                    setSuccessToast({ show: true, message, type: type || 'success' });
-                  }}
-                />
-              )}
+                    nhapXuatCTs={nhapXuatCTs}
+                    kiemKhos={kiemKhos}
+                    onUpdateTransaction={handleUpdateTransaction}
+                    onDeleteTransaction={handleDeleteTransaction}
+                    onSaveTransaction={handleSaveTransaction}
+                    chiNhanhs={listBranchNames}
+                    thuongHieus={listBrandNames}
+                  />
+                )}
 
-              {activeTab === 'SETTINGS' && (
-                <ThemeSettings 
-                  currentUser={currentUser}
-                  themeMode={themeMode}
-                  accentColor={accentColor}
-                  onUpdateTheme={handleUpdateTheme}
-                  onUpdatePassword={handleUpdatePassword}
-                />
-              )}
+                {activeTab === 'CATEGORY' && (hasPermission('user.view') || hasPermission('role.view') || hasPermission('product.edit') || hasPermission('product.create')) && (
+                  <CategoryManagement 
+                    currentUser={currentUser}
+                    hasPermission={hasPermission}
+                    thuongHieus={thuongHieus}
+                    chiNhanhs={chiNhanhs}
+                    nhanViens={nhanViens}
+                    emailLogs={emailLogs}
+                    onAddThuongHieu={handleAddThuongHieu}
+                    onAddChiNhanh={handleAddChiNhanh}
+                    onAddNhanVien={handleAddNhanVien}
+                    onUpdateThuongHieu={handleUpdateThuongHieu}
+                    onDeleteThuongHieu={handleDeleteThuongHieu}
+                    onUpdateChiNhanh={handleUpdateChiNhanh}
+                    onDeleteChiNhanh={handleDeleteChiNhanh}
+                    onUpdateNhanVien={handleUpdateNhanVien}
+                    onDeleteNhanVien={handleDeleteNhanVien}
+                    roles={roles}
+                    onAddRole={async (r) => {
+                      ignoreRealtimeRef.current = true;
+                      try {
+                        const res = await syncRole(r, currentUser.id);
+                        if (res.error) {
+                          setSyncError({
+                            table: 'b_role',
+                            action: 'Thêm vai trò mới',
+                            message: res.error.message || JSON.stringify(res.error)
+                          });
+                          throw new Error(res.error.message || "Lỗi lưu lên Supabase");
+                        }
+                        await reloadRoles();
+                      } finally {
+                        setTimeout(() => {
+                          ignoreRealtimeRef.current = false;
+                        }, 1000);
+                      }
+                    }}
+                    onUpdateRole={async (r) => {
+                      ignoreRealtimeRef.current = true;
+                      try {
+                        const res = await syncRole(r, currentUser.id);
+                        if (res.error) {
+                          setSyncError({
+                            table: 'b_role',
+                            action: 'Cập nhật vai trò',
+                            message: res.error.message || JSON.stringify(res.error)
+                          });
+                          throw new Error(res.error.message || "Lỗi cập nhật trên Supabase");
+                        }
+                        await reloadRoles();
+                      } finally {
+                        setTimeout(() => {
+                          ignoreRealtimeRef.current = false;
+                        }, 1000);
+                      }
+                    }}
+                    onDeleteRole={async (roleCode) => {
+                      ignoreRealtimeRef.current = true;
+                      try {
+                        const res = await deleteRole(roleCode, currentUser.id);
+                        if (res.error) {
+                          setSyncError({
+                            table: 'b_role',
+                            action: 'Xóa vai trò',
+                            message: res.error.message || JSON.stringify(res.error)
+                          });
+                          throw new Error(res.error.message || "Lỗi xóa trên Supabase");
+                        }
+                        await reloadRoles();
+                      } finally {
+                        setTimeout(() => {
+                          ignoreRealtimeRef.current = false;
+                        }, 1000);
+                      }
+                    }}
+                    onTriggerToast={(message, type) => {
+                      setSuccessToast({ show: true, message, type: type || 'success' });
+                    }}
+                  />
+                )}
+
+                {activeTab === 'SETTINGS' && (
+                  <ThemeSettings 
+                    currentUser={currentUser}
+                    themeMode={themeMode}
+                    accentColor={accentColor}
+                    onUpdateTheme={handleUpdateTheme}
+                    onUpdatePassword={handleUpdatePassword}
+                  />
+                )}
+              </ErrorBoundary>
             </motion.div>
           </AnimatePresence>
         </main>

@@ -1635,7 +1635,7 @@ export default function TransactionHistory({
                 </tr>
               ) : (
                 formItems.map((item, index) => (
-                  <tr key={item.SKU} className="hover:bg-slate-50/50">
+                  <tr key={item.ID || `${item.SKU}-${index}`} className="hover:bg-slate-50/50">
                     <td className="py-3 px-4">
                       <div className="font-bold text-slate-700">{item.TEN_SP}</div>
                       <div className="text-[10px] text-slate-400 font-mono font-bold mt-0.5">
