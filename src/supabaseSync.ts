@@ -715,7 +715,7 @@ export async function fetchAllUserData(userId: string): Promise<UserDataPayload>
     CHI_NHANH: item.CHI_NHANH,
     EMAIL: item.EMAIL,
     ROLE: item.ROLE,
-    PERMISSIONS: item.PERMISSIONS || [],
+    PERMISSIONS: safeParseArray(item.PERMISSIONS),
     WRITE_ACCESS: item.WRITE_ACCESS ?? false,
     TEN_DANG_NHAP: item.TEN_DANG_NHAP || '',
     MAT_KHAU: item.MAT_KHAU || '',
@@ -728,7 +728,7 @@ export async function fetchAllUserData(userId: string): Promise<UserDataPayload>
   const roles: Role[] = (resRoles?.data || []).map((item: any) => ({
     ROLE_CODE: item.ROLE_CODE,
     TEN_ROLE: item.TEN_ROLE,
-    PERMISSIONS: item.PERMISSIONS || []
+    PERMISSIONS: safeParseArray(item.PERMISSIONS)
   }));
 
   return {

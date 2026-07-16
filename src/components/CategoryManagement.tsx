@@ -52,6 +52,7 @@ interface CategoryManagementProps {
   onUpdateRole?: (role: Role) => Promise<void>;
   onDeleteRole?: (roleCode: string) => Promise<void>;
   hasPermission?: (permissionCode: string) => boolean;
+  onTriggerToast?: (message: string, type?: 'success' | 'warning' | 'error') => void;
 }
 
 const PERMISSION_MAP: Record<string, string> = {
@@ -100,7 +101,8 @@ export default function CategoryManagement({
   onAddRole,
   onUpdateRole,
   onDeleteRole,
-  hasPermission
+  hasPermission,
+  onTriggerToast
 }: CategoryManagementProps) {
   
   const hasPerm = (p: string) => {
@@ -249,6 +251,7 @@ export default function CategoryManagement({
   const [newRoleCode, setNewRoleCode] = useState<string>('');
   const [newRoleName, setNewRoleName] = useState<string>('');
   const [newRolePermissions, setNewRolePermissions] = useState<string[]>([]);
+  const [roleToDelete, setRoleToDelete] = useState<string | null>(null);
 
   const handleAddFeature = () => {
     const val = featureInput.trim();
@@ -633,16 +636,26 @@ export default function CategoryManagement({
       if (editingRole) {
         if (onUpdateRole) {
           await onUpdateRole(roleRecord);
-          setSuccessMsg(`Đã cập nhật vai trò [${newRoleName}] thành công!`);
+          if (onTriggerToast) {
+            onTriggerToast(`Đã cập nhật vai trò [${newRoleName}] thành công!`, 'success');
+          } else {
+            setSuccessMsg(`Đã cập nhật vai trò [${newRoleName}] thành công!`);
+          }
         }
       } else {
         if (roles.some(r => r.ROLE_CODE === code)) {
-          setErrorMsg(`Mã vai trò [${code}] đã tồn tại.`);
+          const errMsg = `Mã vai trò [${code}] đã tồn tại.`;
+          setErrorMsg(errMsg);
+          if (onTriggerToast) onTriggerToast(errMsg, 'warning');
           return;
         }
         if (onAddRole) {
           await onAddRole(roleRecord);
-          setSuccessMsg(`Đã thêm mới vai trò [${newRoleName}] thành công!`);
+          if (onTriggerToast) {
+            onTriggerToast(`Đã thêm mới vai trò [${newRoleName}] thành công!`, 'success');
+          } else {
+            setSuccessMsg(`Đã thêm mới vai trò [${newRoleName}] thành công!`);
+          }
         }
       }
       setEditingRole(null);
@@ -651,7 +664,11 @@ export default function CategoryManagement({
       setNewRolePermissions([]);
       setTimeout(() => setSuccessMsg(''), 3000);
     } catch (err: any) {
-      setErrorMsg(`Lỗi xử lý vai trò: ${err.message || err}`);
+      const errMsg = `Lỗi xử lý vai trò: ${err.message || err}`;
+      setErrorMsg(errMsg);
+      if (onTriggerToast) {
+        onTriggerToast(errMsg, 'error');
+      }
     }
   };
 
@@ -664,19 +681,57 @@ export default function CategoryManagement({
 
   const handleDeleteRoleClick = async (roleCode: string) => {
     if (roleCode === 'ADMIN') {
-      setErrorMsg('Không thể xóa vai trò ADMIN hệ thống.');
-      setTimeout(() => setErrorMsg(''), 3000);
+      if (onTriggerToast) {
+        onTriggerToast('Không thể xóa vai trò ADMIN hệ thống.', 'warning');
+      } else {
+        setErrorMsg('Không thể xóa vai trò ADMIN hệ thống.');
+        setTimeout(() => setErrorMsg(''), 3000);
+      }
       return;
     }
-    if (confirm(`Bạn có chắc chắn muốn xóa vai trò [${roleCode}]?`)) {
-      try {
-        if (onDeleteRole) {
-          await onDeleteRole(roleCode);
-          setSuccessMsg(`Đã xóa vai trò [${roleCode}] thành công.`);
+
+    // Kiểm tra xem vai trò có đang được gán cho nhân viên nào hay không
+    const isRoleInUse = nhanViens.some(nv => {
+      if (nv.ROLE === roleCode) return true;
+      const parsedRoles = Array.isArray(nv.ROLES) ? nv.ROLES : (typeof nv.ROLES === 'string' ? safeParseArray(nv.ROLES) : []);
+      if (parsedRoles.includes(roleCode)) return true;
+      return false;
+    });
+
+    if (isRoleInUse) {
+      if (onTriggerToast) {
+        onTriggerToast('Không thể xóa vai trò đang được sử dụng', 'error');
+      } else {
+        setErrorMsg('Không thể xóa vai trò đang được sử dụng.');
+        setTimeout(() => setErrorMsg(''), 3000);
+      }
+      return;
+    }
+
+    // Mở Modal xác nhận xóa
+    setRoleToDelete(roleCode);
+  };
+
+  const handleConfirmDeleteRole = async () => {
+    if (!roleToDelete) return;
+    const code = roleToDelete;
+    setRoleToDelete(null);
+
+    try {
+      if (onDeleteRole) {
+        await onDeleteRole(code);
+        if (onTriggerToast) {
+          onTriggerToast('Xóa vai trò thành công', 'success');
+        } else {
+          setSuccessMsg(`Đã xóa vai trò [${code}] thành công.`);
           setTimeout(() => setSuccessMsg(''), 3000);
         }
-      } catch (err: any) {
-        setErrorMsg(`Lỗi khi xóa vai trò: ${err.message || err}`);
+      }
+    } catch (err: any) {
+      const errMsg = `Lỗi khi xóa vai trò: ${err.message || err}`;
+      setErrorMsg(errMsg);
+      if (onTriggerToast) {
+        onTriggerToast(errMsg, 'error');
       }
     }
   };
@@ -2487,6 +2542,49 @@ export default function CategoryManagement({
                     Đóng cửa sổ
                   </button>
                 </div>
+              </div>
+            </motion.div>
+          </div>
+        )}
+
+        {/* 6. Custom Confirmation Delete Role Modal */}
+        {roleToDelete && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/60 backdrop-blur-xs">
+            <motion.div
+              initial={{ scale: 0.95, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.95, opacity: 0 }}
+              className="bg-white rounded-2xl max-w-sm w-full shadow-2xl overflow-hidden border border-slate-100 p-6 space-y-4"
+            >
+              <div className="flex items-center gap-3 text-red-600">
+                <div className="p-2 bg-red-50 rounded-full">
+                  <Trash2 className="w-6 h-6" />
+                </div>
+                <h3 className="font-sans font-bold text-slate-800 text-sm uppercase">
+                  Xác nhận xóa vai trò
+                </h3>
+              </div>
+
+              <p className="text-xs text-slate-600 leading-relaxed">
+                Bạn có chắc chắn muốn xóa vai trò <strong className="text-slate-800 font-bold">[{roleToDelete}]</strong>? 
+                Hành động này sẽ xóa vĩnh viễn cấu hình quyền hạn này trên hệ thống Supabase Cloud và không thể hoàn tác.
+              </p>
+
+              <div className="flex justify-end gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setRoleToDelete(null)}
+                  className="py-2 px-4 bg-slate-100 hover:bg-slate-200 text-slate-600 text-xs font-bold rounded-xl cursor-pointer transition-all"
+                >
+                  Hủy bỏ
+                </button>
+                <button
+                  type="button"
+                  onClick={handleConfirmDeleteRole}
+                  className="py-2 px-4 bg-red-600 hover:bg-red-700 text-white text-xs font-bold rounded-xl cursor-pointer transition-all shadow-sm"
+                >
+                  Đồng ý xóa
+                </button>
               </div>
             </motion.div>
           </div>

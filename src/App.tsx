@@ -819,6 +819,30 @@ export default function App() {
     }
   };
 
+  const reloadRoles = async () => {
+    try {
+      const uId = await getUserId();
+      if (!uId) return;
+      const { data, error } = await supabase
+        .from('b_role')
+        .select('*')
+        .eq('user_id', uId);
+      if (error) throw error;
+      if (data) {
+        const parsedRoles = data.map((item: any) => ({
+          ROLE_CODE: item.ROLE_CODE,
+          TEN_ROLE: item.TEN_ROLE,
+          PERMISSIONS: safeParseArray(item.PERMISSIONS)
+        }));
+        setRoles(parsedRoles);
+        localStorage.setItem('B_ROLE', JSON.stringify(parsedRoles));
+        console.log("Đã tải lại danh sách vai trò từ Supabase thành công:", parsedRoles);
+      }
+    } catch (err) {
+      console.error("Lỗi tải lại danh sách vai trò từ Supabase:", err);
+    }
+  };
+
   // --- 5. HÀM THAO TÁC NGHIỆP VỤ (VỚI COMMENT SÂU SẮC NHƯ LÃO TƯỚNG 30 NĂM TUỔI NGHỀ) ---
 
   /**
@@ -2613,19 +2637,43 @@ export default function App() {
                   onDeleteNhanVien={handleDeleteNhanVien}
                   roles={roles}
                   onAddRole={async (r) => {
-                    const updated = [...roles, r];
-                    setRoles(updated);
-                    await syncRole(r, currentUser.id);
+                    const res = await syncRole(r, currentUser.id);
+                    if (res.error) {
+                      setSyncError({
+                        table: 'b_role',
+                        action: 'Thêm vai trò mới',
+                        message: res.error.message || JSON.stringify(res.error)
+                      });
+                      throw new Error(res.error.message || "Lỗi lưu lên Supabase");
+                    }
+                    await reloadRoles();
                   }}
                   onUpdateRole={async (r) => {
-                    const updated = roles.map(item => item.ROLE_CODE === r.ROLE_CODE ? r : item);
-                    setRoles(updated);
-                    await syncRole(r, currentUser.id);
+                    const res = await syncRole(r, currentUser.id);
+                    if (res.error) {
+                      setSyncError({
+                        table: 'b_role',
+                        action: 'Cập nhật vai trò',
+                        message: res.error.message || JSON.stringify(res.error)
+                      });
+                      throw new Error(res.error.message || "Lỗi cập nhật trên Supabase");
+                    }
+                    await reloadRoles();
                   }}
                   onDeleteRole={async (roleCode) => {
-                    const updated = roles.filter(item => item.ROLE_CODE !== roleCode);
-                    setRoles(updated);
-                    await deleteRole(roleCode, currentUser.id);
+                    const res = await deleteRole(roleCode, currentUser.id);
+                    if (res.error) {
+                      setSyncError({
+                        table: 'b_role',
+                        action: 'Xóa vai trò',
+                        message: res.error.message || JSON.stringify(res.error)
+                      });
+                      throw new Error(res.error.message || "Lỗi xóa trên Supabase");
+                    }
+                    await reloadRoles();
+                  }}
+                  onTriggerToast={(message, type) => {
+                    setSuccessToast({ show: true, message, type: type || 'success' });
                   }}
                 />
               )}
