@@ -190,11 +190,29 @@ export async function tryCreateColumnsOnSupabase() {
       -- Tạo bảng b_role nếu chưa có để lưu cấu hình vai trò và quyền hạn
       BEGIN
         CREATE TABLE IF NOT EXISTS public.b_role (
-          "ROLE_CODE" text PRIMARY KEY,
+          "ROLE_CODE" text,
           "TEN_ROLE" text,
           "PERMISSIONS" text[],
-          user_id uuid
+          user_id uuid,
+          PRIMARY KEY ("ROLE_CODE", "user_id")
         );
+      EXCEPTION WHEN others THEN NULL;
+      END;
+
+      -- Đảm bảo b_role cũ có user_id không null để chuyển đổi khóa chính composite và tắt RLS để ghi dữ liệu hoạt động bình thường
+      BEGIN
+        UPDATE public.b_role SET user_id = '00000000-0000-0000-0000-000000000000'::uuid WHERE user_id IS NULL;
+        ALTER TABLE public.b_role ALTER COLUMN user_id SET NOT NULL;
+        IF EXISTS (
+          SELECT 1 
+          FROM information_schema.table_constraints tc 
+          WHERE tc.constraint_name = 'b_role_pkey' 
+            AND tc.table_name = 'b_role'
+        ) THEN
+          ALTER TABLE public.b_role DROP CONSTRAINT IF EXISTS b_role_pkey;
+          ALTER TABLE public.b_role ADD CONSTRAINT b_role_composite_pkey PRIMARY KEY ("ROLE_CODE", "user_id");
+        END IF;
+        ALTER TABLE public.b_role DISABLE ROW LEVEL SECURITY;
       EXCEPTION WHEN others THEN NULL;
       END;
 
@@ -381,6 +399,54 @@ export async function ensureUserOnboarded(userId: string): Promise<UserDataPaylo
           user_id: userId
         });
       }
+    }
+
+    // --- ĐỒNG BỘ HOẶC KHỞI TẠO VAI TRÒ NẾU BẢNG TRỐNG TRÊN SUPABASE ---
+    const { data: dbRoles, error: rolesErr } = await supabase
+      .from('b_role')
+      .select('ROLE_CODE')
+      .eq('user_id', userId)
+      .limit(1);
+
+    if (!rolesErr && (!dbRoles || dbRoles.length === 0)) {
+      console.log('Bảng b_role trống trên Supabase, tiến hành seed các vai trò...');
+      const localRolesStr = localStorage.getItem('B_ROLE');
+      let rolesToSeed = [];
+      if (localRolesStr) {
+        try {
+          rolesToSeed = JSON.parse(localRolesStr);
+        } catch {
+          // bỏ qua
+        }
+      }
+      if (!rolesToSeed || rolesToSeed.length === 0) {
+        rolesToSeed = [
+          {
+            "ROLE_CODE": "ADMIN",
+            "TEN_ROLE": "Quản trị viên (Admin)",
+            "PERMISSIONS": ["DASHBOARD", "PRODUCT", "TRANSACTION", "HISTORY", "AUDIT", "CATEGORY", "role.create", "role.edit", "role.delete"]
+          },
+          {
+            "ROLE_CODE": "MANAGER",
+            "TEN_ROLE": "Quản lý Kho",
+            "PERMISSIONS": ["DASHBOARD", "PRODUCT", "TRANSACTION", "HISTORY", "AUDIT", "CATEGORY"]
+          },
+          {
+            "ROLE_CODE": "STAFF",
+            "TEN_ROLE": "Nhân viên Bán hàng",
+            "PERMISSIONS": ["DASHBOARD", "PRODUCT", "TRANSACTION", "HISTORY"]
+          }
+        ];
+      }
+      for (const r of rolesToSeed) {
+        await supabase.from('b_role').insert({
+          "ROLE_CODE": r.ROLE_CODE,
+          "TEN_ROLE": r.TEN_ROLE,
+          "PERMISSIONS": r.PERMISSIONS || [],
+          user_id: userId
+        });
+      }
+      console.log('Seed vai trò hoàn tất.');
     }
 
   } catch (err) {
@@ -1279,7 +1345,13 @@ export async function deleteRole(roleCode: string, userId: string) {
     return { error: null };
   }
   userId = await resolveEffectiveUserId();
+  
+  // Xóa với user_id hiện tại
   let res = await supabase.from('b_role').delete().eq('ROLE_CODE', roleCode).eq('user_id', userId);
+  
+  // Đồng thời xóa với user_id mặc định dự phòng '00000000-0000-0000-0000-000000000000' nếu có
+  await supabase.from('b_role').delete().eq('ROLE_CODE', roleCode).eq('user_id', '00000000-0000-0000-0000-000000000000');
+
   if (res.error) {
     console.warn("Thử xóa b_role bằng user_id thất bại, thử xóa trực tiếp bằng ROLE_CODE", res.error);
     const res2 = await supabase.from('b_role').delete().eq('ROLE_CODE', roleCode);

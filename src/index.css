@@ -1,7 +1,7 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap');
 @import "tailwindcss";
 
 /* Thiết lập font chữ hiển thị và biến CSS nâng cao */
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap');
 
 @theme {
   --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
@@ -69,7 +69,7 @@
 .dark-theme .bg-slate-950,
 .dark-theme .bg-gray-900,
 .dark-theme .bg-gray-950,
-.dark-theme .bg-[#0f172a],
+.dark-theme .bg-\[\#0f172a\],
 .dark-theme .bg-black {
   background-color: var(--bg-main) !important;
 }
@@ -207,9 +207,9 @@
 /* 1. Trạng thái Đỏ / Hết hàng / Nguy cấp */
 .dark-theme .bg-red-50,
 .dark-theme .bg-red-100,
-.dark-theme .bg-red-500/10,
-.dark-theme .bg-red-600/10,
-.dark-theme .bg-red-650/10 {
+.dark-theme .bg-red-500\/10,
+.dark-theme .bg-red-600\/10,
+.dark-theme .bg-red-650\/10 {
   background-color: rgba(239, 68, 68, 0.18) !important;
   color: #fca5a5 !important;
   border-color: rgba(239, 68, 68, 0.35) !important;
@@ -227,8 +227,8 @@
 .dark-theme .bg-rose-100,
 .dark-theme .bg-rose-100\/80,
 .dark-theme .bg-rose-200,
-.dark-theme .bg-rose-500/10,
-.dark-theme .bg-rose-600/10 {
+.dark-theme .bg-rose-500\/10,
+.dark-theme .bg-rose-600\/10 {
   background-color: rgba(244, 63, 94, 0.2) !important;
   color: #fda4af !important;
   border-color: rgba(244, 63, 94, 0.35) !important;
@@ -244,8 +244,8 @@
 .dark-theme .bg-orange-50,
 .dark-theme .bg-orange-100,
 .dark-theme .bg-orange-100\/80,
-.dark-theme .bg-orange-500/10,
-.dark-theme .bg-orange-600/10 {
+.dark-theme .bg-orange-500\/10,
+.dark-theme .bg-orange-600\/10 {
   background-color: rgba(249, 115, 22, 0.18) !important;
   color: #fed7aa !important;
   border-color: rgba(249, 115, 22, 0.35) !important;
@@ -261,7 +261,7 @@
 .dark-theme .bg-yellow-50\/70,
 .dark-theme .bg-yellow-100,
 .dark-theme .bg-yellow-100\/80,
-.dark-theme .bg-yellow-500/10 {
+.dark-theme .bg-yellow-500\/10 {
   background-color: rgba(234, 179, 8, 0.15) !important;
   color: #fef08a !important;
   border-color: rgba(234, 179, 8, 0.3) !important;
@@ -276,8 +276,8 @@
 
 .dark-theme .bg-amber-50,
 .dark-theme .bg-amber-100,
-.dark-theme .bg-amber-500/10,
-.dark-theme .bg-amber-600/10,
+.dark-theme .bg-amber-500\/10,
+.dark-theme .bg-amber-600\/10,
 .dark-theme .bg-amber-100\/80 {
   background-color: rgba(245, 158, 11, 0.18) !important;
   color: #fde68a !important;
@@ -295,8 +295,8 @@
 .dark-theme .bg-emerald-50,
 .dark-theme .bg-emerald-100,
 .dark-theme .bg-emerald-100\/80,
-.dark-theme .bg-emerald-500/10,
-.dark-theme .bg-emerald-600/10 {
+.dark-theme .bg-emerald-500\/10,
+.dark-theme .bg-emerald-600\/10 {
   background-color: rgba(16, 185, 129, 0.18) !important;
   color: #a7f3d0 !important;
   border-color: rgba(16, 185, 129, 0.35) !important;
@@ -312,7 +312,7 @@
 .dark-theme .bg-blue-50,
 .dark-theme .bg-blue-100,
 .dark-theme .bg-blue-100\/40,
-.dark-theme .bg-blue-500/10 {
+.dark-theme .bg-blue-500\/10 {
   background-color: rgba(59, 130, 246, 0.18) !important;
   color: #93c5fd !important;
   border-color: rgba(59, 130, 246, 0.35) !important;
@@ -327,7 +327,7 @@
 /* 5. Trạng thái Tím / Indigo */
 .dark-theme .bg-purple-50,
 .dark-theme .bg-purple-100,
-.dark-theme .bg-purple-500/10 {
+.dark-theme .bg-purple-500\/10 {
   background-color: rgba(139, 92, 246, 0.18) !important;
   color: #c084fc !important;
   border-color: rgba(139, 92, 246, 0.35) !important;
@@ -341,7 +341,7 @@
 
 .dark-theme .bg-indigo-50,
 .dark-theme .bg-indigo-100,
-.dark-theme .bg-indigo-500/10 {
+.dark-theme .bg-indigo-500\/10 {
   background-color: rgba(99, 102, 241, 0.18) !important;
   color: #c7d2fe !important;
   border-color: rgba(99, 102, 241, 0.35) !important;
@@ -356,11 +356,11 @@
 /* Tables, headers and select dropdown options */
 .dark-theme th,
 .dark-theme thead,
-.dark-theme .bg-slate-50/80,
-.dark-theme .bg-slate-50/75,
-.dark-theme .bg-slate-50/50,
-.dark-theme .bg-slate-50/90,
-.dark-theme .bg-slate-50/95 {
+.dark-theme .bg-slate-50\/80,
+.dark-theme .bg-slate-50\/75,
+.dark-theme .bg-slate-50\/50,
+.dark-theme .bg-slate-50\/90,
+.dark-theme .bg-slate-50\/95 {
   background-color: #1e293b !important;
   color: #ffffff !important;
 }
@@ -428,8 +428,8 @@
 }
 
 /* Đảm bảo hàng được chọn có tương phản tốt */
-.dark-theme tr.bg-blue-50/40,
-.dark-theme .bg-blue-50/40 {
+.dark-theme tr.bg-blue-50\/40,
+.dark-theme .bg-blue-50\/40 {
   background-color: rgba(37, 99, 235, 0.3) !important;
 }
 

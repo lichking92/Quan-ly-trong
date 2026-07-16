@@ -379,10 +379,11 @@ export default function Login({ onLoginSuccess, nhanViens = [] }: LoginProps) {
     }
 
     try {
+      const activeUid = await resolveEffectiveUserId();
       const { data: dbNhanViens, error: dbError } = await supabase
         .from('b_nhanvien')
         .select('*')
-        .eq('user_id', '00000000-0000-0000-0000-000000000000');
+        .eq('user_id', activeUid);
 
       if (dbNhanViens && dbNhanViens.length > 0) {
         const staffMember = dbNhanViens.find(n => {
@@ -397,7 +398,7 @@ export default function Login({ onLoginSuccess, nhanViens = [] }: LoginProps) {
             .from('b_nhanvien')
             .update({ YEU_CAU_RESET: true })
             .eq('MA_NV', staffMember.MA_NV)
-            .eq('user_id', '00000000-0000-0000-0000-000000000000');
+            .eq('user_id', activeUid);
 
           if (updateError) {
             setResetError('Có lỗi xảy ra khi gửi yêu cầu lên máy chủ.');
@@ -418,8 +419,6 @@ export default function Login({ onLoginSuccess, nhanViens = [] }: LoginProps) {
                 `Yêu cầu của bạn đã được chuyển đến Quản trị viên hệ thống để tiến hành đặt lại mật khẩu. Vui lòng liên hệ trực tiếp với Admin để được cấp mật khẩu mới sớm nhất.\n\n` +
                 `Trân trọng,\nBan Quản Trị Glass Stock Pro`;
 
-              // Lấy Owner ID hoặc SHARED_USER_ID
-              const activeUid = await resolveEffectiveUserId();
               await syncEmailLog({
                 EMAIL: staffMember.EMAIL || targetUser,
                 TIEU_DE: "Yêu cầu khôi phục mật khẩu tài khoản Glass Stock",
