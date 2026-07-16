@@ -54,6 +54,11 @@ interface TransactionHistoryProps {
     skusToRecalc: string[]
   ) => void;
   onDeleteTransaction: (hoaDonId: string, skusToRecalc: string[]) => Promise<boolean>;
+  onHardDeleteTransaction: (
+    hoaDonId: string, 
+    skusToRecalc: string[], 
+    shouldRollbackStock: boolean
+  ) => Promise<boolean>;
   onSaveTransaction?: (header: NhapXuat, details: NhapXuatCT[]) => Promise<void>;
   chiNhanhs?: string[];
   thuongHieus?: string[];
@@ -67,6 +72,7 @@ export default function TransactionHistory({
   kiemKhos = [],
   onUpdateTransaction,
   onDeleteTransaction,
+  onHardDeleteTransaction,
   onSaveTransaction,
   chiNhanhs = [],
   thuongHieus = []
@@ -972,6 +978,65 @@ export default function TransactionHistory({
     });
   };
 
+  // --- 8b. XÓA VĨNH VIỄN CẢ PHIẾU ---
+  const handleHardDeleteEntireInvoice = async () => {
+    if (!activeHeader) return;
+
+    if (currentUser.role !== 'ADMIN') {
+      setErrorMsg('Chỉ Admin mới có quyền xóa vĩnh viễn phiếu.');
+      return;
+    }
+
+    const shouldRollbackStock = activeHeader.TRANG_THAI !== 'Đã hủy';
+
+    if (shouldRollbackStock) {
+      // Verify deleting won't cause negative inventory (Rule 1)
+      const checkResult = checkSimulatedStock(activeHeader.HOA_DON, []);
+      if (!checkResult.success) {
+        setErrorMsg(`Lỗi (Rule 1): Không cho phép xóa phiếu vì việc hoàn tác tồn kho sẽ làm tồn kho của SKU [${checkResult.errorSku}] bị âm (${checkResult.negativeValue} cái).`);
+        return;
+      }
+    }
+
+    setConfirmModal({
+      isOpen: true,
+      title: 'Xác nhận xóa vĩnh viễn phiếu',
+      message: `Bạn có chắc muốn xóa vĩnh viễn phiếu ${activeHeader.HOA_DON}?`,
+      confirmText: 'Xóa vĩnh viễn',
+      cancelText: 'Quay lại',
+      isDanger: true,
+      onConfirm: async () => {
+        setConfirmModal(prev => ({ ...prev, isOpen: false }));
+        setErrorMsg('');
+        setSuccessMsg('');
+
+        const affectedSKUs = activeDetails.map(d => d.SKU);
+
+        // Save Audit Log
+        addAuditLog(
+          'XÓA',
+          activeHeader.HOA_DON,
+          { header: activeHeader, details: activeDetails },
+          undefined,
+          `Xóa vĩnh viễn phiếu bởi ${currentUser.username}`
+        );
+
+        try {
+          const success = await onHardDeleteTransaction(activeHeader.HOA_DON, affectedSKUs, shouldRollbackStock);
+
+          if (success) {
+            setSelectedInvoice(null);
+            triggerHistoryToast('✅ Xóa phiếu thành công', 'success');
+          } else {
+            triggerHistoryToast('Thao tác thất bại, vui lòng thử lại', 'error');
+          }
+        } catch (err) {
+          triggerHistoryToast('Thao tác thất bại, vui lòng thử lại', 'error');
+        }
+      }
+    });
+  };
+
   // --- 9. RENDER GIAO DIỆN CHI TIẾT PHIẾU ---
   const renderDetailsContent = () => {
     if (!activeHeader) return null;
@@ -1017,6 +1082,15 @@ export default function TransactionHistory({
                 >
                   <Trash2 className="w-3.5 h-3.5" /> Hủy Phiếu
                 </button>
+
+                {currentUser.role === 'ADMIN' && (
+                  <button
+                    onClick={handleHardDeleteEntireInvoice}
+                    className="flex items-center gap-1 text-[11px] font-bold py-1.5 px-3 rounded-lg bg-rose-600 text-white hover:bg-rose-700 cursor-pointer transition-all"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" /> Xóa Phiếu
+                  </button>
+                )}
               </>
             )}
           </div>

@@ -806,7 +806,7 @@ export async function syncSanPham(p: SanPham, userId: string) {
 
     const res = await supabase
       .from('b_sanpham')
-      .upsert(payload, { onConflict: 'SKU,user_id' })
+      .upsert(payload, { onConflict: 'SKU' })
       .select();
 
     if (res.error) logDbError("Lỗi syncSanPham (upsert):", res.error);
@@ -846,7 +846,7 @@ export async function syncSanPhams(pList: SanPham[], userId: string) {
 
       return supabase
         .from('b_sanpham')
-        .upsert(payload, { onConflict: 'SKU,user_id' })
+        .upsert(payload, { onConflict: 'SKU' })
         .select();
     });
 
@@ -890,7 +890,7 @@ export async function syncNhapXuat(nx: NhapXuat, userId: string) {
 
     const res = await supabase
       .from('b_nhapxuat')
-      .upsert(payload, { onConflict: 'HOA_DON,user_id' })
+      .upsert(payload, { onConflict: 'HOA_DON' })
       .select();
 
     if (res.error) {
@@ -934,7 +934,7 @@ export async function syncNhapXuatCTs(details: NhapXuatCT[], userId: string) {
 
       return supabase
         .from('b_nhapxuatct')
-        .upsert(payload, { onConflict: 'id,user_id' })
+        .upsert(payload, { onConflict: 'id' })
         .select();
     });
 

@@ -354,6 +354,89 @@ export default function App() {
     console.log("Đã đăng xuất người dùng trên giao diện. Giữ kết nối nền Supabase hoạt động.");
   };
 
+  // --- TRẠNG THÁI KẾT NỐI ONLINE / OFFLINE CHẶT CHẼ ---
+  const [isOffline, setIsOffline] = useState<boolean>(() => {
+    if (typeof window !== 'undefined' && window.navigator) {
+      return !window.navigator.onLine;
+    }
+    return false;
+  });
+
+  const pingSupabase = async (): Promise<boolean> => {
+    if (typeof window !== 'undefined' && window.navigator && !window.navigator.onLine) {
+      return false;
+    }
+    try {
+      const rawUrl = (import.meta as any).env.VITE_SUPABASE_URL || "https://fuyyregblrjugejetunj.supabase.co";
+      const cleanUrl = rawUrl.replace(/\/rest\/v1\/?$/, "").replace(/\/$/, "");
+      
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 3500); // 3.5 seconds timeout
+
+      const response = await fetch(`${cleanUrl}/auth/v1/health`, {
+        method: "GET",
+        signal: controller.signal,
+        headers: {
+          'Cache-Control': 'no-cache'
+        }
+      });
+
+      clearTimeout(timeoutId);
+      return response.ok;
+    } catch (err) {
+      console.warn("Ping Supabase thất bại:", err);
+      return false;
+    }
+  };
+
+  const ensureOnline = async (): Promise<boolean> => {
+    const online = await pingSupabase();
+    if (!online) {
+      setIsOffline(true);
+      setOfflineMode(true);
+      setSuccessToast({
+        message: "❌ Không có kết nối mạng. Vui lòng kiểm tra Internet và thử lại.",
+        type: "error",
+        id: `offline-warn-${Date.now()}`
+      });
+      return false;
+    }
+    setIsOffline(false);
+    setOfflineMode(false);
+    return true;
+  };
+
+  // Định kỳ kiểm tra kết nối Supabase thực tế mỗi 10 giây
+  useEffect(() => {
+    const checkConnection = async () => {
+      const online = await pingSupabase();
+      setIsOffline(!online);
+      setOfflineMode(!online);
+    };
+
+    // Chạy kiểm tra ngay khi mount
+    checkConnection();
+
+    const interval = setInterval(checkConnection, 10000); // 10 giây một lần
+
+    const handleOnline = () => {
+      checkConnection();
+    };
+    const handleOffline = () => {
+      setIsOffline(true);
+      setOfflineMode(true);
+    };
+
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+
+    return () => {
+      clearInterval(interval);
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+    };
+  }, []);
+
   const [isSyncing, setIsSyncing] = useState<boolean>(false);
 
   const handleManualSync = async () => {
@@ -940,6 +1023,7 @@ export default function App() {
    * Nghiệp vụ Thêm sản phẩm tròng kính mới vào danh mục
    */
   const handleAddProduct = async (newProduct: SanPham) => {
+    if (!(await ensureOnline())) return;
     setSanPhams(prev => [...prev, newProduct]);
 
     // Đồng bộ Supabase
@@ -976,6 +1060,7 @@ export default function App() {
    * Nghiệp vụ Cập nhật thông tin sản phẩm tròng kính
    */
   const handleUpdateProduct = async (sku: string, updatedFields: Partial<SanPham>) => {
+    if (!(await ensureOnline())) return;
     const normSku = cleanSKU(sku);
     setSanPhams(prev => prev.map(p => {
       if (cleanSKU(p.SKU) === normSku) {
@@ -1040,6 +1125,7 @@ export default function App() {
     sph?: number,
     cyl?: number
   ) => {
+    if (!(await ensureOnline())) return;
     // 1. Xác định lệch
     const lech = newTonThucTe - currentSystemTon;
     const timeNow = getVietnamDateTimeString();
@@ -1358,6 +1444,7 @@ export default function App() {
    * Tự động sinh Số hóa đơn (PNxxxxxx, PXxxxxxx) tăng dần chính xác
    */
   const handleSaveTransaction = async (header: NhapXuat, details: NhapXuatCT[]) => {
+    if (!(await ensureOnline())) return;
     let prefix = header.LOAI === 'NHẬP' ? 'PN' : 'PX';
     if (header.HOA_DON) {
       if (header.HOA_DON.startsWith('PNK')) prefix = 'PNK';
@@ -1459,6 +1546,7 @@ export default function App() {
    * Đồng thời tự động tạo giao dịch điều chỉnh liên kết (PNKxxxxxx hoặc PXKxxxxxx)
    */
   const handleSaveAudit = async (newAuditOrAudits: KiemKho | KiemKho[]) => {
+    if (!(await ensureOnline())) return;
     const newAudits = Array.isArray(newAuditOrAudits) ? newAuditOrAudits : [newAuditOrAudits];
     
     // 1. Sinh mã phiếu PKK tăng tự động chính xác cho từng phiếu kiểm kho
@@ -1644,6 +1732,7 @@ export default function App() {
     updatedDetails: NhapXuatCT[], 
     skusToRecalc: string[]
   ) => {
+    if (!(await ensureOnline())) return;
     // 1. Cập nhật header trong danh sách
     const nextHeaders = nhapXuats.map(h => h.HOA_DON === updatedHeader.HOA_DON ? updatedHeader : h);
     setNhapXuats(nextHeaders);
@@ -1707,6 +1796,7 @@ export default function App() {
    * Phục hồi lại số lượng tròng kính của tất cả SKU liên quan về nguyên trạng.
    */
   const handleDeleteTransaction = async (hoaDonId: string, skusToRecalc: string[]): Promise<boolean> => {
+    if (!(await ensureOnline())) return false;
     try {
       // 1. Cập nhật TRANG_THAI = 'Đã hủy' cho Header trong danh sách nhapXuats
       const updatedHeaders = nhapXuats.map(h => h.HOA_DON === hoaDonId ? { ...h, TRANG_THAI: 'Đã hủy' } : h);
@@ -1770,8 +1860,91 @@ export default function App() {
     }
   };
 
+  /**
+   * XÓA PHIẾU VĨNH VIỄN VÀ HOÀN TÁC TỒN KHO NẾU PHIẾU CHƯA BỊ HỦY
+   * Chỉ ADMIN được phép thực hiện.
+   */
+  const handleHardDeleteTransaction = async (
+    hoaDonId: string,
+    skusToRecalc: string[],
+    shouldRollbackStock: boolean
+  ): Promise<boolean> => {
+    if (!(await ensureOnline())) return false;
+    try {
+      // 1. Cập nhật nhapXuats (xóa khỏi danh sách)
+      const nextHeaders = nhapXuats.filter(h => h.HOA_DON !== hoaDonId);
+      setNhapXuats(nextHeaders);
+
+      // 2. Cập nhật nhapXuatCTs (xóa khỏi danh sách)
+      const nextDetails = nhapXuatCTs.filter(d => d.HOA_DON !== hoaDonId);
+      setNhapXuatCTs(nextDetails);
+
+      // 3. Tái tính toán khôi phục kho cho các SKU bị ảnh hưởng nếu cần rollback
+      let updatedProductsList = sanPhams;
+      const normSkusToRecalc = skusToRecalc.map(s => cleanSKU(s));
+      if (shouldRollbackStock) {
+        updatedProductsList = sanPhams.map(p => {
+          const pSkuNorm = cleanSKU(p.SKU);
+          if (normSkusToRecalc.includes(pSkuNorm)) {
+            const updatedP = recalculateProductState(p.SKU, sanPhams, nextDetails, kiemKhos, nextHeaders);
+            return updatedP ? updatedP : p;
+          }
+          return p;
+        });
+        setSanPhams(updatedProductsList);
+      }
+
+      // Đồng bộ Supabase
+      if (currentUser) {
+        ignoreRealtimeRef.current = true;
+        try {
+          const uId = await getUserId();
+          if (uId) {
+            // Xóa phiếu và chi tiết trên Supabase
+            const { error: deleteError } = await deleteNhapXuatAndDetails(hoaDonId);
+            
+            // Sync sản phẩm nếu có thay đổi tồn kho
+            let syncProductsError = null;
+            if (shouldRollbackStock) {
+              const changedProducts = updatedProductsList.filter(p => normSkusToRecalc.includes(cleanSKU(p.SKU)));
+              const resSyncProducts = await syncSanPhams(changedProducts, uId);
+              syncProductsError = resSyncProducts.error;
+            }
+
+            const error = deleteError || syncProductsError;
+            if (error) {
+              setSyncError({
+                table: 'b_nhapxuat / b_nhapxuatct / b_sanpham',
+                action: 'Xóa vĩnh viễn hóa đơn',
+                message: error.message || JSON.stringify(error)
+              });
+              return false;
+            }
+          }
+        } catch (err: any) {
+          console.error('Lỗi sync xóa vĩnh viễn hóa đơn:', err);
+          setSyncError({
+            table: 'b_nhapxuat / b_nhapxuatct / b_sanpham',
+            action: 'Xóa vĩnh viễn hóa đơn',
+            message: err.message || JSON.stringify(err)
+          });
+          return false;
+        } finally {
+          setTimeout(() => {
+            ignoreRealtimeRef.current = false;
+          }, 3000);
+        }
+      }
+      return true;
+    } catch (err) {
+      console.error('Lỗi khi xóa vĩnh viễn hóa đơn:', err);
+      return false;
+    }
+  };
+
   // --- 6. PHƯƠNG THỨC THÊM MỚI DANH MỤC THƯƠNG HIỆU, CHI NHÁNH, NHÂN VIÊN ---
   const handleAddThuongHieu = async (brand: ThươngHieu) => {
+    if (!(await ensureOnline())) return;
     setThuongHieus(prev => [...prev, brand]);
 
     if (currentUser) {
@@ -1799,6 +1972,7 @@ export default function App() {
   };
 
   const handleAddChiNhanh = async (branch: ChiNhanh) => {
+    if (!(await ensureOnline())) return;
     setChiNhanhs(prev => [...prev, branch]);
 
     if (currentUser) {
@@ -1826,6 +2000,7 @@ export default function App() {
   };
 
   const handleAddNhanVien = async (staff: NhanVien) => {
+    if (!(await ensureOnline())) return;
     setNhanViens(prev => [...prev, staff]);
 
     if (currentUser) {
@@ -1853,6 +2028,7 @@ export default function App() {
   };
 
   const handleUpdateThuongHieu = async (oldName: string, oldFeature: string, brand: ThươngHieu) => {
+    if (!(await ensureOnline())) return;
     const brandFeature = brand.TINH_NANG || brand.TINH_NANG_MAC_DINH || '';
     setThuongHieus(prev => {
       const filtered = prev.filter(t => t.THUONG_HIEU !== oldName);
@@ -1892,6 +2068,7 @@ export default function App() {
   };
 
   const handleDeleteThuongHieu = async (brandName: string, feature: string) => {
+    if (!(await ensureOnline())) return;
     setThuongHieus(prev => prev.filter(t => !(t.THUONG_HIEU === brandName && (t.TINH_NANG || t.TINH_NANG_MAC_DINH || '') === feature)));
 
     if (currentUser) {
@@ -1919,6 +2096,7 @@ export default function App() {
   };
 
   const handleUpdateChiNhanh = async (oldName: string, branch: ChiNhanh) => {
+    if (!(await ensureOnline())) return;
     setChiNhanhs(prev => prev.map(c => c.CHI_NHANH === oldName ? branch : c));
 
     if (currentUser) {
@@ -1949,6 +2127,7 @@ export default function App() {
   };
 
   const handleDeleteChiNhanh = async (branchName: string) => {
+    if (!(await ensureOnline())) return;
     setChiNhanhs(prev => prev.filter(c => c.CHI_NHANH !== branchName));
 
     if (currentUser) {
@@ -1976,6 +2155,7 @@ export default function App() {
   };
 
   const handleUpdatePassword = async (newPassword: string): Promise<{ success: boolean; message: string }> => {
+    if (!(await ensureOnline())) return { success: false, message: 'Không thể kết nối máy chủ. Chức năng này chỉ khả dụng khi trực tuyến.' };
     if (!currentUser) return { success: false, message: 'Chưa đăng nhập' };
     const member = nhanViens.find(n => 
       n.MA_NV === currentUser.id || 
@@ -1995,6 +2175,7 @@ export default function App() {
   };
 
   const handleUpdateNhanVien = async (oldEmail: string, staff: NhanVien) => {
+    if (!(await ensureOnline())) return;
     const oldStaff = nhanViens.find(n => n.EMAIL === oldEmail);
     const oldStatus = oldStaff ? (oldStaff.TRANG_THAI || 'ACTIVE').trim().toUpperCase() : 'ACTIVE';
     const newStatus = (staff.TRANG_THAI || 'ACTIVE').trim().toUpperCase();
@@ -2106,6 +2287,7 @@ export default function App() {
   };
 
   const handleDeleteNhanVien = async (email: string) => {
+    if (!(await ensureOnline())) return;
     setNhanViens(prev => prev.filter(n => n.EMAIL !== email));
 
     if (currentUser) {
@@ -2218,6 +2400,7 @@ export default function App() {
           }`}>
             Glass Stock Pro
           </span>
+          <span className={`h-2 w-2 rounded-full shrink-0 ${isOffline ? 'bg-red-500 animate-pulse' : 'bg-emerald-500 animate-pulse'}`} title={isOffline ? 'Ngoại tuyến' : 'Trực tuyến'} />
         </div>
         <div className="flex items-center gap-2">
           {currentUser && (
@@ -2295,8 +2478,8 @@ export default function App() {
           </button>
         </div>
 
-        {/* THÔNG TIN USER ĐANG ĐĂNG NHẬP */}
-        <div className={`p-3 mx-3 my-4 rounded-2xl border flex flex-col gap-3 ${sidebarStyle.userBox} ${sidebarCollapsed ? 'items-center px-1' : ''}`}>
+        {/* THÔNG TIN USER ĐANG ĐĂNG NHẬP KÈM STATUS BADGE */}
+        <div className={`p-3 mx-3 my-4 rounded-2xl border flex flex-col gap-2 ${sidebarStyle.userBox} ${sidebarCollapsed ? 'items-center px-1' : ''}`}>
           <div className="flex items-center justify-between gap-2 w-full">
             <div className="flex items-center gap-2.5 min-w-0 flex-1">
               <div 
@@ -2329,6 +2512,20 @@ export default function App() {
               </button>
             )}
           </div>
+          
+          {/* TRẠNG THÁI TRỰC TUYẾN / NGOẠI TUYẾN */}
+          {!sidebarCollapsed ? (
+            <div className="flex items-center gap-1.5 px-1 mt-1 border-t border-slate-200/40 pt-1.5 dark:border-slate-800/40">
+              <span className={`h-2 w-2 rounded-full shrink-0 ${isOffline ? 'bg-red-500 animate-pulse' : 'bg-emerald-500 animate-pulse'}`} />
+              <span className={`text-[10px] font-medium tracking-wide ${themeMode === 'light' ? 'text-slate-500' : 'text-slate-400'}`}>
+                {isOffline ? 'Đang ngoại tuyến' : 'Đang trực tuyến'}
+              </span>
+            </div>
+          ) : (
+            <div className="flex items-center justify-center mt-1 pt-1 border-t border-slate-200/40 dark:border-slate-800/40 w-full" title={isOffline ? 'Đang ngoại tuyến' : 'Đang trực tuyến'}>
+              <span className={`h-2 w-2 rounded-full shrink-0 ${isOffline ? 'bg-red-500 animate-pulse' : 'bg-emerald-500 animate-pulse'}`} />
+            </div>
+          )}
         </div>
 
         {/* CÁC TABS ĐIỀU HƯỚNG DỌC (Nav Tab bên trái) */}
@@ -2726,6 +2923,7 @@ export default function App() {
                     kiemKhos={kiemKhos}
                     onUpdateTransaction={handleUpdateTransaction}
                     onDeleteTransaction={handleDeleteTransaction}
+                    onHardDeleteTransaction={handleHardDeleteTransaction}
                     onSaveTransaction={handleSaveTransaction}
                     chiNhanhs={listBranchNames}
                     thuongHieus={listBrandNames}
@@ -2751,6 +2949,7 @@ export default function App() {
                     onDeleteNhanVien={handleDeleteNhanVien}
                     roles={roles}
                     onAddRole={async (r) => {
+                      if (!(await ensureOnline())) return;
                       ignoreRealtimeRef.current = true;
                       try {
                         const res = await syncRole(r, currentUser.id);
@@ -2770,6 +2969,7 @@ export default function App() {
                       }
                     }}
                     onUpdateRole={async (r) => {
+                      if (!(await ensureOnline())) return;
                       ignoreRealtimeRef.current = true;
                       try {
                         const res = await syncRole(r, currentUser.id);
@@ -2789,6 +2989,7 @@ export default function App() {
                       }
                     }}
                     onDeleteRole={async (roleCode) => {
+                      if (!(await ensureOnline())) return;
                       ignoreRealtimeRef.current = true;
                       try {
                         const res = await deleteRole(roleCode, currentUser.id);
