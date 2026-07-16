@@ -355,17 +355,39 @@ export default function App() {
   };
 
   // --- TRẠNG THÁI KẾT NỐI ONLINE / OFFLINE CHẶT CHẼ ---
-  const [isOffline, setIsOffline] = useState<boolean>(() => {
+  const [isOffline, setIsOfflineState] = useState<boolean>(() => {
     if (typeof window !== 'undefined' && window.navigator) {
       return !window.navigator.onLine;
     }
     return false;
   });
+  const isOfflineRef = useRef<boolean>(isOffline);
+  const consecutiveFailuresRef = useRef<number>(0);
+
+  const setIsOffline = (val: boolean) => {
+    const prevVal = isOfflineRef.current;
+    setIsOfflineState(val);
+    isOfflineRef.current = val;
+    setOfflineMode(val);
+
+    if (prevVal !== val) {
+      if (val) {
+        setSuccessToast({
+          message: "🔴 Mất kết nối máy chủ",
+          type: "error",
+          id: `status-offline-${Date.now()}`
+        });
+      } else {
+        setSuccessToast({
+          message: "🟢 Đã kết nối lại máy chủ",
+          type: "success",
+          id: `status-online-${Date.now()}`
+        });
+      }
+    }
+  };
 
   const pingSupabase = async (): Promise<boolean> => {
-    if (typeof window !== 'undefined' && window.navigator && !window.navigator.onLine) {
-      return false;
-    }
     try {
       const rawUrl = (import.meta as any).env.VITE_SUPABASE_URL || "https://fuyyregblrjugejetunj.supabase.co";
       const cleanUrl = rawUrl.replace(/\/rest\/v1\/?$/, "").replace(/\/$/, "");
@@ -390,28 +412,56 @@ export default function App() {
   };
 
   const ensureOnline = async (): Promise<boolean> => {
-    const online = await pingSupabase();
-    if (!online) {
-      setIsOffline(true);
-      setOfflineMode(true);
+    if (isOfflineRef.current) {
+      const isNetOffline = typeof window !== 'undefined' && window.navigator && !window.navigator.onLine;
       setSuccessToast({
-        message: "❌ Không có kết nối mạng. Vui lòng kiểm tra Internet và thử lại.",
+        message: isNetOffline 
+          ? "❌ Không có kết nối mạng. Vui lòng kiểm tra Internet và thử lại."
+          : "❌ Không thể kết nối máy chủ. Chức năng này chỉ khả dụng khi trực tuyến.",
         type: "error",
         id: `offline-warn-${Date.now()}`
       });
       return false;
     }
-    setIsOffline(false);
-    setOfflineMode(false);
-    return true;
+
+    const online = await pingSupabase();
+    if (online) {
+      consecutiveFailuresRef.current = 0;
+      setIsOffline(false);
+      return true;
+    } else {
+      consecutiveFailuresRef.current += 1;
+      if (consecutiveFailuresRef.current >= 3) {
+        setIsOffline(true);
+        const isNetOffline = typeof window !== 'undefined' && window.navigator && !window.navigator.onLine;
+        setTimeout(() => {
+          setSuccessToast({
+            message: isNetOffline 
+              ? "❌ Không có kết nối mạng. Vui lòng kiểm tra Internet và thử lại."
+              : "❌ Không thể kết nối máy chủ. Chức năng này chỉ khả dụng khi trực tuyến.",
+            type: "error",
+            id: `offline-warn-${Date.now()}`
+          });
+        }, 150);
+        return false;
+      }
+      return true;
+    }
   };
 
   // Định kỳ kiểm tra kết nối Supabase thực tế mỗi 10 giây
   useEffect(() => {
     const checkConnection = async () => {
       const online = await pingSupabase();
-      setIsOffline(!online);
-      setOfflineMode(!online);
+      if (online) {
+        consecutiveFailuresRef.current = 0;
+        setIsOffline(false);
+      } else {
+        consecutiveFailuresRef.current += 1;
+        if (consecutiveFailuresRef.current >= 3) {
+          setIsOffline(true);
+        }
+      }
     };
 
     // Chạy kiểm tra ngay khi mount
@@ -423,8 +473,8 @@ export default function App() {
       checkConnection();
     };
     const handleOffline = () => {
+      consecutiveFailuresRef.current = 3;
       setIsOffline(true);
-      setOfflineMode(true);
     };
 
     window.addEventListener('online', handleOnline);
