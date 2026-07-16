@@ -52,6 +52,7 @@ import {
   ReferenceArea
 } from 'recharts';
 import { SanPham, NhapXuat, NhapXuatCT } from '../types';
+import TemplateExportManager from './TemplateExportManager';
 
 /**
  * FILE: Dashboard.tsx
@@ -70,6 +71,8 @@ interface DashboardProps {
 }
 
 export default function Dashboard({ sanPhams, nhapXuats, nhapXuatCTs, chiNhanhs, onQuickRestock }: DashboardProps) {
+  const [dashboardSubTab, setDashboardSubTab] = useState<'ANALYTICS' | 'TEMPLATES'>('ANALYTICS');
+  
   // --- 1. QUẢN LÝ TRẠNG THÁI BỘ LỌC ---
   const [selectedBranch, setSelectedBranch] = useState<string>('Tất cả');
   const [selectedBrandFilter, setSelectedBrandFilter] = useState<string>('Tất cả');
@@ -965,7 +968,44 @@ export default function Dashboard({ sanPhams, nhapXuats, nhapXuatCTs, chiNhanhs,
   return (
     <div className="space-y-6">
       
-      {/* 1. THANH BỘ LỌC ĐA NHIỆM CHUYÊN NGHIỆP */}
+      {/* CHUYỂN ĐỔI CHẾ ĐỘ XEM TRÊN DASHBOARD */}
+      <div className="flex bg-slate-100 p-1 rounded-xl self-start w-fit select-none border border-slate-200">
+        <button
+          type="button"
+          onClick={() => setDashboardSubTab('ANALYTICS')}
+          className={`flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+            dashboardSubTab === 'ANALYTICS' 
+              ? 'bg-blue-650 text-white shadow-xs' 
+              : 'text-slate-600 hover:text-slate-800 hover:bg-slate-250/40'
+          }`}
+        >
+          <BarChart2 className="w-4 h-4" />
+          Phân Tích & Đồ Thị Trực Quan
+        </button>
+        <button
+          type="button"
+          onClick={() => setDashboardSubTab('TEMPLATES')}
+          className={`flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+            dashboardSubTab === 'TEMPLATES' 
+              ? 'bg-blue-650 text-white shadow-xs' 
+              : 'text-slate-600 hover:text-slate-800 hover:bg-slate-250/40'
+          }`}
+        >
+          <FileSpreadsheet className="w-4 h-4" />
+          Hệ Thống Xuất Excel/PDF Theo Mẫu
+        </button>
+      </div>
+
+      {dashboardSubTab === 'TEMPLATES' ? (
+        <TemplateExportManager
+          sanPhams={sanPhams}
+          nhapXuats={nhapXuats}
+          nhapXuatCTs={nhapXuatCTs}
+          chiNhanhs={chiNhanhs}
+        />
+      ) : (
+        <>
+          {/* 1. THANH BỘ LỌC ĐA NHIỆM CHUYÊN NGHIỆP */}
       <div id="dashboard-filter-section" className="bento-card !p-5 bg-white border border-slate-100 rounded-2xl shadow-xs">
         <div className="flex flex-col xl:flex-row xl:items-center justify-between gap-4 border-b border-slate-100 pb-4 mb-4">
           <div className="flex items-center gap-2.5">
@@ -2191,6 +2231,8 @@ export default function Dashboard({ sanPhams, nhapXuats, nhapXuatCTs, chiNhanhs,
         </div>
 
       </div>
+      </>
+      )}
 
     </div>
   );

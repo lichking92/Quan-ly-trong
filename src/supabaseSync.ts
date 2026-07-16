@@ -801,12 +801,40 @@ export async function syncSanPham(p: SanPham, userId: string) {
       user_id: userId
     };
 
-    const res = await supabase
+    let res = await supabase
       .from('b_sanpham')
       .upsert(payload, { onConflict: 'SKU' })
       .select();
 
-    if (res.error) logDbError("Lỗi syncSanPham (upsert):", res.error);
+    if (res.error && (
+      res.error.message?.includes('unique or exclusion constraint') ||
+      res.error.message?.includes('ON CONFLICT') ||
+      res.error.code === '42P10'
+    )) {
+      console.warn("syncSanPham upsert failed due to onConflict, falling back to safe select-then-update/insert...", res.error.message);
+      const { data: existing } = await supabase
+        .from('b_sanpham')
+        .select('SKU')
+        .eq('SKU', p.SKU)
+        .eq('user_id', userId)
+        .maybeSingle();
+
+      if (existing) {
+        res = await supabase
+          .from('b_sanpham')
+          .update(payload)
+          .eq('SKU', p.SKU)
+          .eq('user_id', userId)
+          .select();
+      } else {
+        res = await supabase
+          .from('b_sanpham')
+          .insert(payload)
+          .select();
+      }
+    }
+
+    if (res.error) logDbError("Lỗi syncSanPham:", res.error);
     return res;
   } catch (err: any) {
     logDbError("Lỗi ngoài dự kiến trong syncSanPham:", err);
@@ -824,27 +852,7 @@ export async function syncSanPhams(pList: SanPham[], userId: string) {
   userId = await resolveEffectiveUserId();
   try {
     const promises = pList.map(async (p) => {
-      const payload = {
-        "SKU": p.SKU,
-        "TEN_SAN_PHAM": p.TEN_SAN_PHAM,
-        "THUONG_HIEU": p.THUONG_HIEU,
-        "CHIET_XUAT": p.CHIET_XUAT,
-        "TINH_NANG": p.TINH_NANG,
-        "CAN": p.CAN,
-        "LOAN": p.LOAN,
-        "DVT": p.DVT,
-        "TON_DAU": p.TON_DAU,
-        "NHAP": p.NHAP,
-        "XUAT": p.XUAT,
-        "TON_CUOI": p.TON_CUOI,
-        "TON_TOI_THIEU": p.TON_TOI_THIEU,
-        user_id: userId
-      };
-
-      return supabase
-        .from('b_sanpham')
-        .upsert(payload, { onConflict: 'SKU' })
-        .select();
+      return syncSanPham(p, userId);
     });
 
     const results = await Promise.all(promises);
@@ -853,7 +861,7 @@ export async function syncSanPhams(pList: SanPham[], userId: string) {
       logDbError("Lỗi syncSanPhams:", failed.error);
       return { error: failed.error };
     }
-    return { data: results.map(r => r.data).flat(), error: null };
+    return { data: results.map(r => r.data).filter(Boolean).flat(), error: null };
   } catch (err: any) {
     logDbError("Lỗi ngoài dự kiến trong syncSanPhams:", err);
     return { error: err };
@@ -885,14 +893,41 @@ export async function syncNhapXuat(nx: NhapXuat, userId: string) {
       user_id: userId
     };
 
-    const res = await supabase
+    let res = await supabase
       .from('b_nhapxuat')
       .upsert(payload, { onConflict: 'HOA_DON' })
       .select();
 
+    if (res.error && (
+      res.error.message?.includes('unique or exclusion constraint') ||
+      res.error.message?.includes('ON CONFLICT') ||
+      res.error.code === '42P10'
+    )) {
+      console.warn("syncNhapXuat upsert failed due to onConflict, falling back to safe select-then-update/insert...", res.error.message);
+      const { data: existing } = await supabase
+        .from('b_nhapxuat')
+        .select('HOA_DON')
+        .eq('HOA_DON', nx.HOA_DON)
+        .eq('user_id', userId)
+        .maybeSingle();
+
+      if (existing) {
+        res = await supabase
+          .from('b_nhapxuat')
+          .update(payload)
+          .eq('HOA_DON', nx.HOA_DON)
+          .eq('user_id', userId)
+          .select();
+      } else {
+        res = await supabase
+          .from('b_nhapxuat')
+          .insert(payload)
+          .select();
+      }
+    }
+
     if (res.error) {
-      // Nếu có lỗi do constraint chỉ có HOA_DON hoặc HOA_DON_user_id
-      logDbError("Lỗi syncNhapXuat (upsert):", res.error);
+      logDbError("Lỗi syncNhapXuat:", res.error);
     }
     return res;
   } catch (err: any) {
@@ -929,10 +964,39 @@ export async function syncNhapXuatCTs(details: NhapXuatCT[], userId: string) {
         user_id: userId
       };
 
-      return supabase
+      let res = await supabase
         .from('b_nhapxuatct')
         .upsert(payload, { onConflict: 'id' })
         .select();
+
+      if (res.error && (
+        res.error.message?.includes('unique or exclusion constraint') ||
+        res.error.message?.includes('ON CONFLICT') ||
+        res.error.code === '42P10'
+      )) {
+        console.warn("syncNhapXuatCTs upsert failed due to onConflict, falling back to safe select-then-update/insert...", res.error.message);
+        const { data: existing } = await supabase
+          .from('b_nhapxuatct')
+          .select('id')
+          .eq('id', d.ID)
+          .eq('user_id', userId)
+          .maybeSingle();
+
+        if (existing) {
+          res = await supabase
+            .from('b_nhapxuatct')
+            .update(payload)
+            .eq('id', d.ID)
+            .eq('user_id', userId)
+            .select();
+        } else {
+          res = await supabase
+            .from('b_nhapxuatct')
+            .insert(payload)
+            .select();
+        }
+      }
+      return res;
     });
 
     const results = await Promise.all(promises);
@@ -941,7 +1005,7 @@ export async function syncNhapXuatCTs(details: NhapXuatCT[], userId: string) {
       logDbError("Lỗi syncNhapXuatCTs:", failed.error);
       return { error: failed.error };
     }
-    return { data: results.map(r => r.data).flat(), error: null };
+    return { data: results.map(r => r.data).filter(Boolean).flat(), error: null };
   } catch (err: any) {
     logDbError("Lỗi ngoài dự kiến trong syncNhapXuatCTs:", err);
     return { error: err };

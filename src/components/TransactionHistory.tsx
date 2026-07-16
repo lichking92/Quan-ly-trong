@@ -2196,7 +2196,7 @@ export default function TransactionHistory({
                   {groupedInvoicesByDate.map(({ dateStr, invoices }) => {
                     const isExpanded = expandedDates[dateStr] !== false;
                     const totalInvoices = invoices.length;
-                    const totalQty = invoices.reduce((sum, h) => sum + h.TONG_SL, 0);
+                    const totalQty = invoices.reduce((sum, h) => h.TRANG_THAI === 'Đã hủy' ? sum : sum + h.TONG_SL, 0);
 
                     // Format date to local standard DD/MM/YYYY
                     const parts = dateStr.split('-');
