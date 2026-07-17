@@ -29,7 +29,7 @@ import {
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { NhapXuat, NhapXuatCT, SanPham, LoaiPhieu, User as UserType, KiemKho } from '../types';
-import { formatDop, formatSKUForDisplay, cleanSKU } from '../data/mockData';
+import { formatDop, formatSKUForDisplay, cleanSKU, getVietnamDateString, getVietnamDateTimeString } from '../data/mockData';
 
 export interface AuditLog {
   id: string;
@@ -119,7 +119,7 @@ export default function TransactionHistory({
       HOA_DON: hoaDonId,
       LOAI_HIEU_CHINH: loai,
       NGUOI_THAO_TAC: currentUser.username || 'System',
-      THOI_GIAN: new Date().toLocaleString('vi-VN'),
+      THOI_GIAN: getVietnamDateTimeString(),
       DU_LIEU_TRUOC: before ? JSON.stringify(before, null, 2) : undefined,
       DU_LIEU_SAU: after ? JSON.stringify(after, null, 2) : undefined,
       GHI_CHU: notes || ''
@@ -203,7 +203,7 @@ export default function TransactionHistory({
     // Choose a fallback branch
     const defaultBranch = chiNhanhs?.[0] || uniqueBranches?.[0] || 'Kho Trung Tâm';
     setFormBranch(defaultBranch);
-    setFormDate(new Date().toISOString().split('T')[0]);
+    setFormDate(getVietnamDateString());
     
     let defaultGhiChu = '';
     if (type === 'NHẬP_KIEM_KHO') defaultGhiChu = 'Nhập chênh lệch kiểm kho thừa';
@@ -353,7 +353,7 @@ export default function TransactionHistory({
             TONG_SL: formItems.reduce((sum, d) => sum + d.SO_LUONG, 0),
             NGUOI_TAO: currentUser.username,
             TEN_NGUOI_TAO: currentUser.fullName || currentUser.username,
-            TG_TAO: new Date().toISOString().replace('T', ' ').substring(0, 19),
+            TG_TAO: getVietnamDateTimeString(),
             GHI_CHU: formGhiChu
           };
 

@@ -35,7 +35,7 @@ import {
 } from 'lucide-react';
 import { SanPham } from '../types';
 import { supabase } from '../supabaseClient';
-import { generateSKUString, formatDop, formatSKUForDisplay, cleanSKU } from '../data/mockData';
+import { generateSKUString, formatDop, formatSKUForDisplay, cleanSKU, getVietnamDateString, getVietnamDateTimeString } from '../data/mockData';
 import { resolveEffectiveUserId } from '../supabaseSync';
 
 const escapeRegExp = (str: string): string => {
@@ -460,6 +460,178 @@ export default function OrderParser({
     return cleaned;
   };
 
+  // Preprocessor helpers for multi-line blocks with shared diopter lists
+  const isDiopterToken = (t: string): boolean => {
+    const tu = t.toUpperCase().trim();
+    if (tu === 'PL' || tu === 'PLANO') return true;
+    if (tu === '0' || tu === '0.00' || tu === '-0.00' || tu === '+0.00') return true;
+    if (/^[+-]\d+(\.\d+)?$/.test(tu)) return true;
+    if (/^[+-]\d{3,4}$/.test(tu)) return true;
+    if (/^\d{3,4}$/.test(tu)) {
+      const val = parseInt(tu);
+      if ([156, 160, 161, 167, 174].includes(val)) return false;
+      return true;
+    }
+    if (/^\d+\.\d+$/.test(tu)) {
+      const val = parseFloat(tu);
+      if ([1.56, 1.60, 1.61, 1.67, 1.74].includes(val)) return false;
+      return true;
+    }
+    if (/^\d+$/.test(tu)) {
+      const val = parseInt(tu);
+      if (val > 0 && val <= 25) {
+        return true;
+      }
+    }
+    return false;
+  };
+
+  const getLineTokens = (line: string): string[] => {
+    const processed = line.toUpperCase()
+      .replace(/(\d+),(\d+)/g, '$1.$2')
+      .replace(/([+-])\s+(\d+)/g, '$1$2')
+      .replace(/[,;]/g, ' ')
+      .replace(/(\d+)\s*(M|C|CẶP|CAP|MIẾNG|MIENG|X|V|PCS)(?=\s|$)/gi, '$1$2')
+      .replace(/(\d)([-+])(\d)/g, '$1 $2$3');
+    return processed.split(/\s+/).filter(Boolean);
+  };
+
+  const isQuantitySpecifierLine = (line: string): { quantity: number; unit: string; raw: string } | null => {
+    const norm = line.toLowerCase().trim();
+    const p1 = /(?:mỗi độ|moi do|mỗi|moi|each)\s+(\d+)\s*(m|c|cặp|cap|miếng|mieng|pcs|c|x|v)?/i;
+    const p2 = /(\d+)\s*(m|c|cặp|cap|miếng|mieng|pcs|c|x|v)?\s*(?:mỗi độ|moi do|mỗi|moi|each|\/độ|\/do|\/ độ|\/ do)/i;
+    
+    let match = norm.match(p1);
+    if (!match) {
+      match = norm.match(p2);
+    }
+    
+    if (match) {
+      const qty = parseInt(match[1], 10);
+      const suffix = (match[2] || 'miếng').toUpperCase();
+      let finalQty = qty;
+      let unit = 'miếng';
+      if (suffix === 'C' || suffix === 'CẶP' || suffix === 'CAP') {
+        finalQty = qty * 2;
+      }
+      return { quantity: finalQty, unit, raw: match[0] };
+    }
+    return null;
+  };
+
+  const findWordIndexHelper = (textUpper: string, wordUpper: string): number => {
+    let index = textUpper.indexOf(wordUpper);
+    while (index !== -1) {
+      const charBefore = index > 0 ? textUpper[index - 1] : '';
+      const charAfter = index + wordUpper.length < textUpper.length ? textUpper[index + wordUpper.length] : '';
+      
+      const isBeforeValid = !charBefore || !isLetterOrDigit(charBefore);
+      const isAfterValid = !charAfter || !isLetterOrDigit(charAfter);
+      
+      if (isBeforeValid && isAfterValid) {
+        return index;
+      }
+      index = textUpper.indexOf(wordUpper, index + 1);
+    }
+    return -1;
+  };
+
+  const hasHeaderInfo = (
+    line: string,
+    uniqueBrands: string[],
+    uniqueChietXuats: string[],
+    uniqueFeatures: string[]
+  ): boolean => {
+    const lineUpper = line.toUpperCase();
+    
+    const foundBrand = uniqueBrands.some(brand => findWordIndexHelper(lineUpper, brand) !== -1);
+    if (foundBrand) return true;
+    
+    const foundChiet = uniqueChietXuats.some(cx => findWordIndexHelper(lineUpper, cx) !== -1) || 
+                       ['156', '160', '161', '167', '174'].some(sh => findWordIndexHelper(lineUpper, sh) !== -1);
+    if (foundChiet) return true;
+    
+    const foundFeat = uniqueFeatures.some(f => findWordIndexHelper(lineUpper, f) !== -1);
+    if (foundFeat) return true;
+    
+    return false;
+  };
+
+  const preprocessMultiLineBlocks = (
+    text: string,
+    uniqueBrands: string[],
+    uniqueChietXuats: string[],
+    uniqueFeatures: string[]
+  ): string => {
+    const lines = text.split('\n');
+    const outputLines: string[] = [];
+    
+    let i = 0;
+    while (i < lines.length) {
+      const currentLine = lines[i];
+      const currentLineTrimmed = currentLine.trim();
+      
+      if (!currentLineTrimmed) {
+        outputLines.push(currentLine);
+        i++;
+        continue;
+      }
+      
+      const isHeader = hasHeaderInfo(currentLineTrimmed, uniqueBrands, uniqueChietXuats, uniqueFeatures) &&
+                       !getLineTokens(currentLineTrimmed).some(isDiopterToken) &&
+                       !isQuantitySpecifierLine(currentLineTrimmed);
+                       
+      if (isHeader) {
+        let j = i + 1;
+        const diopterLinesCollected: string[] = [];
+        let quantitySpecifier: { quantity: number; unit: string; raw: string } | null = null;
+        let foundEnd = false;
+        
+        while (j < lines.length) {
+          const nextLine = lines[j];
+          const nextLineTrimmed = nextLine.trim();
+          
+          if (!nextLineTrimmed) {
+            j++;
+            continue;
+          }
+          
+          const qSpec = isQuantitySpecifierLine(nextLineTrimmed);
+          if (qSpec) {
+            quantitySpecifier = qSpec;
+            foundEnd = true;
+            break;
+          }
+          
+          const isDiopterOnly = getLineTokens(nextLineTrimmed).some(isDiopterToken) &&
+                                !hasHeaderInfo(nextLineTrimmed, uniqueBrands, uniqueChietXuats, uniqueFeatures);
+                                
+          if (isDiopterOnly) {
+            diopterLinesCollected.push(nextLineTrimmed);
+            j++;
+          } else {
+            break;
+          }
+        }
+        
+        if (foundEnd && quantitySpecifier && diopterLinesCollected.length > 0) {
+          console.log(`[OrderParser Preprocessor] Found multi-line block from line ${i + 1} to ${j + 1}`);
+          diopterLinesCollected.forEach(d => {
+            const expandedLine = `${currentLineTrimmed} ${d} ${quantitySpecifier!.quantity}m`;
+            outputLines.push(expandedLine);
+          });
+          i = j + 1;
+          continue;
+        }
+      }
+      
+      outputLines.push(currentLine);
+      i++;
+    }
+    
+    return outputLines.join('\n');
+  };
+
   // Core parsing algorithm
   const handleAnalyze = (overrideBrand?: string) => {
     if (!message.trim()) {
@@ -467,9 +639,6 @@ export default function OrderParser({
       setHasAnalyzed(true);
       return;
     }
-
-    const lines = message.split('\n');
-    const results: ParsedItem[] = [];
 
     const activeFallbackBrand = (typeof overrideBrand === 'string') ? overrideBrand : selectedBrand;
 
@@ -496,6 +665,11 @@ export default function OrderParser({
       ...brandList.map(b => (b.TINH_NANG || '').toUpperCase().trim()),
       ...sanPhams.map(p => (p.TINH_NANG || '').toUpperCase().trim())
     ])).filter(Boolean).sort((a, b) => b.length - a.length);
+
+    // Preprocess "Danh sách độ dùng chung"
+    const preprocessedMessage = preprocessMultiLineBlocks(message, uniqueBrands, uniqueChietXuats, uniqueFeatures);
+    const lines = preprocessedMessage.split('\n');
+    const results: ParsedItem[] = [];
 
     console.log('[OrderParser Debug] Initialized Parser Config:');
     console.log('  - Active Fallback Brand:', activeFallbackBrand);
@@ -640,6 +814,9 @@ export default function OrderParser({
         .replace(/(\d+),(\d+)/g, '$1.$2') // -2,00 -> -2.00
         .replace(/([+-])\s+(\d+)/g, '$1$2') // - 2.00 -> -2.00
         .replace(/[,;]/g, ' ');
+
+      // Join quantities with their suffixes (e.g., 6 m -> 6m, 1 cặp -> 1cặp)
+      processedLine = processedLine.replace(/(\d+)\s*(M|C|CẶP|CAP|MIẾNG|MIENG|X|V|PCS)(?=\s|$)/gi, '$1$2');
 
       // Separate consecutive SPH and CYL written consecutively (e.g., -2.00-0.50 -> -2.00 -0.50)
       processedLine = processedLine.replace(/(\d)([-+])(\d)/g, '$1 $2$3');
@@ -1585,7 +1762,7 @@ export default function OrderParser({
         totalQty += exportQty;
 
         detailsList.push({
-          ID: `CT_${Date.now()}_${order.id.replace('TEMP_ORDER_', '')}_${i}`,
+          ID: `CT_NEW_${Date.now()}_${order.id.replace('TEMP_ORDER_', '')}_${i}`,
           HOA_DON: '', // Sẽ được sinh tự động tại App.tsx
           SKU: item.sku,
           TEN_SP: liveProd?.TEN_SAN_PHAM || `${item.brand} ${item.chietXuat} ${item.tinhNang}`,
@@ -1598,7 +1775,7 @@ export default function OrderParser({
           DVT: item.unit || 'miếng',
           GHI_CHU: `Xuất từ Gom đơn lấy hàng — Chi nhánh ${order.branch}`,
           LOAI: 'XUẤT',
-          NGAY: new Date().toISOString().split('T')[0]
+          NGAY: getVietnamDateString()
         });
       }
 
@@ -1609,12 +1786,12 @@ export default function OrderParser({
       const newHeader = {
         HOA_DON: '', // Sẽ được sinh tự động tại App.tsx
         CHI_NHANH: order.branch,
-        NGAY: new Date().toISOString().split('T')[0],
+        NGAY: getVietnamDateString(),
         LOAI: 'XUẤT' as const,
         TONG_SL: totalQty,
         NGUOI_TAO: currentUser?.username || 'admin',
         TEN_NGUOI_TAO: currentUser?.fullName || 'Người dùng hệ thống',
-        TG_TAO: new Date().toLocaleString('vi-VN'),
+        TG_TAO: getVietnamDateTimeString(),
         GHI_CHU: `Tự động xuất kho từ gom đơn lấy hàng — Chi nhánh ${order.branch}`,
         MA_NV: currentUser?.id || 'admin',
         TEN_DANG_NHAP: currentUser?.username || 'admin'

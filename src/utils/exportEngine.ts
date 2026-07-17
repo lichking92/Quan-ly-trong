@@ -5,6 +5,7 @@
 
 import { SanPham, NhapXuat, NhapXuatCT } from '../types';
 import { supabase } from '../supabaseClient';
+import { getVietnamDateString } from '../data/mockData';
 
 // Lazy loading helpers for ExcelJS and PDFDocument to minimize RAM/CPU and bundle overhead
 let cachedExcelJS: any = null;
@@ -1816,7 +1817,7 @@ export async function exportReportWithFilters({
     LOC_THUONG_HIEU: selectedBrandFilter,
     LOC_TINH_NANG: selectedFeatureFilter,
     LOC_CHIET_SUAT: selectedChietXuatFilter,
-    NGAY: new Date().toISOString().substring(0, 10),
+    NGAY: getVietnamDateString(),
     TEN_NGUOI_TAO: 'Chủ cửa hàng',
     ...resolvedValues
   };

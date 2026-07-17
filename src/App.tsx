@@ -743,8 +743,36 @@ export default function App() {
       const payload = await ensureUserOnboarded(userId);
       const uniqueProducts = deduplicateProducts(payload.sanPhams);
       setSanPhams(uniqueProducts);
-      setNhapXuats(payload.nhapXuats);
-      setNhapXuatCTs(payload.nhapXuatCTs);
+
+      // Tránh việc ghi đè làm mất các phiếu mới tạo cục bộ do độ trễ đồng bộ (replication lag) của database
+      const dbNhapXuats = payload.nhapXuats || [];
+      const dbNhapXuatCTs = payload.nhapXuatCTs || [];
+
+      // Lấy danh sách phiếu hiện tại từ State
+      const mergedNhapXuats = [...dbNhapXuats];
+      const mergedNhapXuatCTs = [...dbNhapXuatCTs];
+
+      nhapXuats.forEach(localNx => {
+        if (localNx.HOA_DON && !localNx.HOA_DON.includes('_temp_')) {
+          const exists = dbNhapXuats.some(dbNx => dbNx.HOA_DON === localNx.HOA_DON);
+          if (!exists) {
+            console.log(`[Sync] Phát hiện phiếu mới tạo cục bộ chưa cập nhật kịp lên database, giữ lại: ${localNx.HOA_DON}`);
+            mergedNhapXuats.push(localNx);
+
+            // Gộp các chi tiết tương ứng
+            const localDetails = nhapXuatCTs.filter(d => d.HOA_DON === localNx.HOA_DON);
+            localDetails.forEach(localD => {
+              const detailExists = dbNhapXuatCTs.some(dbD => dbD.HOA_DON === localD.HOA_DON && dbD.SKU === localD.SKU);
+              if (!detailExists) {
+                mergedNhapXuatCTs.push(localD);
+              }
+            });
+          }
+        }
+      });
+
+      setNhapXuats(mergedNhapXuats);
+      setNhapXuatCTs(mergedNhapXuatCTs);
       setKiemKhos(payload.kiemKhos);
       setThuongHieus(payload.thuongHieus);
       setChiNhanhs(payload.chiNhanhs);
@@ -756,8 +784,8 @@ export default function App() {
 
       // Lưu trữ đồng bộ tức thì vào LocalStorage để đảm bảo tính sẵn sàng
       localStorage.setItem('B_SANPHAM', JSON.stringify(uniqueProducts));
-      localStorage.setItem('B_NHAPXUAT', JSON.stringify(payload.nhapXuats));
-      localStorage.setItem('B_NHAPXUATCT', JSON.stringify(payload.nhapXuatCTs));
+      localStorage.setItem('B_NHAPXUAT', JSON.stringify(mergedNhapXuats));
+      localStorage.setItem('B_NHAPXUATCT', JSON.stringify(mergedNhapXuatCTs));
       localStorage.setItem('B_KIEMKHO', JSON.stringify(payload.kiemKhos));
       localStorage.setItem('B_THUONGHIEU', JSON.stringify(payload.thuongHieus));
       localStorage.setItem('B_CHINHANH', JSON.stringify(payload.chiNhanhs));
