@@ -1178,10 +1178,10 @@ export default function App() {
     }
   }, [themeMode]);
 
-  // Tự động tắt Toast theo loại (Thành công/Cảnh báo: 1 giây, Lỗi: 3.5 giây)
+  // Tự động tắt Toast theo loại (Thành công: 1 giây, Cảnh báo/Lỗi: 2 giây)
   useEffect(() => {
     if (successToast) {
-      const duration = successToast.type === 'error' ? 3500 : 1000;
+      const duration = successToast.type === 'success' ? 1000 : 2000;
       const timer = setTimeout(() => {
         setSuccessToast(null);
       }, duration);

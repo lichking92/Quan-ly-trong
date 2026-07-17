@@ -1,4 +1,5 @@
 import React, { useState, useMemo, useEffect } from 'react';
+import { motion, AnimatePresence } from 'motion/react';
 import { 
   ClipboardCheck, 
   Copy, 
@@ -203,6 +204,11 @@ export default function OrderParser({
   });
 
   const [selectedTempOrderIds, setSelectedTempOrderIds] = useState<string[]>([]);
+  const [deleteConfirm, setDeleteConfirm] = useState<{
+    type: 'single' | 'all' | 'selected';
+    id?: string;
+    message: string;
+  } | null>(null);
   const [isBatchPickingActive, setIsBatchPickingActive] = useState<boolean>(false);
   const [pickedItemsState, setPickedItemsState] = useState<Record<string, boolean>>({});
   
@@ -1145,14 +1151,44 @@ export default function OrderParser({
     }
   };
 
-  const handleDeleteTempOrder = async (id: string, e: React.MouseEvent) => {
+  const handleDeleteTempOrder = (id: string, e: React.MouseEvent) => {
     e.stopPropagation();
-    if (window.confirm('Bạn có chắc chắn muốn xóa thẻ gom đơn này? Thao tác này chỉ dọn dẹp thẻ gom đơn tạm và hoàn toàn KHÔNG ảnh hưởng hay xóa bất kỳ phiếu xuất kho hay tồn kho nào.')) {
+    setDeleteConfirm({
+      type: 'single',
+      id,
+      message: 'Xóa đơn hàng tạm này?'
+    });
+  };
+
+  const handleClearAllTempOrders = () => {
+    setDeleteConfirm({
+      type: 'all',
+      message: 'Xóa toàn bộ đơn hàng tạm?'
+    });
+  };
+
+  const handleDeleteSelectedTempOrders = () => {
+    if (selectedTempOrderIds.length === 0) {
+      if (onTriggerToast) onTriggerToast('Vui lòng chọn ít nhất một thẻ gom đơn để xóa!', 'warning');
+      return;
+    }
+    setDeleteConfirm({
+      type: 'selected',
+      message: `Xóa ${selectedTempOrderIds.length} đơn hàng tạm đã chọn?`
+    });
+  };
+
+  const executeDelete = async () => {
+    if (!deleteConfirm) return;
+    const { type, id } = deleteConfirm;
+    setDeleteConfirm(null);
+
+    if (type === 'single' && id) {
       // Optimistic UI update immediately
       setTempOrders(prev => prev.filter(o => o.id !== id));
       setSelectedTempOrderIds(prev => prev.filter(orderId => orderId !== id));
       
-      if (onTriggerToast) onTriggerToast('Đang xóa thẻ gom đơn trên đám mây...', 'warning');
+      if (onTriggerToast) onTriggerToast('Đang xóa đơn hàng tạm...', 'warning');
 
       try {
         // Delete details first
@@ -1173,18 +1209,18 @@ export default function OrderParser({
 
         if (headerErr) {
           console.error('Lỗi khi xóa b_gomdon trên Supabase:', headerErr);
-          if (onTriggerToast) onTriggerToast('Không thể xóa trên cơ sở dữ liệu Supabase!', 'error');
+          if (onTriggerToast) onTriggerToast('Lỗi khi xóa đơn hàng tạm trên cơ sở dữ liệu!', 'error');
         } else {
-          if (onTriggerToast) onTriggerToast('Đã xóa thẻ gom đơn thành công!', 'success');
+          if (onTriggerToast) onTriggerToast('Đã xóa đơn hàng tạm', 'success');
         }
       } catch (err) {
         console.error('Lỗi khi thực hiện xóa trên Supabase:', err);
+        if (onTriggerToast) onTriggerToast('Lỗi kết nối khi xóa đơn hàng tạm!', 'error');
       }
-    }
-  };
-
-  const handleClearAllTempOrders = async () => {
-    if (window.confirm('Bạn có chắc chắn muốn xóa TOÀN BỘ thẻ gom đơn? Thao tác này chỉ dọn dẹp các thẻ gom đơn và hoàn toàn KHÔNG ảnh hưởng tới các phiếu xuất hay tồn kho.')) {
+    } else if (type === 'all') {
+      const backupTempOrders = [...tempOrders];
+      const backupSelectedIds = [...selectedTempOrderIds];
+      
       setTempOrders([]);
       setSelectedTempOrderIds([]);
       
@@ -1209,28 +1245,26 @@ export default function OrderParser({
 
         if (headerErr) {
           console.error('Lỗi khi xóa toàn bộ b_gomdon trên Supabase:', headerErr);
-          if (onTriggerToast) onTriggerToast('Lỗi khi xóa toàn bộ trên đám mây!', 'error');
+          setTempOrders(backupTempOrders);
+          setSelectedTempOrderIds(backupSelectedIds);
+          if (onTriggerToast) onTriggerToast('Lỗi khi xóa toàn bộ đơn hàng tạm trên cơ sở dữ liệu!', 'error');
         } else {
-          if (onTriggerToast) onTriggerToast('Đã xóa sạch toàn bộ đơn hàng tạm thành công.', 'success');
+          if (onTriggerToast) onTriggerToast('Đã xóa đơn hàng tạm', 'success');
         }
       } catch (err) {
         console.error('Lỗi khi xóa toàn bộ trên Supabase:', err);
+        setTempOrders(backupTempOrders);
+        setSelectedTempOrderIds(backupSelectedIds);
+        if (onTriggerToast) onTriggerToast('Lỗi kết nối khi dọn dẹp đơn hàng tạm!', 'error');
       }
-    }
-  };
-
-  const handleDeleteSelectedTempOrders = async () => {
-    if (selectedTempOrderIds.length === 0) {
-      if (onTriggerToast) onTriggerToast('Vui lòng chọn ít nhất một thẻ gom đơn để xóa!', 'warning');
-      return;
-    }
-    if (window.confirm(`Bạn có chắc chắn muốn xóa ${selectedTempOrderIds.length} thẻ gom đơn đã chọn? Thao tác này chỉ xóa các thẻ gom đơn này và không ảnh hưởng tới các phiếu xuất hay tồn kho.`)) {
+    } else if (type === 'selected') {
       const idsToDelete = [...selectedTempOrderIds];
+      const backupTempOrders = [...tempOrders];
       
       setTempOrders(prev => prev.filter(o => !idsToDelete.includes(o.id)));
       setSelectedTempOrderIds([]);
       
-      if (onTriggerToast) onTriggerToast('Đang xóa các thẻ gom đơn đã chọn...', 'warning');
+      if (onTriggerToast) onTriggerToast('Đang xóa các đơn hàng tạm đã chọn...', 'warning');
 
       try {
         // Delete child details
@@ -1249,12 +1283,17 @@ export default function OrderParser({
 
         if (headerErr) {
           console.error('Lỗi khi xóa b_gomdon đã chọn trên Supabase:', headerErr);
-          if (onTriggerToast) onTriggerToast('Lỗi khi xóa các thẻ đã chọn trên đám mây!', 'error');
+          setTempOrders(backupTempOrders);
+          setSelectedTempOrderIds(idsToDelete);
+          if (onTriggerToast) onTriggerToast('Lỗi khi xóa các đơn hàng tạm đã chọn trên cơ sở dữ liệu!', 'error');
         } else {
-          if (onTriggerToast) onTriggerToast(`Đã xóa thành công ${idsToDelete.length} thẻ gom đơn.`, 'success');
+          if (onTriggerToast) onTriggerToast('Đã xóa đơn hàng tạm', 'success');
         }
       } catch (err) {
         console.error('Lỗi khi xóa các thẻ gom đơn đã chọn trên Supabase:', err);
+        setTempOrders(backupTempOrders);
+        setSelectedTempOrderIds(idsToDelete);
+        if (onTriggerToast) onTriggerToast('Lỗi kết nối khi xóa các đơn hàng tạm đã chọn!', 'error');
       }
     }
   };
@@ -2637,9 +2676,6 @@ export default function OrderParser({
                 <div className="space-y-4 animate-fade-in">
                   <div className="bg-indigo-50/50 border border-indigo-100/50 p-4 rounded-2xl">
                     <h3 className="font-sans font-bold text-indigo-900 text-sm">Bước 1: Chọn Đơn Hàng Soạn</h3>
-                    <p className="text-xs text-indigo-700/80 leading-relaxed mt-1">
-                      Vui lòng tích chọn các thẻ đơn tạm bạn muốn gom để đi lấy hàng. Bạn có thể thay đổi lựa chọn bất cứ lúc nào tại đây.
-                    </p>
                   </div>
 
                   <div className="flex items-center justify-between">
@@ -2743,9 +2779,6 @@ export default function OrderParser({
                     </div>
                     <div>
                       <h3 className="font-sans font-bold text-emerald-900 text-sm">Bước 2: Gom Đơn Lấy Hàng (Tổng Hợp)</h3>
-                      <p className="text-xs text-emerald-700/80 leading-relaxed mt-1">
-                        Hệ thống đã tự động gộp tất cả sản phẩm của các đơn hàng tạm được chọn, phân loại tối ưu theo <strong>Thương Hiệu → Chiết Suất</strong> để bạn thuận tiện soạn hàng nhanh nhất.
-                      </p>
                     </div>
                   </div>
 
@@ -2987,9 +3020,6 @@ export default function OrderParser({
                 <div className="space-y-4 animate-fade-in">
                   <div className="bg-indigo-50/50 border border-indigo-100/50 p-4 rounded-2xl">
                     <h3 className="font-sans font-bold text-indigo-900 text-sm">Bước 3: Xác Nhận Đã Lấy Hàng</h3>
-                    <p className="text-xs text-indigo-700/80 leading-relaxed mt-1">
-                      Khi lấy hàng ngoài kệ kho, vui lòng <strong>tích chọn</strong> từng sản phẩm đã lấy. Thanh tiến độ sẽ tự động cập nhật giúp bạn kiểm soát việc lấy hàng đầy đủ, tránh nhầm lẫn.
-                    </p>
                   </div>
 
                   {/* Interactive Progress Tracking */}
@@ -3141,9 +3171,6 @@ export default function OrderParser({
                     </div>
                     <div>
                       <h3 className="font-sans font-bold text-amber-900 text-sm">Bước 4: Tạo Phiếu Xuất</h3>
-                      <p className="text-xs text-amber-700/80 leading-relaxed mt-1">
-                        Xem lại các thẻ đơn và chọn hình thức xuất kho để hoàn tất quy trình.
-                      </p>
                     </div>
                   </div>
 
@@ -3373,6 +3400,49 @@ export default function OrderParser({
           </div>
         </div>
       )}
+
+      {/* Toast Confirmation UI */}
+      <AnimatePresence>
+        {deleteConfirm && (
+          <motion.div
+            initial={{ opacity: 0, y: 50, scale: 0.95 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: 30, scale: 0.95 }}
+            transition={{ type: "spring", stiffness: 350, damping: 25 }}
+            className="fixed bottom-6 left-4 right-4 md:left-auto md:right-6 md:w-96 z-[9999]"
+          >
+            <div className="bg-slate-900 text-white rounded-2xl shadow-2xl border border-slate-800 p-4 flex flex-col gap-3">
+              <div className="flex items-start gap-3">
+                <div className="w-9 h-9 rounded-xl bg-rose-500/10 flex items-center justify-center text-rose-400 shrink-0 border border-rose-500/20">
+                  <Trash2 className="w-4.5 h-4.5" />
+                </div>
+                <div className="space-y-0.5">
+                  <h4 className="font-sans font-bold text-sm text-slate-100">
+                    {deleteConfirm.message}
+                  </h4>
+                  <p className="text-[11px] text-slate-400 leading-normal font-sans">
+                    Thao tác này chỉ dọn dẹp các đơn tạm và hoàn toàn không ảnh hưởng tới phiếu xuất hay tồn kho.
+                  </p>
+                </div>
+              </div>
+              <div className="flex items-center justify-end gap-2 pt-1 border-t border-slate-800/80">
+                <button
+                  onClick={() => setDeleteConfirm(null)}
+                  className="py-2 px-3.5 bg-slate-800 hover:bg-slate-700 hover:text-white text-slate-300 font-bold text-xs rounded-xl transition-all cursor-pointer"
+                >
+                  Hủy
+                </button>
+                <button
+                  onClick={executeDelete}
+                  className="py-2 px-4.5 bg-rose-600 hover:bg-rose-500 text-white font-bold text-xs rounded-xl transition-all shadow-md shadow-rose-950/20 cursor-pointer active:scale-95"
+                >
+                  Xóa
+                </button>
+              </div>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
     </div>
   );
