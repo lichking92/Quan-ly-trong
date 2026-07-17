@@ -2111,12 +2111,12 @@ export default function TransactionHistory({
         </div>
 
         {/* Row 3: Các tác vụ bổ sung (Gộp nhóm, Sắp xếp cột, Reset) */}
-        <div className="flex flex-wrap items-center justify-between gap-3 pt-2 border-t border-slate-100/60">
-          <div className="flex flex-wrap items-center gap-2">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-2 border-t border-slate-100/60">
+          <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
             {/* Reset Filters */}
             <button
               onClick={handleResetFilters}
-              className="flex items-center gap-1.5 py-2 px-3 text-xs font-bold bg-slate-50 hover:bg-slate-100 border border-slate-150 text-slate-600 hover:text-slate-800 rounded-xl transition-all cursor-pointer"
+              className="flex items-center justify-center gap-1.5 py-2 px-3 text-xs font-bold bg-slate-50 hover:bg-slate-100 border border-slate-150 text-slate-600 hover:text-slate-800 rounded-xl transition-all cursor-pointer grow sm:grow-0"
               title="Xóa bộ lọc"
             >
               <RefreshCw className="w-3.5 h-3.5" />
@@ -2126,7 +2126,7 @@ export default function TransactionHistory({
             {/* Group by Date Button */}
             <button
               onClick={() => setIsGroupedByDate(!isGroupedByDate)}
-              className={`flex items-center gap-1.5 py-2 px-3 text-xs font-bold rounded-xl border transition-all cursor-pointer ${
+              className={`flex items-center justify-center gap-1.5 py-2 px-3 text-xs font-bold rounded-xl border transition-all cursor-pointer grow sm:grow-0 ${
                 isGroupedByDate 
                   ? 'bg-red-50 text-red-650 border-red-200' 
                   : 'bg-white hover:bg-slate-50 text-slate-500 border-slate-150'
@@ -2139,10 +2139,10 @@ export default function TransactionHistory({
           </div>
 
           {/* Column Chooser Button */}
-          <div className="relative">
+          <div className="relative w-full sm:w-auto">
             <button
               onClick={() => setShowColumnChooser(!showColumnChooser)}
-              className={`flex items-center gap-1.5 py-2 px-3 text-xs font-bold rounded-xl border transition-all cursor-pointer ${
+              className={`flex items-center justify-center gap-1.5 py-2 px-3 text-xs font-bold rounded-xl border transition-all cursor-pointer w-full sm:w-auto ${
                 showColumnChooser 
                   ? 'bg-blue-50 text-blue-600 border-blue-200' 
                   : 'bg-white hover:bg-slate-50 text-slate-500 border-slate-150'
@@ -2155,37 +2155,43 @@ export default function TransactionHistory({
             <AnimatePresence>
               {showColumnChooser && (
                 <>
-                  <div className="fixed inset-0 z-30" onClick={() => setShowColumnChooser(false)} />
+                  <div className="fixed inset-0 bg-slate-900/40 md:bg-transparent z-30" onClick={() => setShowColumnChooser(false)} />
                   <motion.div
                     initial={{ opacity: 0, y: 5 }}
                     animate={{ opacity: 1, y: 0 }}
                     exit={{ opacity: 0, y: 5 }}
-                    className="absolute right-0 mt-2 w-64 bg-white border border-slate-150 rounded-xl shadow-lg z-40 p-3 space-y-2 text-xs"
+                    className="fixed bottom-4 left-4 right-4 md:absolute md:bottom-auto md:top-full md:right-0 md:left-auto md:mt-2 w-auto md:w-64 bg-white border border-slate-150 rounded-2xl md:rounded-xl shadow-2xl md:shadow-lg z-40 p-4 md:p-3 space-y-2 text-xs max-h-[85vh] md:max-h-none overflow-y-auto"
                   >
-                    <h4 className="font-bold text-slate-700 border-b border-slate-100 pb-1.5 mb-1.5 uppercase tracking-wider text-[9px] flex justify-between items-center">
+                    <h4 className="font-bold text-slate-700 border-b border-slate-100 pb-2 md:pb-1.5 mb-2 md:mb-1.5 uppercase tracking-wider text-[11px] md:text-[9px] flex justify-between items-center">
                       <span>Cấu hình cột hiển thị</span>
-                      <span className="text-[8px] text-slate-400 normal-case font-medium">Bấm ↑ ↓ để xếp lại</span>
+                      <span className="hidden md:inline text-[8px] text-slate-400 normal-case font-medium">Bấm ↑ ↓ để xếp lại</span>
+                      <button 
+                        onClick={() => setShowColumnChooser(false)}
+                        className="md:hidden p-1 hover:bg-slate-100 rounded-lg text-slate-400 hover:text-slate-600 font-bold"
+                      >
+                        ✕
+                      </button>
                     </h4>
                     <div className="space-y-1.5 max-h-72 overflow-y-auto">
                       {columnOrder.map((colKey, index) => {
                         const colDef = colDefinitions[colKey];
                         if (!colDef) return null;
                         return (
-                          <div key={colKey} className="flex items-center justify-between p-1 hover:bg-slate-50 rounded-lg gap-2">
-                            <label className="flex items-center gap-2 cursor-pointer font-semibold text-slate-600 hover:text-slate-800 grow truncate">
+                          <div key={colKey} className="flex items-center justify-between p-1.5 md:p-1 hover:bg-slate-50 rounded-lg gap-2 min-h-[40px] md:min-h-0">
+                            <label className="flex items-center gap-2.5 cursor-pointer font-semibold text-slate-600 hover:text-slate-800 grow truncate py-1 md:py-0 select-none">
                               <input 
                                 type="checkbox" 
                                 checked={visibleColumns[colKey] !== false}
                                 onChange={() => toggleColumnVisibility(colKey)}
-                                className="rounded border-slate-300 text-blue-600 focus:ring-blue-500 w-3.5 h-3.5 cursor-pointer"
+                                className="rounded border-slate-300 text-blue-600 focus:ring-blue-500 w-4 h-4 md:w-3.5 md:h-3.5 cursor-pointer"
                               />
-                              <span className="truncate">{colDef.label}</span>
+                              <span className="truncate text-xs md:text-xs">{colDef.label}</span>
                             </label>
-                            <div className="flex items-center gap-0.5 shrink-0">
+                            <div className="flex items-center gap-1 md:gap-0.5 shrink-0">
                               <button
                                 disabled={index === 0}
                                 onClick={() => handleMoveColumn(index, 'up')}
-                                className="p-1 hover:bg-slate-200 text-slate-500 hover:text-slate-800 disabled:opacity-30 rounded transition-all cursor-pointer"
+                                className="p-2 md:p-1 hover:bg-slate-200 text-slate-500 hover:text-slate-800 disabled:opacity-30 rounded-lg md:rounded transition-all cursor-pointer min-w-[32px] md:min-w-0 flex items-center justify-center font-bold text-xs"
                                 title="Di chuyển lên trước"
                               >
                                 ▲
@@ -2193,7 +2199,7 @@ export default function TransactionHistory({
                               <button
                                 disabled={index === columnOrder.length - 1}
                                 onClick={() => handleMoveColumn(index, 'down')}
-                                className="p-1 hover:bg-slate-200 text-slate-500 hover:text-slate-800 disabled:opacity-30 rounded transition-all cursor-pointer"
+                                className="p-2 md:p-1 hover:bg-slate-200 text-slate-500 hover:text-slate-800 disabled:opacity-30 rounded-lg md:rounded transition-all cursor-pointer min-w-[32px] md:min-w-0 flex items-center justify-center font-bold text-xs"
                                 title="Di chuyển ra sau"
                               >
                                 ▼
@@ -2240,7 +2246,7 @@ export default function TransactionHistory({
           </div>
 
           {/* Sắp xếp nhanh */}
-          <div className="bg-slate-50/40 p-2.5 border-b border-slate-100 flex items-center justify-between gap-2 shrink-0">
+          <div className="bg-slate-50/40 p-2.5 border-b border-slate-100 flex flex-wrap items-center justify-between gap-2 shrink-0">
             <div className="flex items-center gap-1.5">
               <span className="text-[10px] uppercase font-bold text-slate-400">Sắp xếp:</span>
               <select

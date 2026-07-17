@@ -1996,23 +1996,12 @@ export default function OrderParser({
   return (
     <div className="space-y-6" id="order_parser_container">
       {/* Header section with instructions */}
-      <div className="bg-slate-50 border border-slate-100 p-4 rounded-2xl flex flex-col md:flex-row md:items-center justify-between gap-4">
+      <div className="bg-slate-50 border border-slate-100 p-4 rounded-2xl flex items-center justify-between">
         <div className="space-y-1">
           <h2 className="font-sans font-bold text-slate-800 text-lg flex items-center gap-2">
             <MessageSquare className="w-5 h-5 text-indigo-500" />
             Kiểm Tra Đơn Hàng & Gom Đơn Soạn Hàng
           </h2>
-          <p className="text-xs text-slate-500">
-            Dán tin nhắn đặt hàng, hệ thống tự động bóc tách độ SPH/CYL và tra cứu tồn kho live. Gom nhiều đơn từ các chi nhánh khác nhau để lấy hàng tối ưu cùng một lúc.
-          </p>
-        </div>
-        <div className="bg-indigo-50/60 border border-indigo-100/50 p-3 rounded-xl max-w-sm">
-          <p className="text-[10px] font-mono font-bold text-indigo-700 uppercase flex items-center gap-1">
-            <Sparkles className="w-3.5 h-3.5" /> Chuẩn tin nhắn hỗ trợ:
-          </p>
-          <p className="text-[10px] text-indigo-600/90 leading-relaxed font-sans mt-1">
-            Bắt đầu bằng dòng <strong>Thương hiệu + Chiết xuất + Tính năng</strong> (VD: <em>HEN ASX 1.56</em>), tiếp theo là danh sách dòng độ cầu + loạn + số lượng (VD: <em>-2,00 -0,50 1M</em>).
-          </p>
         </div>
       </div>
 
