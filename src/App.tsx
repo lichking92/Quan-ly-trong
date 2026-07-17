@@ -1077,6 +1077,7 @@ export default function App() {
   const [sidebarCollapsed, setSidebarCollapsed] = useState<boolean>(false);
   const [prefilledSku, setPrefilledSku] = useState<string | null>(null);
   const [prefilledCartItems, setPrefilledCartItems] = useState<{ sku: string; soLuong: number; }[] | null>(null);
+  const [prefilledGomDonId, setPrefilledGomDonId] = useState<string | null>(null);
 
   useEffect(() => {
     if (currentUser) {
@@ -1782,18 +1783,39 @@ export default function App() {
       try {
         const uId = await getUserId();
         if (uId) {
-          const [res1, res2, res3] = await Promise.all([
+          const syncPromises: Promise<any>[] = [
             syncNhapXuat(finalizedHeader, uId),
             syncNhapXuatCTs(finalizedDetails, uId),
             syncSanPhams(updatedProductsList.filter(p => affectedSKUs.includes(cleanSKU(p.SKU))), uId)
-          ]);
-          const error = res1.error || res2.error || res3.error;
+          ];
+
+          // Nếu có ID đơn hàng gom (b_gomdon) được liên kết để prefill
+          if (prefilledGomDonId) {
+            console.log(`Đồng bộ cập nhật trạng thái Đã xuất cho b_gomdon ID: ${prefilledGomDonId}`);
+            syncPromises.push(
+              (async () => {
+                const { error } = await supabase.from('b_gomdon')
+                  .update({ trang_thai: 'Đã xuất', so_phieu_xuat: newInvoiceId })
+                  .eq('id', prefilledGomDonId);
+                return { error };
+              })()
+            );
+          }
+
+          const results = await Promise.all(syncPromises);
+          setPrefilledGomDonId(null);
+
+          const error = results.find(r => r && r.error);
           if (error) {
             setSyncError({
-              table: 'b_nhapxuat / b_nhapxuatct / b_sanpham',
+              table: 'b_nhapxuat / b_nhapxuatct / b_sanpham / b_gomdon',
               action: 'Lưu hóa đơn',
               message: error.message || JSON.stringify(error)
             });
+          } else {
+            // Sau khi lưu thành công, thực hiện đồng bộ lại toàn bộ dữ liệu từ Supabase Cloud
+            // để đảm bảo 100% dữ liệu cục bộ trùng khớp tuyệt đối với database, không lo lệch state
+            await syncAllDataFromSupabase(uId, currentUser.username || '', true);
           }
         }
       } catch (err: any) {
@@ -1904,6 +1926,10 @@ export default function App() {
             ...savedTransactions.map(tx => syncNhapXuatCTs(tx.details, uId)),
             syncSanPhams(updatedProductsList.filter(p => allAffectedSKUs.includes(cleanSKU(p.SKU))), uId)
           ]);
+          
+          // Sau khi lưu thành công hàng loạt, thực hiện đồng bộ lại toàn bộ dữ liệu từ Supabase Cloud
+          // để đảm bảo 100% dữ liệu cục bộ trùng khớp tuyệt đối với database, không lo lệch state
+          await syncAllDataFromSupabase(uId, currentUser.username || '', true);
         }
       } catch (err: any) {
         console.error('Lỗi sync bulk hóa đơn:', err);
@@ -3220,12 +3246,14 @@ export default function App() {
                     onTriggerToast={(message, type) => {
                       setSuccessToast({ show: true, message, type: type || 'success', id: Date.now() });
                     }}
-                    onCreateXuatPhieu={(items) => {
+                    onCreateXuatPhieu={(items, gomDonId) => {
                       setPrefilledCartItems(items);
+                      setPrefilledGomDonId(gomDonId || null);
                       setActiveTab('TRANSACTION_XUAT');
                     }}
                     currentUser={currentUser}
                     onSaveMultipleTransactions={handleSaveMultipleTransactions}
+                    onNavigateToHistory={() => setActiveTab('HISTORY')}
                   />
                 )}
 
@@ -3240,7 +3268,10 @@ export default function App() {
                     prefilledSku={prefilledSku || undefined}
                     onClearPrefilledSku={() => setPrefilledSku(null)}
                     prefilledCartItems={prefilledCartItems || undefined}
-                    onClearPrefilledCartItems={() => setPrefilledCartItems(null)}
+                    onClearPrefilledCartItems={() => {
+                      setPrefilledCartItems(null);
+                      setPrefilledGomDonId(null);
+                    }}
                     onSaveTransaction={handleSaveTransaction}
                     onNavigateToHistory={() => setActiveTab('HISTORY')}
                     onTriggerToast={(msg) => setSuccessToast({ show: true, message: msg, type: 'success' })}
@@ -3258,7 +3289,10 @@ export default function App() {
                     prefilledSku={prefilledSku || undefined}
                     onClearPrefilledSku={() => setPrefilledSku(null)}
                     prefilledCartItems={prefilledCartItems || undefined}
-                    onClearPrefilledCartItems={() => setPrefilledCartItems(null)}
+                    onClearPrefilledCartItems={() => {
+                      setPrefilledCartItems(null);
+                      setPrefilledGomDonId(null);
+                    }}
                     onSaveTransaction={handleSaveTransaction}
                     onNavigateToHistory={() => setActiveTab('HISTORY')}
                     onTriggerToast={(msg) => setSuccessToast({ show: true, message: msg, type: 'success' })}

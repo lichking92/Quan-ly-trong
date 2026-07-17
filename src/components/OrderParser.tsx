@@ -149,11 +149,12 @@ const compareFields = (a: any, b: any, fieldKey: string) => {
 interface OrderParserProps {
   sanPhams: SanPham[];
   brandList: any[]; // b_thuonghieu list
-  onCreateXuatPhieu: (items: { sku: string; soLuong: number; }[]) => void;
+  onCreateXuatPhieu: (items: { sku: string; soLuong: number; }[], gomDonId?: string) => void;
   chiNhanhs?: string[];
   onTriggerToast?: (message: string, type?: 'success' | 'warning' | 'error') => void;
   currentUser?: any;
   onSaveMultipleTransactions?: (transactions: { header: any; details: any[] }[]) => Promise<string[]>;
+  onNavigateToHistory?: () => void;
 }
 
 interface ParsedItem {
@@ -180,7 +181,8 @@ export default function OrderParser({
   chiNhanhs = [],
   onTriggerToast,
   currentUser,
-  onSaveMultipleTransactions
+  onSaveMultipleTransactions,
+  onNavigateToHistory
 }: OrderParserProps) {
   // Sub-tab: ANALYZE (New analysis & temporary order creation) or TEMP_ORDERS (List of temporary cards & batch picking)
   const [parserViewTab, setParserViewTab] = useState<'ANALYZE' | 'TEMP_ORDERS'>('ANALYZE');
@@ -1336,7 +1338,7 @@ export default function OrderParser({
       return;
     }
 
-    onCreateXuatPhieu(validItems);
+    onCreateXuatPhieu(validItems, order.id);
     if (onTriggerToast) onTriggerToast(`Đang chuyển sang tạo phiếu xuất cho chi nhánh "${order.branch}"...`, 'success');
   };
 
@@ -1668,6 +1670,13 @@ export default function OrderParser({
       setIsBatchPickingActive(false);
       setPickingStep(1);
       setExportError(null);
+
+      // Chuyển sang tab Lịch sử để xem lại các chứng từ vừa lưu tự động
+      if (onNavigateToHistory) {
+        setTimeout(() => {
+          onNavigateToHistory();
+        }, 1200);
+      }
     } catch (e) {
       console.error('Lỗi tạo phiếu xuất tự động:', e);
       if (onTriggerToast) onTriggerToast('Lỗi nghiêm trọng khi thực hiện tạo phiếu xuất tự động!', 'error');
