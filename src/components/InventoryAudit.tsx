@@ -24,7 +24,7 @@ import {
   Filter
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { SanPham, KiemKho, User as UserType, ThươngHieu } from '../types';
+import { SanPham, KiemKho, User as UserType, ThuongHieu } from '../types';
 import { generateSKUString, formatDop, getVietnamDateString, getVietnamDateTimeString, generateSphOptions, cleanSKU, formatSKUForDisplay } from '../data/mockData';
 
 /**
@@ -43,7 +43,7 @@ interface InventoryAuditProps {
   kiemKhos: KiemKho[];
   onSaveAudit: (newAudits: KiemKho[]) => void;
   thuongHieus: string[];
-  brandList?: ThươngHieu[];
+  brandList?: ThuongHieu[];
   chiNhanhs: string[];
 }
 

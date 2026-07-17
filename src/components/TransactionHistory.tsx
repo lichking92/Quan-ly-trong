@@ -62,6 +62,13 @@ interface TransactionHistoryProps {
   onSaveTransaction?: (header: NhapXuat, details: NhapXuatCT[]) => Promise<void>;
   chiNhanhs?: string[];
   thuongHieus?: string[];
+  drillDownFilters?: {
+    historyTypeFilter: 'Tất cả' | 'NHẬP' | 'XUẤT' | 'KIỂM KHO' | 'NHẬP_KIEM_KHO' | 'XUAT_KIEM_KHO';
+    branchFilter: string;
+    fromDate: string;
+    toDate: string;
+  } | null;
+  onClearDrillDownFilters?: () => void;
 }
 
 export default function TransactionHistory({
@@ -75,7 +82,9 @@ export default function TransactionHistory({
   onHardDeleteTransaction,
   onSaveTransaction,
   chiNhanhs = [],
-  thuongHieus = []
+  thuongHieus = [],
+  drillDownFilters = null,
+  onClearDrillDownFilters
 }: TransactionHistoryProps) {
   
   // --- 1. QUẢN LÝ TRẠNG THÁI GIAO DIỆN ---
@@ -448,7 +457,7 @@ export default function TransactionHistory({
   const [searchQuery, setSearchQuery] = useState<string>(() => {
     return localStorage.getItem(`${currentUser.username}_HISTORY_FILTER_SEARCH`) || '';
   });
-  const [historyTypeFilter, setHistoryTypeFilter] = useState<'Tất cả' | 'NHẬP' | 'XUẤT' | 'KIỂM KHO'>(() => {
+  const [historyTypeFilter, setHistoryTypeFilter] = useState<'Tất cả' | 'NHẬP' | 'XUẤT' | 'KIỂM KHO' | 'NHẬP_KIEM_KHO' | 'XUAT_KIEM_KHO'>(() => {
     return (localStorage.getItem(`${currentUser.username}_HISTORY_FILTER_TYPE`) as any) || 'Tất cả';
   });
 
@@ -522,9 +531,42 @@ export default function TransactionHistory({
   useEffect(() => {
     localStorage.setItem(`${currentUser.username}_HISTORY_FILTER_TO_DATE`, toDate);
   }, [toDate, currentUser]);
+
+  useEffect(() => {
+    if (drillDownFilters) {
+      if (drillDownFilters.historyTypeFilter) {
+        setHistoryTypeFilter(drillDownFilters.historyTypeFilter);
+      }
+      if (drillDownFilters.branchFilter) {
+        setBranchFilter(drillDownFilters.branchFilter);
+      }
+      if (drillDownFilters.fromDate !== undefined) {
+        setFromDate(drillDownFilters.fromDate);
+      }
+      if (drillDownFilters.toDate !== undefined) {
+        setToDate(drillDownFilters.toDate);
+      }
+      if (onClearDrillDownFilters) {
+        onClearDrillDownFilters();
+      }
+    }
+  }, [drillDownFilters, onClearDrillDownFilters]);
   const [columnOrder, setColumnOrder] = useState<string[]>(() => {
+    const defaultColumnKeys = ['invoiceNo', 'type', 'status', 'datetime', 'branch', 'creator', 'totalQty', 'note'];
     const saved = localStorage.getItem(`${currentUser.username}_HISTORY_COLUMN_ORDER`);
-    return saved ? JSON.parse(saved) : ['invoiceNo', 'type', 'status', 'datetime', 'branch', 'creator', 'totalQty', 'note'];
+    if (saved) {
+      try {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed)) {
+          const filtered = parsed.filter(key => defaultColumnKeys.includes(key));
+          const missing = defaultColumnKeys.filter(key => !filtered.includes(key));
+          return [...filtered, ...missing];
+        }
+      } catch (e) {
+        console.error(e);
+      }
+    }
+    return defaultColumnKeys;
   });
 
   const handleMoveColumn = (index: number, direction: 'up' | 'down') => {
@@ -542,8 +584,7 @@ export default function TransactionHistory({
   // Column Customization States
   const [showColumnChooser, setShowColumnChooser] = useState(false);
   const [visibleColumns, setVisibleColumns] = useState<Record<string, boolean>>(() => {
-    const saved = localStorage.getItem(`${currentUser.username}_HISTORY_VISIBLE_COLUMNS`);
-    return saved ? JSON.parse(saved) : {
+    const defaultVisible = {
       invoiceNo: true,
       type: true,
       status: true,
@@ -553,11 +594,22 @@ export default function TransactionHistory({
       totalQty: true,
       note: true
     };
+    const saved = localStorage.getItem(`${currentUser.username}_HISTORY_VISIBLE_COLUMNS`);
+    if (saved) {
+      try {
+        const parsed = JSON.parse(saved);
+        if (parsed && typeof parsed === 'object') {
+          return { ...defaultVisible, ...parsed };
+        }
+      } catch (e) {
+        console.error(e);
+      }
+    }
+    return defaultVisible;
   });
 
   const [columnWidths, setColumnWidths] = useState<Record<string, number>>(() => {
-    const saved = localStorage.getItem(`${currentUser.username}_HISTORY_TABLE_COLUMN_WIDTHS`);
-    return saved ? JSON.parse(saved) : {
+    const defaultWidths = {
       invoiceNo: 140,
       type: 110,
       status: 110,
@@ -567,6 +619,18 @@ export default function TransactionHistory({
       totalQty: 90,
       note: 200
     };
+    const saved = localStorage.getItem(`${currentUser.username}_HISTORY_TABLE_COLUMN_WIDTHS`);
+    if (saved) {
+      try {
+        const parsed = JSON.parse(saved);
+        if (parsed && typeof parsed === 'object') {
+          return { ...defaultWidths, ...parsed };
+        }
+      } catch (e) {
+        console.error(e);
+      }
+    }
+    return defaultWidths;
   });
 
   // Trạng thái cho Form Sửa/Thêm dòng trong phiếu chi tiết
@@ -624,7 +688,20 @@ export default function TransactionHistory({
   // --- 2. LỌC DANH SÁCH HÓA ĐƠN HIỂN THỊ ---
   const filteredInvoices = useMemo(() => {
     const list = nhapXuats.filter(h => {
-      const matchType = historyTypeFilter === 'Tất cả' || h.LOAI === historyTypeFilter;
+      let matchType = false;
+      if (historyTypeFilter === 'Tất cả') {
+        matchType = true;
+      } else if (historyTypeFilter === 'NHẬP') {
+        matchType = h.LOAI === 'NHẬP' && !h.HOA_DON.startsWith('PNK');
+      } else if (historyTypeFilter === 'XUẤT') {
+        matchType = h.LOAI === 'XUẤT' && !h.HOA_DON.startsWith('PXK');
+      } else if (historyTypeFilter === 'NHẬP_KIEM_KHO') {
+        matchType = h.LOAI === 'NHẬP' && h.HOA_DON.startsWith('PNK');
+      } else if (historyTypeFilter === 'XUAT_KIEM_KHO') {
+        matchType = h.LOAI === 'XUẤT' && h.HOA_DON.startsWith('PXK');
+      } else {
+        matchType = h.LOAI === historyTypeFilter;
+      }
       const matchSearch = h.HOA_DON.toLowerCase().includes(searchQuery.toLowerCase()) ||
                           h.TEN_NGUOI_TAO.toLowerCase().includes(searchQuery.toLowerCase()) ||
                           h.CHI_NHANH.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -1958,16 +2035,21 @@ export default function TransactionHistory({
           </div>
 
           {/* Lọc loại phiếu */}
-          <div className="flex bg-slate-100 p-1 rounded-xl w-full lg:w-auto overflow-x-auto">
-            {(['Tất cả', 'NHẬP', 'XUẤT', 'KIỂM KHO'] as const).map(type => (
+          <div className="flex bg-slate-100 p-1 rounded-xl w-full lg:w-auto overflow-x-auto gap-0.5">
+            {(['Tất cả', 'NHẬP', 'XUẤT', 'NHẬP_KIEM_KHO', 'XUAT_KIEM_KHO', 'KIỂM KHO'] as const).map(type => (
               <button
                 key={type}
                 onClick={() => { setHistoryTypeFilter(type); setSelectedInvoice(null); }}
-                className={`py-1.5 px-3.5 text-xs font-bold rounded-lg transition-all cursor-pointer whitespace-nowrap ${
+                className={`py-1.5 px-3 text-xs font-bold rounded-lg transition-all cursor-pointer whitespace-nowrap ${
                   historyTypeFilter === type ? 'bg-red-650 text-white shadow-xs' : 'text-slate-500 hover:text-slate-700'
                 }`}
               >
-                {type === 'Tất cả' ? 'Mọi loại phiếu' : type}
+                {type === 'Tất cả' && 'Mọi loại phiếu'}
+                {type === 'NHẬP' && 'Phiếu Nhập (PN)'}
+                {type === 'XUẤT' && 'Phiếu Xuất (PX)'}
+                {type === 'NHẬP_KIEM_KHO' && 'Nhập Kiểm Kho (PNK)'}
+                {type === 'XUAT_KIEM_KHO' && 'Xuất Kiểm Kho (PXK)'}
+                {type === 'KIỂM KHO' && 'Kiểm Kho (PKK)'}
               </button>
             ))}
           </div>

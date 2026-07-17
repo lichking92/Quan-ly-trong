@@ -4,6 +4,7 @@
  */
 
 import React, { useState, useMemo, useEffect } from 'react';
+import { monitor } from '../utils/debugMonitor';
 import { 
   FileText, 
   MapPin, 
@@ -28,7 +29,7 @@ import {
   ListPlus
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { SanPham, NhapXuat, NhapXuatCT, LoaiPhieu, User as UserType, ThươngHieu } from '../types';
+import { SanPham, NhapXuat, NhapXuatCT, LoaiPhieu, User as UserType, ThuongHieu } from '../types';
 import { generateSKUString, formatDop, getVietnamDateString, getVietnamDateTimeString, generateSphOptions, formatSKUForDisplay, cleanSKU } from '../data/mockData';
 
 /**
@@ -44,7 +45,7 @@ interface TransactionFormProps {
   sanPhams: SanPham[];
   chiNhanhs: string[];
   thuongHieus: string[];
-  brandList?: ThươngHieu[];
+  brandList?: ThuongHieu[];
   loaiPhieuMacDinh: 'NHẬP' | 'XUẤT';
   prefilledSku?: string;
   onClearPrefilledSku?: () => void;
@@ -85,6 +86,7 @@ export default function TransactionForm({
   onNavigateToHistory,
   onTriggerToast
 }: TransactionFormProps) {
+  monitor.trackRender('TransactionForm');
   
   // --- 1. THÔNG TIN CHỨNG TỪ (BẢNG 1) ---
   const [loaiPhieu, setLoaiPhieu] = useState<LoaiPhieu>(loaiPhieuMacDinh);

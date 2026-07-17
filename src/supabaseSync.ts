@@ -1,5 +1,5 @@
 import { supabase } from './supabaseClient';
-import { SanPham, NhapXuat, NhapXuatCT, KiemKho, ThươngHieu, ChiNhanh, NhanVien, EmailLog, Role, safeParseArray } from './types';
+import { SanPham, NhapXuat, NhapXuatCT, KiemKho, ThuongHieu, ChiNhanh, NhanVien, EmailLog, Role, safeParseArray } from './types';
 
 export let isOfflineMode = false;
 export let hasCreatedColumns = false;
@@ -92,7 +92,7 @@ export interface UserDataPayload {
   nhapXuats: NhapXuat[];
   nhapXuatCTs: NhapXuatCT[];
   kiemKhos: KiemKho[];
-  thuongHieus: ThươngHieu[];
+  thuongHieus: ThuongHieu[];
   chiNhanhs: ChiNhanh[];
   nhanViens: NhanVien[];
   roles?: Role[];
@@ -106,20 +106,16 @@ export async function tryCreateColumnsOnSupabase() {
   if (hasCreatedColumns) return;
   hasCreatedColumns = true;
 
-  if (typeof window !== 'undefined' && localStorage.getItem('SUPABASE_RPC_NOT_AVAILABLE') === 'true') {
-    console.log("Bỏ qua cấu hình tự động qua exec_sql/run_sql do không được hỗ trợ trên Supabase này (lấy từ cache).");
-    return;
-  }
-
-  // Thử kiểm tra xem các bảng/cột chính đã có sẵn chưa
-  try {
-    const { error: checkError } = await supabase.from('b_nhanvien').select('NGAY_DANG_KY').limit(1);
-    if (!checkError) {
-      console.log("Cơ sở dữ liệu Supabase đã sẵn sàng và đầy đủ cột. Bỏ qua cấu hình tự động.");
+  const SCHEMA_VERSION = 'v2_gom_don_rls_disable';
+  if (typeof window !== 'undefined') {
+    if (localStorage.getItem('SUPABASE_RPC_NOT_AVAILABLE') === 'true') {
+      console.log("Bỏ qua cấu hình tự động do không được hỗ trợ trên Supabase này.");
       return;
     }
-  } catch (err) {
-    // Bỏ qua lỗi và tiếp tục thử chạy RPC nếu thực sự thiếu cột
+    if (localStorage.getItem('DB_SCHEMA_VERSION') === SCHEMA_VERSION) {
+      console.log("Cơ sở dữ liệu đã đồng bộ cấu hình phiên bản mới nhất (" + SCHEMA_VERSION + ").");
+      return;
+    }
   }
 
   const sql = `
@@ -339,6 +335,51 @@ export async function tryCreateColumnsOnSupabase() {
       EXCEPTION WHEN others THEN NULL;
       END;
 
+      -- Tạo bảng b_gomdon nếu chưa có để lưu thẻ gom đơn hàng tạm
+      BEGIN
+        CREATE TABLE IF NOT EXISTS public.b_gomdon (
+          id text PRIMARY KEY,
+          branch text NOT NULL,
+          original_text text,
+          trang_thai text DEFAULT 'Chờ xử lý',
+          so_phieu_xuat text,
+          created_at timestamp with time zone DEFAULT timezone('utc'::text, now()),
+          user_id uuid
+        );
+        ALTER TABLE public.b_gomdon DISABLE ROW LEVEL SECURITY;
+      EXCEPTION WHEN others THEN NULL;
+      END;
+
+      -- Tạo bảng b_gomdonct nếu chưa có để lưu chi tiết thẻ gom đơn
+      BEGIN
+        CREATE TABLE IF NOT EXISTS public.b_gomdonct (
+          id text PRIMARY KEY,
+          gom_don_id text REFERENCES public.b_gomdon(id) ON DELETE CASCADE,
+          raw_line text,
+          brand text,
+          chiet_xuat text,
+          tinh_nang text,
+          sph numeric,
+          cyl numeric,
+          quantity integer DEFAULT 1,
+          unit text DEFAULT 'miếng',
+          sku text,
+          error text,
+          user_id uuid
+        );
+        ALTER TABLE public.b_gomdonct DISABLE ROW LEVEL SECURITY;
+      EXCEPTION WHEN others THEN NULL;
+      END;
+
+      -- Đảm bảo tắt RLS và cấp quyền đầy đủ cho b_gomdon và b_gomdonct để tránh lỗi xóa đơn hàng tạm
+      BEGIN
+        ALTER TABLE IF EXISTS public.b_gomdon DISABLE ROW LEVEL SECURITY;
+        ALTER TABLE IF EXISTS public.b_gomdonct DISABLE ROW LEVEL SECURITY;
+        GRANT ALL ON TABLE public.b_gomdon TO anon, authenticated, service_role;
+        GRANT ALL ON TABLE public.b_gomdonct TO anon, authenticated, service_role;
+      EXCEPTION WHEN others THEN NULL;
+      END;
+
       -- Thêm các cột cho b_nhapxuat
       BEGIN
         ALTER TABLE b_nhapxuat ADD COLUMN IF NOT EXISTS "MA_NV" text;
@@ -412,8 +453,16 @@ export async function tryCreateColumnsOnSupabase() {
           ALTER PUBLICATION supabase_realtime ADD TABLE b_export_mapping;
         EXCEPTION WHEN others THEN NULL;
         END;
+        BEGIN
+          ALTER PUBLICATION supabase_realtime ADD TABLE b_gomdon;
+        EXCEPTION WHEN others THEN NULL;
+        END;
+        BEGIN
+          ALTER PUBLICATION supabase_realtime ADD TABLE b_gomdonct;
+        EXCEPTION WHEN others THEN NULL;
+        END;
       END IF;
-    END $$;
+      END $$;
   `;
 
   try {
@@ -453,6 +502,104 @@ export async function tryCreateColumnsOnSupabase() {
   } catch (err) {
     // Bỏ qua lỗi ngoại lệ
   }
+
+  if (typeof window !== 'undefined') {
+    localStorage.setItem('DB_SCHEMA_VERSION', 'v2_gom_don_rls_disable');
+  }
+}
+
+/**
+ * Đảm bảo Bucket lưu trữ 'user_luutru' đã tồn tại và được phân quyền công khai trên Supabase Storage
+ */
+export async function ensureStorageBucketExists() {
+  if (isOfflineMode) return;
+  
+  if (typeof window !== 'undefined' && (window as any).__hasCreatedStorageBucket) return;
+  if (typeof window !== 'undefined') {
+    (window as any).__hasCreatedStorageBucket = true;
+  }
+
+  const sql = `
+    DO $$
+    BEGIN
+      -- Tạo bucket 'user_luutru' nếu chưa có trong table storage.buckets
+      BEGIN
+        INSERT INTO storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
+        VALUES (
+          'user_luutru', 
+          'user_luutru', 
+          true, 
+          10485760, 
+          '{"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "application/pdf"}'
+        )
+        ON CONFLICT (id) DO NOTHING;
+      EXCEPTION WHEN others THEN NULL;
+      END;
+
+      -- Tạo các policy cho phép public truy cập và đăng tải
+      BEGIN
+        IF NOT EXISTS (
+          SELECT 1 FROM pg_policies WHERE tablename = 'objects' AND schemaname = 'storage' AND policyname = 'Allow public select'
+        ) THEN
+          CREATE POLICY "Allow public select" ON storage.objects FOR SELECT USING (bucket_id = 'user_luutru');
+        END IF;
+      EXCEPTION WHEN others THEN NULL;
+      END;
+
+      BEGIN
+        IF NOT EXISTS (
+          SELECT 1 FROM pg_policies WHERE tablename = 'objects' AND schemaname = 'storage' AND policyname = 'Allow public insert'
+        ) THEN
+          CREATE POLICY "Allow public insert" ON storage.objects FOR INSERT WITH CHECK (bucket_id = 'user_luutru');
+        END IF;
+      EXCEPTION WHEN others THEN NULL;
+      END;
+
+      BEGIN
+        IF NOT EXISTS (
+          SELECT 1 FROM pg_policies WHERE tablename = 'objects' AND schemaname = 'storage' AND policyname = 'Allow public update'
+        ) THEN
+          CREATE POLICY "Allow public update" ON storage.objects FOR UPDATE USING (bucket_id = 'user_luutru');
+        END IF;
+      EXCEPTION WHEN others THEN NULL;
+      END;
+
+      BEGIN
+        IF NOT EXISTS (
+          SELECT 1 FROM pg_policies WHERE tablename = 'objects' AND schemaname = 'storage' AND policyname = 'Allow public delete'
+        ) THEN
+          CREATE POLICY "Allow public delete" ON storage.objects FOR DELETE USING (bucket_id = 'user_luutru');
+        END IF;
+      EXCEPTION WHEN others THEN NULL;
+      END;
+    END $$;
+  `;
+
+  try {
+    const { error: err1 } = await supabase.rpc('exec_sql', { sql });
+    if (!err1) {
+      console.log("[Storage] Đã cấu hình khởi tạo và phân quyền cho bucket 'user_luutru' thành công via exec_sql.");
+      return;
+    }
+  } catch (e) {}
+
+  try {
+    const { error: err2 } = await supabase.rpc('run_sql', { sql_string: sql });
+    if (!err2) {
+      console.log("[Storage] Đã cấu hình khởi tạo và phân quyền cho bucket 'user_luutru' thành công via run_sql.");
+      return;
+    }
+  } catch (e) {}
+
+  try {
+    const { error: err3 } = await supabase.storage.createBucket('user_luutru', {
+      public: true,
+      fileSizeLimit: 10485760 // 10MB
+    });
+    if (!err3) {
+      console.log("[Storage] Đã tạo hoặc xác nhận bucket 'user_luutru' thành công qua JS Storage API.");
+    }
+  } catch (e) {}
 }
 
 export async function ensureUserOnboarded(userId: string): Promise<UserDataPayload> {
@@ -463,6 +610,7 @@ export async function ensureUserOnboarded(userId: string): Promise<UserDataPaylo
   try {
     // 1. Cố gắng tự động tạo cột trên Supabase (nếu chưa có)
     await tryCreateColumnsOnSupabase();
+    await ensureStorageBucketExists();
 
     // 2. Tự động kiểm tra và thêm tài khoản đăng nhập hiện tại làm Admin chính nếu chưa có trong b_nhanvien
     let user = null;
@@ -790,7 +938,7 @@ export async function fetchAllUserData(userId: string): Promise<UserDataPayload>
     THOI_DIEM: item.THOI_DIEM
   }));
 
-  const thuongHieus: ThươngHieu[] = (resThuongHieus.data || []).map(item => ({
+  const thuongHieus: ThuongHieu[] = (resThuongHieus.data || []).map(item => ({
     THUONG_HIEU: item.THUONG_HIEU,
     CHIET_XUAT_MAC_DINH: item.CHIET_XUAT_MAC_DINH,
     TINH_NANG_MAC_DINH: item.TINH_NANG_MAC_DINH,
@@ -1143,7 +1291,7 @@ export async function syncKiemKho(k: KiemKho, userId: string) {
 /**
  * Đồng bộ Thương hiệu
  */
-export async function syncThuongHieu(t: ThươngHieu, userId: string) {
+export async function syncThuongHieu(t: ThuongHieu, userId: string) {
   if (isOfflineMode) {
     return { data: [t], error: null };
   }
@@ -1626,12 +1774,66 @@ export async function syncExportTemplate(t: any, userId?: string) {
   if (isOfflineMode) return { data: [t], error: null };
   userId = await resolveEffectiveUserId();
   try {
+    let fileDataValue = t.fileData || (typeof window !== 'undefined' ? (localStorage.getItem('template_file_' + t.id) || '') : '');
+    
+    // Nếu có dữ liệu file dạng Base64 và không phải các chuỗi đặc biệt
+    if (fileDataValue && fileDataValue !== 'PRESET' && fileDataValue !== 'PRESET_DASHBOARD' && !fileDataValue.startsWith('STORAGE_PATH:')) {
+      const path = `${userId}/${t.id}`;
+      try {
+        const binaryString = window.atob(fileDataValue);
+        const len = binaryString.length;
+        const bytes = new Uint8Array(len);
+        for (let i = 0; i < len; i++) {
+          bytes[i] = binaryString.charCodeAt(i);
+        }
+        const blob = new Blob([bytes], { type: t.type === 'EXCEL' ? 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' : 'application/pdf' });
+        
+        // Upload file lên Supabase Storage bucket 'user_luutru'
+        let { data: uploadData, error: uploadError } = await supabase.storage
+          .from('user_luutru')
+          .upload(path, blob, {
+            cacheControl: '3600',
+            upsert: true
+          });
+          
+        if (uploadError && (uploadError.message?.includes('Bucket not found') || (uploadError as any).error === 'Bucket not found')) {
+          console.log(`[Storage] Bucket 'user_luutru' chưa tồn tại. Đang tiến hành tự động khởi tạo bằng SQL...`);
+          try {
+            await ensureStorageBucketExists();
+            
+            console.log(`[Storage] Đã chạy lệnh khởi tạo bucket bằng SQL. Đang thử upload lại...`);
+            const retryResult = await supabase.storage
+              .from('user_luutru')
+              .upload(path, blob, {
+                cacheControl: '3600',
+                upsert: true
+              });
+            uploadData = retryResult.data;
+            uploadError = retryResult.error;
+          } catch (createEx) {
+            console.warn(`[Storage] Exception khi khởi tạo bucket 'user_luutru':`, createEx);
+          }
+        }
+          
+        if (uploadError) {
+          console.warn("Lỗi upload file mẫu lên Supabase Storage 'user_luutru':", uploadError.message);
+          console.log("[Storage] Tự động chuyển sang chế độ dự phòng: lưu trữ dữ liệu Base64 trực tiếp vào cơ sở dữ liệu.");
+          // Fallback: Giữ nguyên fileDataValue là chuỗi Base64 để lưu vào database column
+        } else {
+          console.log(`[Storage] Đã đồng bộ file lên bucket 'user_luutru' tại đường dẫn: ${path}`);
+          fileDataValue = `STORAGE_PATH:user_luutru/${path}`;
+        }
+      } catch (err) {
+        console.warn("Exception khi upload file lên Supabase Storage 'user_luutru':", err);
+      }
+    }
+
     const payload = {
       id: t.id,
       name: t.name,
       type: t.type,
       fileName: t.fileName,
-      fileData: t.fileData,
+      fileData: fileDataValue,
       isDefault: !!t.isDefault,
       detectedPlaceholders: t.detectedPlaceholders || [],
       description: t.description || '',

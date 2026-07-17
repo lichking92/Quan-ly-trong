@@ -3,9 +3,77 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import ExcelJS from 'exceljs';
-import { PDFDocument } from 'pdf-lib';
 import { SanPham, NhapXuat, NhapXuatCT } from '../types';
+import { supabase } from '../supabaseClient';
+
+// Lazy loading helpers for ExcelJS and PDFDocument to minimize RAM/CPU and bundle overhead
+let cachedExcelJS: any = null;
+export async function getExcelJS() {
+  if (!cachedExcelJS) {
+    cachedExcelJS = (await import('exceljs')).default;
+  }
+  return cachedExcelJS;
+}
+
+let cachedPDFDocument: any = null;
+export async function getPDFDocument() {
+  if (!cachedPDFDocument) {
+    cachedPDFDocument = (await import('pdf-lib')).PDFDocument;
+  }
+  return cachedPDFDocument;
+}
+
+// Fetch template binary on demand to keep the application states lightweight
+export async function fetchTemplateFileData(templateId: string): Promise<string> {
+  if (templateId === 'default-phieu-xuat-excel') return 'PRESET';
+  if (templateId === 'default-dashboard-excel') return 'PRESET_DASHBOARD';
+  
+  // Try loading from localStorage cache
+  const localFile = localStorage.getItem(`template_file_${templateId}`);
+  if (localFile) {
+    return localFile;
+  }
+  
+  // Fetch on-demand from Supabase DB
+  try {
+    const { data, error } = await supabase
+      .from('b_export_template')
+      .select('fileData')
+      .eq('id', templateId)
+      .single();
+    if (!error && data?.fileData) {
+      let fileData = data.fileData;
+      
+      // If the file resides in the Supabase Storage Bucket, fetch it
+      if (fileData.startsWith('STORAGE_PATH:')) {
+        const pathSuffix = fileData.substring('STORAGE_PATH:user_luutru/'.length);
+        console.log(`[Storage] Phát hiện file mẫu lưu trữ tại Storage. Tiến hành tải từ bucket 'user_luutru' tại đường dẫn: ${pathSuffix}`);
+        const { data: blob, error: dlError } = await supabase.storage
+          .from('user_luutru')
+          .download(pathSuffix);
+          
+        if (dlError) {
+          console.warn(`Lỗi tải file mẫu từ Storage 'user_luutru':`, dlError.message);
+        } else if (blob) {
+          const arrBuf = await blob.arrayBuffer();
+          fileData = arrayBufferToBase64(arrBuf);
+          console.log(`[Storage] Đã đồng bộ thành công file mẫu từ Storage!`);
+        }
+      }
+      
+      try {
+        localStorage.setItem(`template_file_${templateId}`, fileData);
+      } catch (lsErr) {
+        console.warn('LocalStorage is full or unavailable to cache template file:', lsErr);
+      }
+      return fileData;
+    }
+  } catch (e) {
+    console.warn('Failed to fetch template fileData from Supabase on demand:', e);
+  }
+  
+  return '';
+}
 
 export interface ColumnMapping {
   excelColumn: string; // ví dụ: 'A', 'B', 'C' hoặc tên placeholder như 'REPORT_ROWS'
@@ -323,9 +391,10 @@ export async function exportReportByTemplate({
   onDownload: (blob: Blob, fileName: string) => void;
 }) {
   let arrayBuffer: ArrayBuffer;
+  const ExcelJS = await getExcelJS();
 
   // 1. Phục hồi dữ liệu binary của mẫu
-  if (template.fileData === 'PRESET') {
+  if (template.id === 'default-phieu-xuat-excel' || template.fileData === 'PRESET') {
     // Biểu mẫu preset "Phiếu Xuất Kho chuẩn"
     const tempWorkbook = new ExcelJS.Workbook();
     const tempSheet = tempWorkbook.addWorksheet('Giao_Nhận');
@@ -370,7 +439,12 @@ export async function exportReportByTemplate({
 
     const buf = await tempWorkbook.xlsx.writeBuffer();
     arrayBuffer = buf;
-  } else if (template.fileData === 'PRESET_DASHBOARD') {
+
+    try {
+      tempWorkbook.worksheets.forEach((s: any) => { s.eachRow((r: any) => { r.values = []; }); });
+      (tempWorkbook as any)._worksheets = [];
+    } catch (e) {}
+  } else if (template.id === 'default-dashboard-excel' || template.fileData === 'PRESET_DASHBOARD') {
     // Biểu mẫu preset "Dashboard Tổng hợp"
     const tempWorkbook = new ExcelJS.Workbook();
     const tempSheet = tempWorkbook.addWorksheet('Thống_Kê');
@@ -404,8 +478,14 @@ export async function exportReportByTemplate({
 
     const buf = await tempWorkbook.xlsx.writeBuffer();
     arrayBuffer = buf;
+
+    try {
+      tempWorkbook.worksheets.forEach((s: any) => { s.eachRow((r: any) => { r.values = []; }); });
+      (tempWorkbook as any)._worksheets = [];
+    } catch (e) {}
   } else {
-    arrayBuffer = base64ToArrayBuffer(template.fileData);
+    const fileData = await fetchTemplateFileData(template.id);
+    arrayBuffer = base64ToArrayBuffer(fileData);
   }
 
   // 2. Thay thế placeholders và xuất ra file tải xuống
@@ -430,11 +510,20 @@ export async function exportReportByTemplate({
           isInventory: isInventoryReport
         });
 
+        // CACHE STYLES AND HEIGHT FROM startRow BEFORE INSERTIONS TO AVOID ROW-SHIFTING BUGS
+        const templateRow = worksheet.getRow(startRow);
+        const templateHeight = templateRow.height;
+        const cachedStyles: any[] = [];
+        templateRow.eachCell({ includeEmpty: true }, (c, colNum) => {
+          cachedStyles[colNum] = c.style ? JSON.parse(JSON.stringify(c.style)) : undefined;
+        });
+
         // Điền dữ liệu vào sheet theo mapping cột và dòng bắt đầu
         dataToRender.forEach((item, index) => {
           const rowNum = startRow + index;
           // Tạo/Chèn dòng mới tại vị trí rowNum để đẩy các dòng dưới xuống, giữ nguyên vẹn form chữ ký
           const row = worksheet.insertRow(rowNum, []);
+          row.height = templateHeight;
 
           colMappings.forEach((map) => {
             const cell = row.getCell(map.excelColumn);
@@ -448,13 +537,13 @@ export async function exportReportByTemplate({
             }
           });
 
-          // Sao chép style từ dòng mẫu ban đầu (dòng startRow)
-          const templateRow = worksheet.getRow(startRow);
-          templateRow.eachCell({ includeEmpty: true }, (c, colNum) => {
-            const targetCell = row.getCell(colNum);
-            targetCell.style = { ...c.style };
+          // Sao chép style từ cached styles
+          cachedStyles.forEach((style, colNum) => {
+            if (style) {
+              const targetCell = row.getCell(colNum);
+              targetCell.style = style;
+            }
           });
-          row.height = templateRow.height;
         });
 
         // Xóa dòng mẫu ban đầu (dòng này đã bị dịch xuống phía dưới sau khi chèn các dòng dữ liệu)
@@ -479,6 +568,14 @@ export async function exportReportByTemplate({
         // Bước B: Nếu có {{DETAILS}}, chèn các dòng chi tiết và sao chép định dạng
         if (detailsRowIndex !== -1) {
           const templateRow = worksheet.getRow(detailsRowIndex);
+          const templateHeight = templateRow.height;
+          
+          // CACHE STYLES BEFORE ANY ROW INSERTIONS
+          const cachedStyles: any[] = [];
+          templateRow.eachCell({ includeEmpty: true }, (c, colNum) => {
+            cachedStyles[colNum] = c.style ? JSON.parse(JSON.stringify(c.style)) : undefined;
+          });
+
           templateRow.getCell(1).value = ''; // xóa placeholder
 
           // Tùy theo loại báo cáo, ta sẽ điền thông tin phù hợp
@@ -498,10 +595,12 @@ export async function exportReportByTemplate({
                 item.CHIET_XUAT
               ]);
 
-              newRow.height = templateRow.height;
-              templateRow.eachCell({ includeEmpty: true }, (c, colNum) => {
-                const targetCell = newRow.getCell(colNum);
-                targetCell.style = { ...c.style };
+              newRow.height = templateHeight;
+              cachedStyles.forEach((style, colNum) => {
+                if (style) {
+                  const targetCell = newRow.getCell(colNum);
+                  targetCell.style = style;
+                }
               });
             });
           } else {
@@ -518,10 +617,12 @@ export async function exportReportByTemplate({
                 (item as any).CHI_NHANH || ''
               ]);
 
-              newRow.height = templateRow.height;
-              templateRow.eachCell({ includeEmpty: true }, (c, colNum) => {
-                const targetCell = newRow.getCell(colNum);
-                targetCell.style = { ...c.style };
+              newRow.height = templateHeight;
+              cachedStyles.forEach((style, colNum) => {
+                if (style) {
+                  const targetCell = newRow.getCell(colNum);
+                  targetCell.style = style;
+                }
               });
             });
           }
@@ -560,8 +661,15 @@ export async function exportReportByTemplate({
     const outBuffer = await workbook.xlsx.writeBuffer();
     const blob = new Blob([outBuffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
     onDownload(blob, `BaoCao_Excel_${template.fileName}`);
+
+    // GC optimization: Clear large workbook objects
+    try {
+      workbook.worksheets.forEach((s: any) => { s.eachRow((r: any) => { r.values = []; }); });
+      (workbook as any)._worksheets = [];
+    } catch (e) {}
   } else {
-    // PDF rendering using pdf-lib form filling
+    // PDF rendering using pdf-lib form filling - lazy loaded
+    const PDFDocument = await getPDFDocument();
     const pdfDoc = await PDFDocument.load(arrayBuffer);
     const form = pdfDoc.getForm();
     const fields = form.getFields();
@@ -705,6 +813,7 @@ export async function exportRawData({
   onDownload: (blob: Blob, fileName: string) => void;
 }) {
   if (type === 'EXCEL') {
+    const ExcelJS = await getExcelJS();
     const workbook = new ExcelJS.Workbook();
     const sheet = workbook.addWorksheet('Dữ_Liệu_Thô_Giao_Dịch');
 
@@ -800,6 +909,12 @@ export async function exportRawData({
     const buffer = await workbook.xlsx.writeBuffer();
     const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
     onDownload(blob, `Du_Lieu_Tho_Giao_Dich_${selectedBranch.replace(/\s+/g, '_')}_${startDate}_to_${endDate}.xlsx`);
+
+    // GC optimization: Clear large workbook objects
+    try {
+      workbook.worksheets.forEach((s: any) => { s.eachRow((r: any) => { r.values = []; }); });
+      (workbook as any)._worksheets = [];
+    } catch (e) {}
   } else {
     window.print();
   }
@@ -932,26 +1047,39 @@ export function getFilteredSourceData({
     case 'LIC_SU': {
       return filteredDetails.map((d, index) => {
         const h = nhapXuats.find(x => x.HOA_DON === d.HOA_DON);
+        const tDau = sanPhams.find(p => p.SKU === d.SKU)?.TON_DAU ?? 0;
+        const tCuoi = sanPhams.find(p => p.SKU === d.SKU)?.TON_CUOI ?? 0;
         return {
           STT: index + 1,
           HOA_DON: d.HOA_DON,
           NGAY: d.NGAY,
           CHI_NHANH: h?.CHI_NHANH || '',
           KHO: h?.CHI_NHANH || '',
-          TEN_NGUOI_TAO: h?.TEN_NGUOI_TAO || '',
+          TEN_NGUOI_TAO: h?.TEN_NGUOI_TAO || 'Chủ cửa hàng',
           LOAI: d.LOAI,
           SKU: d.SKU,
           TEN_SP: d.TEN_SP,
+          TEN_SAN_PHAM: d.TEN_SP,
           THUONG_HIEU: d.THUONG_HIEU,
           CHIET_XUAT: d.CHIET_XUAT,
+          CHIET_SUAT: d.CHIET_XUAT,
           TINH_NANG: d.TINH_NANG,
           SPH: d.SPH,
+          CAN: d.SPH,
           CYL: d.CYL,
+          LOAN: d.CYL,
           SO_LUONG: d.SO_LUONG,
           DVT: d.DVT || 'Cặp',
           GHI_CHU: d.GHI_CHU || h?.GHI_CHU || '',
-          TON_DAU: sanPhams.find(p => p.SKU === d.SKU)?.TON_DAU ?? 0,
-          TON_CUOI: sanPhams.find(p => p.SKU === d.SKU)?.TON_CUOI ?? 0,
+          TON_DAU: tDau,
+          TON_CUOI: tCuoi,
+          TONG_TON: tCuoi,
+          TONG_NHAP: d.LOAI === 'NHẬP' ? d.SO_LUONG : 0,
+          TONG_XUAT: d.LOAI === 'XUẤT' ? d.SO_LUONG : 0,
+          SO_CHUNG_TU: 1,
+          TONG_CHUNG_TU: 1,
+          SO_SKU: 1,
+          TONG_SKU: 1,
         };
       });
     }
@@ -971,17 +1099,37 @@ export function getFilteredSourceData({
         return {
           STT: index + 1,
           MA_PHIEU: a.MA_PHIEU || '',
+          HOA_DON: a.MA_PHIEU || '',
           SKU: a.SKU,
           TEN_SP: p?.TEN_SAN_PHAM || a.TEN_SP || '',
           TEN_SAN_PHAM: p?.TEN_SAN_PHAM || a.TEN_SP || '',
+          THUONG_HIEU: p?.THUONG_HIEU || '',
+          CHIET_XUAT: p?.CHIET_XUAT || '',
+          CHIET_SUAT: p?.CHIET_XUAT || '',
+          TINH_NANG: p?.TINH_NANG || '',
+          SPH: p?.CAN ?? 0,
+          CAN: p?.CAN ?? 0,
+          CYL: p?.LOAN ?? 0,
+          LOAN: p?.LOAN ?? 0,
           TON_HE_THONG: a.TON_HE_THONG ?? 0,
           TON_THUC_TE: a.TON_THUC_TE ?? 0,
           LECH: a.LECH ?? 0,
           LOAI_BU: a.LOAI_BU || '',
           NGUOI_KIEM: a.NGUOI_KIEM || '',
+          TEN_NGUOI_TAO: a.NGUOI_KIEM || '',
           THOI_DIEM: a.THOI_DIEM || '',
           KHO: a.KHO || a.CHI_NHANH || '',
           CHI_NHANH: a.KHO || a.CHI_NHANH || '',
+          SO_LUONG: a.TON_THUC_TE ?? 0,
+          TON_DAU: p?.TON_DAU ?? 0,
+          TON_CUOI: a.TON_THUC_TE ?? 0,
+          TONG_TON: a.TON_THUC_TE ?? 0,
+          TONG_NHAP: 0,
+          TONG_XUAT: 0,
+          SO_CHUNG_TU: 1,
+          TONG_CHUNG_TU: 1,
+          SO_SKU: 1,
+          TONG_SKU: 1,
         };
       });
     }
@@ -993,15 +1141,26 @@ export function getFilteredSourceData({
         TEN_SP: p.TEN_SAN_PHAM,
         THUONG_HIEU: p.THUONG_HIEU,
         CHIET_XUAT: p.CHIET_XUAT,
+        CHIET_SUAT: p.CHIET_XUAT,
         TINH_NANG: p.TINH_NANG,
         CAN: p.CAN,
+        SPH: p.CAN,
         LOAN: p.LOAN,
+        CYL: p.LOAN,
         DVT: p.DVT || 'Cặp',
         TON_DAU: p.TON_DAU || 0,
         NHAP: p.NHAP || 0,
+        TONG_NHAP: p.NHAP || 0,
         XUAT: p.XUAT || 0,
+        TONG_XUAT: p.XUAT || 0,
         TON_CUOI: p.TON_CUOI || 0,
-        TON_TOI_THIEU: p.TON_TOI_THIEU || 0
+        TONG_TON: p.TON_CUOI || 0,
+        TON_TOI_THIEU: p.TON_TOI_THIEU || 0,
+        SO_CHUNG_TU: 1,
+        TONG_CHUNG_TU: 1,
+        SO_SKU: 1,
+        TONG_SKU: 1,
+        SO_LUONG: p.TON_CUOI || 0,
       }));
     }
     case 'BANG_DO': {
@@ -1010,12 +1169,26 @@ export function getFilteredSourceData({
         .map((p, index) => ({
           STT: index + 1,
           CAN: p.CAN,
+          SPH: p.CAN,
           LOAN: p.LOAN,
+          CYL: p.LOAN,
           SKU: p.SKU,
           TEN_SAN_PHAM: p.TEN_SAN_PHAM,
           TEN_SP: p.TEN_SAN_PHAM,
           THUONG_HIEU: p.THUONG_HIEU,
-          TON_CUOI: p.TON_CUOI || 0
+          TON_CUOI: p.TON_CUOI || 0,
+          TONG_TON: p.TON_CUOI || 0,
+          CHIET_SUAT: p.CHIET_XUAT,
+          CHIET_XUAT: p.CHIET_XUAT,
+          TINH_NANG: p.TINH_NANG,
+          TON_DAU: p.TON_DAU || 0,
+          TONG_NHAP: p.NHAP || 0,
+          TONG_XUAT: p.XUAT || 0,
+          SO_CHUNG_TU: 1,
+          TONG_CHUNG_TU: 1,
+          SO_SKU: 1,
+          TONG_SKU: 1,
+          SO_LUONG: p.TON_CUOI || 0,
         }));
     }
     case 'DASHBOARD': {
@@ -1305,6 +1478,235 @@ function getStandardDetailsValue(source: string, colNum: number, record: any, in
   }
 }
 
+export function getFullyFilteredDashboardData({
+  source,
+  startDate,
+  endDate,
+  selectedBranch,
+  selectedBrandFilter,
+  selectedFeatureFilter,
+  selectedChietXuatFilter,
+  salesDbSelectedSph,
+  salesDbSelectedCyl,
+  sanPhams,
+  nhapXuats,
+  nhapXuatCTs
+}: {
+  source: string;
+  startDate: string;
+  endDate: string;
+  selectedBranch: string;
+  selectedBrandFilter: string;
+  selectedFeatureFilter: string;
+  selectedChietXuatFilter: string;
+  salesDbSelectedSph: number | 'ALL';
+  salesDbSelectedCyl: number | 'ALL';
+  sanPhams: any[];
+  nhapXuats: any[];
+  nhapXuatCTs: any[];
+}) {
+  const baseData = getFilteredSourceData({
+    source,
+    startDate,
+    endDate,
+    branch: selectedBranch,
+    sanPhams,
+    nhapXuats,
+    nhapXuatCTs
+  });
+
+  return baseData.filter(item => {
+    const obj = item as any;
+    // 1. Thương hiệu
+    if (selectedBrandFilter !== 'Tất cả' && obj.THUONG_HIEU !== undefined) {
+      if (obj.THUONG_HIEU !== selectedBrandFilter) return false;
+    }
+    // 2. Tính năng
+    if (selectedFeatureFilter !== 'Tất cả' && obj.TINH_NANG !== undefined) {
+      if (obj.TINH_NANG !== selectedFeatureFilter) return false;
+    }
+    // 3. Chiết suất (hỗ trợ cả CHIET_XUAT và CHIET_SUAT)
+    if (selectedChietXuatFilter !== 'Tất cả') {
+      const cx = obj.CHIET_XUAT !== undefined ? obj.CHIET_XUAT : obj.CHIET_SUAT;
+      if (cx !== undefined && cx !== selectedChietXuatFilter) return false;
+    }
+    // 4. Độ cận (SPH / CAN)
+    if (salesDbSelectedSph !== 'ALL') {
+      const sph = obj.SPH !== undefined ? obj.SPH : obj.CAN;
+      if (sph !== undefined && sph !== salesDbSelectedSph) return false;
+    }
+    // 5. Độ loạn (CYL / LOAN)
+    if (salesDbSelectedCyl !== 'ALL') {
+      const cyl = obj.CYL !== undefined ? obj.CYL : obj.LOAN;
+      if (cyl !== undefined && cyl !== salesDbSelectedCyl) return false;
+    }
+    return true;
+  });
+}
+
+export function groupAndAggregateData({
+  data,
+  groupByFields
+}: {
+  data: any[];
+  groupByFields: string[];
+}) {
+  if (!groupByFields || groupByFields.length === 0) {
+    return data;
+  }
+
+  // Chuẩn hóa groupByFields (ví dụ, chuyển đổi CHIET_SUAT thành CHIET_XUAT hoặc ngược lại nếu cần)
+  const normalizedGroupBy = groupByFields.map(field => {
+    if (field === 'CHIET_SUAT') return 'CHIET_XUAT';
+    if (field === 'CAN') return 'SPH';
+    if (field === 'LOAN') return 'CYL';
+    if (field === 'VIEN') return 'SPH';
+    return field;
+  });
+
+  const groups: Record<string, any> = {};
+
+  data.forEach((item: any) => {
+    // Trích xuất các giá trị trường gom nhóm để làm khóa
+    const keyParts = normalizedGroupBy.map(field => {
+      let val = item[field];
+      if (field === 'CHIET_XUAT' || field === 'CHIET_SUAT') {
+        val = item.CHIET_XUAT ?? item.CHIET_SUAT;
+      } else if (field === 'SPH' || field === 'CAN' || field === 'VIEN') {
+        val = item.SPH ?? item.CAN;
+      } else if (field === 'CYL' || field === 'LOAN') {
+        val = item.CYL ?? item.LOAN;
+      }
+      return String(val !== undefined && val !== null ? val : 'Tất cả').trim();
+    });
+    const groupKey = keyParts.join('|');
+
+    if (!groups[groupKey]) {
+      const initial: Record<string, any> = {};
+      
+      // Giữ nguyên các giá trị thuộc trường gom nhóm
+      normalizedGroupBy.forEach(field => {
+        let val = item[field];
+        if (field === 'CHIET_XUAT' || field === 'CHIET_SUAT') {
+          val = item.CHIET_XUAT ?? item.CHIET_SUAT;
+        } else if (field === 'SPH' || field === 'CAN' || field === 'VIEN') {
+          val = item.SPH ?? item.CAN;
+        } else if (field === 'CYL' || field === 'LOAN') {
+          val = item.CYL ?? item.LOAN;
+        }
+        initial[field] = val;
+        // Đảm bảo có cả hai biến thể tiếng Việt/Anh để các placeholder khớp thành công
+        if (field === 'CHIET_XUAT') initial['CHIET_SUAT'] = val;
+        if (field === 'CHIET_SUAT') initial['CHIET_XUAT'] = val;
+        if (field === 'SPH') {
+          initial['CAN'] = val;
+          initial['VIEN'] = val;
+        }
+        if (field === 'CAN') {
+          initial['SPH'] = val;
+          initial['VIEN'] = val;
+        }
+        if (field === 'VIEN') {
+          initial['SPH'] = val;
+          initial['CAN'] = val;
+        }
+        if (field === 'CYL') initial['LOAN'] = val;
+        if (field === 'LOAN') initial['CYL'] = val;
+      });
+
+      // Khởi tạo các biến tích lũy tổng hợp
+      initial['SO_LUONG'] = 0;
+      initial['SO_LUONG_NHAP'] = 0;
+      initial['SO_LUONG_XUAT'] = 0;
+      initial['TON_DAU'] = 0;
+      initial['TON_CUOI'] = 0;
+      initial['TON_KHO'] = 0;
+      initial['COUNT'] = 0;
+      initial['VALUE'] = 0;
+
+      // Hỗ trợ cấu trúc lưu trữ SKUs/Documents duy nhất để tính tổng hợp đúng
+      initial['_skus'] = new Map<string, { TON_CUOI: number; TON_DAU: number }>();
+      initial['_uniqueChungTus'] = new Set<string>();
+      initial['_uniqueSkus'] = new Set<string>();
+
+      // Các trường text bổ sung khác để hiển thị
+      const fallbackFields = ['TEN_SP', 'TEN_SAN_PHAM', 'DVT', 'THUONG_HIEU', 'CHIET_XUAT', 'CHIET_SUAT', 'TINH_NANG', 'LOAI', 'NGAY', 'HOA_DON', 'CHI_NHANH', 'MA_PHIEU'];
+      fallbackFields.forEach(f => {
+        if (initial[f] === undefined) {
+          initial[f] = item[f];
+        }
+      });
+
+      groups[groupKey] = initial;
+    }
+
+    const g = groups[groupKey];
+    g.COUNT += 1;
+
+    // Aggregations (SUM)
+    g.SO_LUONG += Number(item.SO_LUONG || 0);
+    g.SO_LUONG_NHAP += Number(item.SO_LUONG_NHAP || (item.LOAI === 'NHẬP' ? item.SO_LUONG : 0) || 0);
+    g.SO_LUONG_XUAT += Number(item.SO_LUONG_XUAT || (item.LOAI === 'XUẤT' ? item.SO_LUONG : 0) || 0);
+    g.VALUE += Number(item.VALUE || item.SO_LUONG || 0);
+
+    // Thu thập SKUs duy nhất trong group để tính tổng lượng tồn kho chính xác, không lặp lại
+    if (item.SKU) {
+      g._skus.set(item.SKU, {
+        TON_CUOI: Number(item.TON_CUOI ?? item.TON_KHO ?? 0),
+        TON_DAU: Number(item.TON_DAU ?? 0)
+      });
+      g._uniqueSkus.add(item.SKU);
+    }
+    
+    if (item.HOA_DON) g._uniqueChungTus.add(item.HOA_DON);
+    if (item.MA_PHIEU) g._uniqueChungTus.add(item.MA_PHIEU);
+  });
+
+  // Chuyển kết quả sang mảng và gán số thứ tự (STT)
+  return Object.values(groups).map((g: any, index) => {
+    g.STT = index + 1;
+
+    // Tính tổng tồn chính xác không lặp cho group
+    let totalTonCuoi = 0;
+    let totalTonDau = 0;
+    g._skus.forEach((val: any) => {
+      totalTonCuoi += val.TON_CUOI;
+      totalTonDau += val.TON_DAU;
+    });
+
+    g.TON_CUOI = totalTonCuoi;
+    g.TON_DAU = totalTonDau;
+    g.TON_KHO = totalTonCuoi;
+    g.TONG_TON = totalTonCuoi;
+    g.TONG_DAU = totalTonDau;
+
+    g.TONG_NHAP = g.SO_LUONG_NHAP;
+    g.NHAP = g.SO_LUONG_NHAP;
+    g.TONG_XUAT = g.SO_LUONG_XUAT;
+    g.XUAT = g.SO_LUONG_XUAT;
+
+    // Đếm số lượng duy nhất
+    g.SO_CHUNG_TU = g._uniqueChungTus.size;
+    g.TONG_CHUNG_TU = g.SO_CHUNG_TU;
+    g.SO_SKU = g._uniqueSkus.size;
+    g.TONG_SKU = g.SO_SKU;
+
+    // Dọn dẹp trường phụ trợ
+    delete g._skus;
+    delete g._uniqueChungTus;
+    delete g._uniqueSkus;
+
+    if (!g.TEN_SP && !g.TEN_SAN_PHAM) {
+      g.TEN_SP = `Tổng hợp ${g.THUONG_HIEU || ''} ${g.CHIET_SUAT || g.CHIET_XUAT || ''} ${g.TINH_NANG || ''}`.trim();
+      g.TEN_SAN_PHAM = g.TEN_SP;
+    }
+    if (!g.VALUE) {
+      g.VALUE = g.SO_LUONG;
+    }
+    return g;
+  });
+}
+
 export async function exportReportWithFilters({
   template,
   startDate,
@@ -1353,15 +1755,58 @@ export async function exportReportWithFilters({
 
   // 2. Prepare dynamic records based on template's main source
   const source = template.applicableReportTypes?.[0] || 'PHIEU';
-  const previewData = getFilteredSourceData({
+  const previewData = getFullyFilteredDashboardData({
     source,
     startDate,
     endDate,
-    branch: selectedBranch,
+    selectedBranch,
+    selectedBrandFilter,
+    selectedFeatureFilter,
+    selectedChietXuatFilter,
+    salesDbSelectedSph,
+    salesDbSelectedCyl,
     sanPhams,
     nhapXuats,
     nhapXuatCTs
   });
+
+  // DEBUG LOGS BEFORE EXPORT
+  console.log("================= DEBUG EXPORT ENGINE =================");
+  console.log("1. MAPPED COLUMNS (Danh sách cột đã cấu hình):");
+  if (template.columnMappings && template.columnMappings.length > 0) {
+    template.columnMappings.forEach((m, idx) => {
+      console.log(`   - Cột ${idx + 1}: Label: "${m.label}" | Excel Placeholder: "{{${m.excelColumn}}}" | Data Field: "${m.dataField || ''}" | Is Pivot: ${!!m.isPivot}`);
+    });
+  } else {
+    console.log("   - Không có cấu hình columnMappings (Sử dụng cấu hình mặc định hoặc quét placeholder trực tiếp)");
+  }
+
+  console.log("2. GROUP BY FIELDS (Danh sách trường Gom nhóm):");
+  if (template.groupByFields && template.groupByFields.length > 0) {
+    template.groupByFields.forEach((f, idx) => {
+      console.log(`   - Trường ${idx + 1}: "${f}"`);
+    });
+  } else {
+    console.log("   - Không có trường Gom nhóm nào được cấu hình");
+  }
+
+  console.log("3. AGGREGATE FIELDS (Danh sách các trường Tổng hợp):");
+  const aggregateFields = ['SO_LUONG', 'TONG_NHAP', 'SO_LUONG_NHAP', 'TONG_XUAT', 'SO_LUONG_XUAT', 'TONG_TON', 'TON_CUOI', 'SO_CHUNG_TU', 'SO_SKU'];
+  aggregateFields.forEach(af => {
+    console.log(`   - "${af}" (Tổng hợp SUM hoặc COUNT tương ứng)`);
+  });
+
+  const exportColCount = template.columnMappings ? template.columnMappings.length : 0;
+  const hasGroupBy = template.groupByFields && template.groupByFields.length > 0;
+  const sampleGroupCount = hasGroupBy 
+    ? groupAndAggregateData({ data: previewData, groupByFields: template.groupByFields || [] }).length
+    : previewData.length;
+
+  console.log("4. EXPORT METADATA COUNTS (Số lượng cột và dòng xuất):");
+  console.log(`   - Số lượng Cột: ${exportColCount}`);
+  console.log(`   - Số lượng Dòng gốc: ${previewData.length}`);
+  console.log(`   - Số lượng Dòng xuất ra (sau gom nhóm): ${sampleGroupCount}`);
+  console.log("======================================================");
 
   // 3. Rebuild static values object
   const previewStaticValues: Record<string, any> = {
@@ -1376,9 +1821,11 @@ export async function exportReportWithFilters({
     ...resolvedValues
   };
 
-  // 4. Load array buffer
+  // 4. Load array buffer - lazy loaded
   let arrayBuffer: ArrayBuffer;
-  if (template.fileData === 'PRESET') {
+  const ExcelJS = await getExcelJS();
+
+  if (template.id === 'default-phieu-xuat-excel' || template.fileData === 'PRESET') {
     const tempWorkbook = new ExcelJS.Workbook();
     const tempSheet = tempWorkbook.addWorksheet('Giao_Nhận');
     tempSheet.columns = [
@@ -1413,7 +1860,12 @@ export async function exportReportWithFilters({
 
     const buf = await tempWorkbook.xlsx.writeBuffer();
     arrayBuffer = buf;
-  } else if (template.fileData === 'PRESET_DASHBOARD') {
+
+    try {
+      tempWorkbook.worksheets.forEach((s: any) => { s.eachRow((r: any) => { r.values = []; }); });
+      (tempWorkbook as any)._worksheets = [];
+    } catch (e) {}
+  } else if (template.id === 'default-dashboard-excel' || template.fileData === 'PRESET_DASHBOARD') {
     const tempWorkbook = new ExcelJS.Workbook();
     const tempSheet = tempWorkbook.addWorksheet('Thống_Kê');
     tempSheet.columns = [{ width: 35 }, { width: 35 }];
@@ -1446,8 +1898,14 @@ export async function exportReportWithFilters({
 
     const buf = await tempWorkbook.xlsx.writeBuffer();
     arrayBuffer = buf;
+
+    try {
+      tempWorkbook.worksheets.forEach((s: any) => { s.eachRow((r: any) => { r.values = []; }); });
+      (tempWorkbook as any)._worksheets = [];
+    } catch (e) {}
   } else {
-    arrayBuffer = base64ToArrayBuffer(template.fileData);
+    const fileData = await fetchTemplateFileData(template.id);
+    arrayBuffer = base64ToArrayBuffer(fileData);
   }
 
   const placeholderMappings: Record<string, string> = {};
@@ -1486,30 +1944,105 @@ export async function exportReportWithFilters({
       });
     });
 
-    // Log toàn bộ Placeholder tìm thấy và kết quả ánh xạ
-    console.log("=== LOG TOÀN BỘ PLACEHOLDER TÌM ĐƯỢC TRONG FILE MẪU EXCEL ===");
+    // BÁO CÁO KIỂM TRA ĐỌC TEMPLATE
+    console.log("=== KIỂM TRA ĐỌC TEMPLATE EXCEL ===");
+    console.log(`Tên file mẫu: ${template.fileName || template.name}`);
+    console.log(`Số sheet: ${workbook.worksheets.length}`);
+    console.log("Danh sách Placeholder tìm thấy trong file:");
+    foundPlaceholdersInFile.forEach(p => console.log(`  - {{${p}}}`));
+
+    if (foundPlaceholdersInFile.size === 0) {
+      const msg = `Lỗi: Không tìm thấy bất kỳ Placeholder nào (dạng {{...}}) trong file mẫu Excel!`;
+      console.error(msg);
+      if (onTriggerToast) {
+        onTriggerToast(msg, 'error');
+      }
+      return; // Dừng kết xuất
+    }
+
+    // Kiểm tra xem có ít nhất một placeholder được định nghĩa trong file khớp với columnMappings hoặc static variables không
+    const matchedPlaceholders = Array.from(foundPlaceholdersInFile).filter(p => {
+      const cleanP = p.trim().toUpperCase();
+      if (previewStaticValues[cleanP] !== undefined) return true;
+      if (['DETAILS', 'REPORT_ROWS', 'STT', 'VALUE'].includes(cleanP)) return true;
+      if (template.columnMappings && template.columnMappings.some(m => m.excelColumn.trim().toUpperCase() === cleanP)) return true;
+      const fields = FIELDS_BY_SOURCE_LOCAL[source] || [];
+      if (fields.some(f => f.key.toUpperCase() === cleanP)) return true;
+      return false;
+    });
+
+    if (matchedPlaceholders.length === 0) {
+      const msg = `Lỗi: Không tìm thấy bất kỳ Placeholder hợp lệ nào trong file mẫu khớp với cấu hình của hệ thống (VD: ${template.columnMappings?.map(m => `{{${m.excelColumn}}}`).join(', ') || '{{THUONG_HIEU}}, {{SO_LUONG}}'}). Vui lòng kiểm tra lại file mẫu của bạn!`;
+      console.error(msg);
+      if (onTriggerToast) {
+        onTriggerToast(msg, 'error');
+      }
+      return; // Dừng hoàn toàn kết xuất, không tạo hay tải xuống file rỗng!
+    }
+
+    // BÁO CÁO KIỂM TRA NGUỒN DỮ LIỆU
+    console.log("=== KIỂM TRA NGUỒN DỮ LIỆU EXCEL ===");
+    console.log(`Bộ lọc Dashboard:
+  - Chi nhánh: ${selectedBranch}
+  - Thương hiệu: ${selectedBrandFilter}
+  - Tính năng: ${selectedFeatureFilter}
+  - Chiết suất: ${selectedChietXuatFilter}
+  - Từ ngày: ${startDate}
+  - Đến ngày: ${endDate}`);
+    console.log(`Nguồn dữ liệu của Template: ${source}`);
+    console.log(`Số bản ghi lấy được (previewData): ${previewData.length}`);
+    console.log("===============================");
+
+    if (previewData.length === 0) {
+      const msg = `Cảnh báo: Không tìm thấy dữ liệu phù hợp với bộ lọc hiện tại (0 bản ghi)!`;
+      console.warn(msg);
+      if (onTriggerToast) {
+        onTriggerToast(msg, 'warning');
+      }
+    }
+
+    // BÁO CÁO KIỂM TRA MAPPING
+    console.log("=== KIỂM TRA MAPPING PLACEHOLDER EXCEL ===");
     const activeRecord = previewData[0] || {};
     foundPlaceholdersInFile.forEach(placeholder => {
-      let mappedValue: any = undefined;
+      let dataField = '';
+      let actualValue: any = undefined;
+      const cleanPlaceholder = placeholder.trim().toUpperCase();
       
-      if (previewStaticValues[placeholder] !== undefined) {
-        mappedValue = previewStaticValues[placeholder];
+      if (previewStaticValues[cleanPlaceholder] !== undefined) {
+        dataField = '(STATIC_VALUE)';
+        actualValue = previewStaticValues[cleanPlaceholder];
       } else if (template.columnMappings) {
-        const m = template.columnMappings.find(cm => cm.excelColumn === placeholder);
-        if (m && m.dataField) {
-          mappedValue = activeRecord[m.dataField];
+        const m = template.columnMappings.find(cm => cm.excelColumn.trim().toUpperCase() === cleanPlaceholder);
+        if (m) {
+          dataField = m.dataField || '';
+          actualValue = activeRecord[dataField];
+        } else {
+          dataField = placeholder;
+          actualValue = activeRecord[placeholder];
+        }
+      } else {
+        dataField = placeholder;
+        actualValue = activeRecord[placeholder];
+      }
+      
+      if (cleanPlaceholder === 'DETAILS' || cleanPlaceholder === 'REPORT_ROWS') {
+        dataField = '(TABLE_DATA)';
+        const hasGroupBy = template.groupByFields && template.groupByFields.length > 0;
+        const count = hasGroupBy 
+          ? groupAndAggregateData({ data: previewData, groupByFields: template.groupByFields || [] }).length
+          : previewData.length;
+        actualValue = `[Danh sách bảng: ${count} dòng]`;
+      }
+      
+      console.log(`{{${placeholder}}} → Trường dữ liệu: ${dataField} → Giá trị thay thế: ${actualValue !== undefined ? actualValue : 'null/undefined'}`);
+
+      if (actualValue === null || actualValue === undefined) {
+        const isSpecial = ['STT', 'DETAILS', 'REPORT_ROWS', 'VALUE'].includes(cleanPlaceholder);
+        if (!isSpecial) {
+          console.warn(`[WARNING] Placeholder {{${placeholder}}} có giá trị là null hoặc undefined (Trường dữ liệu: ${dataField})`);
         }
       }
-      
-      if (mappedValue === undefined && activeRecord[placeholder] !== undefined) {
-        mappedValue = activeRecord[placeholder];
-      }
-      
-      if (placeholder === 'DETAILS' || placeholder === 'REPORT_ROWS') {
-        mappedValue = `[Danh sách bảng: ${previewData.length} dòng]`;
-      }
-      
-      console.log(`{{${placeholder}}} -> ${mappedValue !== undefined && mappedValue !== '' ? mappedValue : '(Không có dữ liệu)'}`);
     });
     console.log("=====================================================================");
 
@@ -1539,19 +2072,23 @@ export async function exportReportWithFilters({
             const text = cell.value;
             cellTemplates[colNum] = text;
 
-            // Kiểm tra m.isPivot
+            // 1. Kiểm tra m.isPivot hoặc các mappings đơn giản trong template.columnMappings
             const allMappings = template.columnMappings || [];
             allMappings.forEach(m => {
-              if (m.isPivot && text.includes(`{{${m.excelColumn}}}`)) {
+              const escapedCol = m.excelColumn.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&');
+              const regex = new RegExp(`{{\\s*${escapedCol}\\s*}}`, 'i');
+              if (regex.test(text)) {
                 isDynamic = true;
-                foundPlaceholder = m.excelColumn;
-                foundMapping = m;
-                isPivot = true;
+                if (!foundPlaceholder) {
+                  foundPlaceholder = m.excelColumn;
+                  foundMapping = m;
+                  isPivot = !!m.isPivot;
+                }
               }
             });
 
-            // Kiểm tra DETAILS
-            if (text.includes('{{DETAILS}}')) {
+            // 2. Kiểm tra DETAILS & REPORT_ROWS
+            if (/{{\s*DETAILS\s*}}/i.test(text)) {
               isDynamic = true;
               foundPlaceholder = 'DETAILS';
               foundMapping = {
@@ -1560,9 +2097,7 @@ export async function exportReportWithFilters({
                 isPivot: false
               };
             }
-
-            // Kiểm tra REPORT_ROWS
-            if (text.includes('{{REPORT_ROWS}}')) {
+            if (/{{\s*REPORT_ROWS\s*}}/i.test(text)) {
               isDynamic = true;
               foundPlaceholder = 'REPORT_ROWS';
               foundMapping = {
@@ -1572,10 +2107,11 @@ export async function exportReportWithFilters({
               };
             }
 
-            // Kiểm tra các từ khóa bảng chi tiết
-            const tableKeywords = ['{{SKU}}', '{{TEN_SP}}', '{{SO_LUONG}}', '{{CHIET_SUAT}}', '{{TEN_SAN_PHAM}}', '{{DVT}}', '{{LOAI}}', '{{THUONG_HIEU}}', '{{TINH_NANG}}', '{{TON_DAU}}', '{{TON_CUOI}}'];
+            // 3. Kiểm tra các từ khóa bảng chi tiết mặc định khác
+            const tableKeywords = ['SKU', 'TEN_SP', 'SO_LUONG', 'CHIET_SUAT', 'TEN_SAN_PHAM', 'DVT', 'LOAI', 'THUONG_HIEU', 'TINH_NANG', 'TON_DAU', 'TON_CUOI', 'VALUE'];
             tableKeywords.forEach(kw => {
-              if (text.includes(kw)) {
+              const regex = new RegExp(`{{\\s*${kw}\\s*}}`, 'i');
+              if (regex.test(text)) {
                 isDynamic = true;
                 if (!foundPlaceholder) {
                   foundPlaceholder = 'DETAILS';
@@ -1631,6 +2167,17 @@ export async function exportReportWithFilters({
         const rowNum = sample.rowNum;
         const templateRow = worksheet.getRow(rowNum);
         
+        // CACHE DÒNG MẪU BAN ĐẦU TRƯỚC KHI CHÈN GÂY DỊCH CHỈ SỐ
+        const cachedRowCells: { colNum: number; value: any; style: any }[] = [];
+        templateRow.eachCell({ includeEmpty: true }, (cell, colNum) => {
+          cachedRowCells.push({
+            colNum,
+            value: cell.value,
+            style: cell.style ? JSON.parse(JSON.stringify(cell.style)) : undefined
+          });
+        });
+        const templateHeight = templateRow.height;
+
         let rowData: any[] = [];
         
         if (sample.isPivot && sample.mapping) {
@@ -1651,77 +2198,161 @@ export async function exportReportWithFilters({
             nhapXuats,
             nhapXuatCTs
           });
+        } else if (sample.placeholder === 'REPORT_ROWS' || sample.placeholder === 'DETAILS') {
+          const hasGroupBy = template.groupByFields && template.groupByFields.length > 0;
+          if (hasGroupBy) {
+            rowData = groupAndAggregateData({
+              data: previewData,
+              groupByFields: template.groupByFields || []
+            });
+          } else {
+            rowData = previewData;
+          }
         } else {
           rowData = previewData;
+        }
+
+        console.log(`[Row Insert] Đang xử lý chèn ${rowData.length} dòng cho placeholder ${sample.placeholder} tại dòng mẫu ${rowNum}`);
+
+        const hasCustomMappings = template.columnMappings && template.columnMappings.length > 0;
+
+        // Cập nhật tiêu đề cột (ở dòng header ngay phía trên dòng dynamic, tức là dòng startRow - 1)
+        if (hasCustomMappings && rowNum > 1) {
+          const headerRow = worksheet.getRow(rowNum - 1);
+          template.columnMappings!.forEach((m, cIdx) => {
+            const colNum = cIdx + 1;
+            const headerCell = headerRow.getCell(colNum);
+            headerCell.value = m.label; // Tên cột hiển thị
+          });
+          // Dọn dẹp tiêu đề thừa ở bên phải
+          for (let col = template.columnMappings!.length + 1; col <= 100; col++) {
+            headerRow.getCell(col).value = null;
+          }
+          console.log(`[Header Update] Đã cập nhật tiêu đề cột tại dòng ${rowNum - 1} theo mapping`);
         }
 
         if (rowData.length > 0) {
           rowData.forEach((record, index) => {
             const insertIdx = rowNum + index;
             const newRow = worksheet.insertRow(insertIdx, []);
+            newRow.height = templateHeight;
             
-            templateRow.eachCell({ includeEmpty: true }, (cell, colNum) => {
-              const targetCell = newRow.getCell(colNum);
-              targetCell.style = { ...cell.style };
-              
-              const templateText = sample.cellTemplates[colNum];
-              
-              const isClassicDetailsOnly = sample.placeholder === 'DETAILS' && 
-                Object.values(sample.cellTemplates).every(val => val.includes('{{DETAILS}}'));
-
-              if (isClassicDetailsOnly) {
-                targetCell.value = getStandardDetailsValue(source, colNum, record, index);
-              } else if (templateText) {
-                let cellVal = templateText;
+            if (hasCustomMappings) {
+              // Ghi giá trị dựa hoàn toàn trên Column Mappings động đã cấu hình
+              template.columnMappings!.forEach((m, cIdx) => {
+                const colNum = cIdx + 1;
+                const targetCell = newRow.getCell(colNum);
                 
-                cellVal = cellVal.replace(/{{STT}}/g, String(index + 1));
-                cellVal = cellVal.replace(/{{VALUE}}/g, String(record.VALUE ?? record.SO_LUONG ?? ''));
-                
-                Object.entries(record).forEach(([k, v]) => {
-                  cellVal = cellVal.replace(new RegExp(`{{${k}}}`, 'g'), String(v ?? ''));
-                  cellVal = cellVal.replace(new RegExp(`{{${sample.placeholder}\\.${k}}}`, 'g'), String(v ?? ''));
-                });
-
-                if (template.columnMappings) {
-                  template.columnMappings.forEach(m => {
-                    if (m.dataField && record[m.dataField] !== undefined) {
-                      cellVal = cellVal.replace(new RegExp(`{{${m.excelColumn}}}`, 'g'), String(record[m.dataField] ?? ''));
-                    }
-                  });
+                // Copy style từ cell tương ứng ở dòng mẫu ban đầu nếu có để đảm bảo định dạng đẹp mắt
+                const cachedCell = cachedRowCells.find(cc => cc.colNum === colNum);
+                if (cachedCell?.style) {
+                  targetCell.style = cachedCell.style;
+                } else if (cachedRowCells.length > 0) {
+                  // Fallback copy style từ cell cuối cùng của dòng mẫu để giữ style thống nhất
+                  targetCell.style = cachedRowCells[cachedRowCells.length - 1].style;
                 }
 
-                Object.entries(previewStaticValues).forEach(([k, v]) => {
-                  cellVal = cellVal.replace(new RegExp(`{{${k}}}`, 'g'), String(v ?? ''));
-                });
+                let cellVal: any = '';
+                const cleanExcelCol = m.excelColumn.trim().toUpperCase();
+                const cleanDataField = (m.dataField || '').trim().toUpperCase();
 
-                cellVal = cellVal.replace(new RegExp(`{{${sample.placeholder}}}`, 'g'), '');
-
-                // Dọn dẹp bất kỳ placeholder nào còn sót
-                const remainingMatches = cellVal.match(/{{([^{}]+)}}/g);
-                if (remainingMatches) {
-                  remainingMatches.forEach(rm => {
-                    const cleanName = rm.replace(/[{}]/g, '').trim();
-                    missingDataPlaceholders.add(cleanName);
-                    cellVal = cellVal.replace(new RegExp(rm, 'g'), '');
-                  });
+                if (cleanExcelCol === 'STT' || cleanDataField === 'STT') {
+                  cellVal = index + 1;
+                } else {
+                  if (m.dataField && record[m.dataField] !== undefined) {
+                    cellVal = record[m.dataField];
+                  } else if (record[m.excelColumn] !== undefined) {
+                    cellVal = record[m.excelColumn];
+                  }
                 }
 
+                // Hỗ trợ convert định dạng số
                 const numVal = Number(cellVal);
-                if (cellVal !== '' && !isNaN(numVal) && String(numVal) === cellVal.trim()) {
+                if (cellVal !== '' && cellVal !== null && cellVal !== undefined && !isNaN(numVal) && String(numVal) === String(cellVal).trim()) {
                   targetCell.value = numVal;
                 } else {
-                  targetCell.value = cellVal;
+                  targetCell.value = cellVal ?? '';
                 }
-              } else {
-                targetCell.value = cell.value;
+                console.log(`[Excel Dynamic Column] Ghi cell ${targetCell.address} (${m.label}): ${targetCell.value}`);
+              });
+
+              // Dọn dẹp các cell thừa ở bên phải
+              for (let col = template.columnMappings!.length + 1; col <= 100; col++) {
+                newRow.getCell(col).value = null;
               }
-            });
-            newRow.height = templateRow.height;
+            } else {
+              // Chế độ cũ (quét placeholder trực tiếp trong template)
+              cachedRowCells.forEach(({ colNum, value, style }) => {
+                const targetCell = newRow.getCell(colNum);
+                if (style) {
+                  targetCell.style = style;
+                }
+                
+                const templateText = sample.cellTemplates[colNum];
+                
+                const isClassicDetailsOnly = sample.placeholder === 'DETAILS' && 
+                  Object.values(sample.cellTemplates).every(val => val.includes('{{DETAILS}}'));
+
+                if (isClassicDetailsOnly) {
+                  targetCell.value = getStandardDetailsValue(source, colNum, record, index);
+                  console.log(`[Excel Write] Ghi giá trị DETAILS vào cell ${targetCell.address}: ${targetCell.value}`);
+                } else if (templateText) {
+                  let cellVal = templateText;
+                  
+                  // Thay thế các biến hệ thống cơ bản không phụ thuộc hoa thường
+                  cellVal = cellVal.replace(/{{\s*STT\s*}}/gi, String(index + 1));
+                  cellVal = cellVal.replace(/{{\s*VALUE\s*}}/gi, String(record.VALUE ?? record.SO_LUONG ?? ''));
+                  
+                  // Ánh xạ trực tiếp từ các thuộc tính bản ghi dữ liệu
+                  Object.entries(record).forEach(([k, v]) => {
+                    const escapedK = k.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&');
+                    cellVal = cellVal.replace(new RegExp(`{{\\s*${escapedK}\\s*}}`, 'gi'), String(v ?? ''));
+                    cellVal = cellVal.replace(new RegExp(`{{\\s*${sample.placeholder}\\.${escapedK}\\s*}}`, 'gi'), String(v ?? ''));
+                  });
+
+                  // Ánh xạ từ các biến lọc tĩnh của báo cáo
+                  Object.entries(previewStaticValues).forEach(([k, v]) => {
+                    const escapedK = k.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&');
+                    cellVal = cellVal.replace(new RegExp(`{{\\s*${escapedK}\\s*}}`, 'gi'), String(v ?? ''));
+                  });
+
+                  // Loại bỏ placeholder dòng gốc
+                  const escapedPlaceholder = sample.placeholder.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&');
+                  cellVal = cellVal.replace(new RegExp(`{{\\s*${escapedPlaceholder}\\s*}}`, 'gi'), '');
+
+                  // Dọn dẹp bất kỳ placeholder nào còn sót trong ô dữ liệu động và cảnh báo
+                  const remainingMatches = cellVal.match(/{{([^{}]+)}}/g);
+                  if (remainingMatches) {
+                    remainingMatches.forEach(rm => {
+                      const cleanName = rm.replace(/[{}]/g, '').trim();
+                      missingDataPlaceholders.add(cleanName);
+                      cellVal = cellVal.replace(new RegExp(rm.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&'), 'g'), '');
+                    });
+                  }
+
+                  const numVal = Number(cellVal);
+                  if (cellVal !== '' && !isNaN(numVal) && String(numVal) === cellVal.trim()) {
+                    targetCell.value = numVal;
+                  } else {
+                    targetCell.value = cellVal;
+                  }
+                  console.log(`[Excel Write] Ghi giá trị động thay thế vào cell ${targetCell.address}: ${targetCell.value}`);
+                } else {
+                  targetCell.value = value;
+                  if (value !== null && value !== undefined) {
+                    console.log(`[Excel Write] Ghi giá trị mặc định vào cell ${targetCell.address}: ${targetCell.value}`);
+                  }
+                }
+              });
+            }
           });
 
+          // Xóa dòng mẫu gốc ban đầu
           worksheet.spliceRows(rowNum + rowData.length, 1);
+          console.log(`[Row Insert] Đã xóa dòng mẫu gốc tại vị trí ${rowNum + rowData.length}`);
         } else {
           worksheet.spliceRows(rowNum, 1);
+          console.log(`[Row Insert] Do không có dữ liệu nên đã xóa dòng mẫu tại vị trí ${rowNum}`);
         }
       });
 
@@ -1734,8 +2365,9 @@ export async function exportReportWithFilters({
 
             // 1. Thay thế các biến tĩnh
             Object.entries(previewStaticValues).forEach(([k, v]) => {
-              if (text.includes(`{{${k}}}`)) {
-                text = text.replace(new RegExp(`{{${k}}}`, 'g'), String(v ?? ''));
+              const regex = new RegExp(`{{\\s*${k}\\s*}}`, 'gi');
+              if (regex.test(text)) {
+                text = text.replace(regex, String(v ?? ''));
                 isModified = true;
               }
             });
@@ -1744,9 +2376,11 @@ export async function exportReportWithFilters({
             const activeRecord = previewData[0] || {};
             if (template.columnMappings) {
               template.columnMappings.forEach(m => {
-                if (text.includes(`{{${m.excelColumn}}}`)) {
+                const escapedCol = m.excelColumn.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&');
+                const regex = new RegExp(`{{\\s*${escapedCol}\\s*}}`, 'gi');
+                if (regex.test(text)) {
                   const fieldVal = m.dataField ? (activeRecord[m.dataField] ?? '') : '';
-                  text = text.replace(new RegExp(`{{${m.excelColumn}}}`, 'g'), String(fieldVal));
+                  text = text.replace(regex, String(fieldVal));
                   isModified = true;
                 }
               });
@@ -1754,8 +2388,9 @@ export async function exportReportWithFilters({
 
             // 3. Thay trực tiếp từ key active record
             Object.entries(activeRecord).forEach(([k, v]) => {
-              if (text.includes(`{{${k}}}`)) {
-                text = text.replace(new RegExp(`{{${k}}}`, 'g'), String(v ?? ''));
+              const regex = new RegExp(`{{\\s*${k}\\s*}}`, 'gi');
+              if (regex.test(text)) {
+                text = text.replace(regex, String(v ?? ''));
                 isModified = true;
               }
             });
@@ -1766,7 +2401,7 @@ export async function exportReportWithFilters({
               remainingMatches.forEach(rm => {
                 const cleanName = rm.replace(/[{}]/g, '').trim();
                 missingDataPlaceholders.add(cleanName);
-                text = text.replace(new RegExp(rm, 'g'), '');
+                text = text.replace(new RegExp(rm.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&'), 'g'), '');
                 isModified = true;
               });
             }
@@ -1778,6 +2413,7 @@ export async function exportReportWithFilters({
               } else {
                 cell.value = text;
               }
+              console.log(`[Excel Write] Ghi giá trị tĩnh vào cell ${cell.address}: ${cell.value}`);
             }
           }
         });
@@ -1793,43 +2429,102 @@ export async function exportReportWithFilters({
         } else {
           console.warn(msg);
         }
+
       }
     }
 
     const outBuffer = await workbook.xlsx.writeBuffer();
     const blob = new Blob([outBuffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
     onDownload(blob, `Bao_Cao_${template.name}_${new Date().toISOString().substring(0, 10)}.xlsx`);
+
+    // GC optimization: Clear large workbook objects
+    try {
+      workbook.worksheets.forEach((s: any) => { s.eachRow((r: any) => { r.values = []; }); });
+      (workbook as any)._worksheets = [];
+    } catch (e) {}
   } else {
-    // === XỬ LÝ FILE PDF ===
+    // === XỬ LÝ FILE PDF - lazy loaded ===
+    const PDFDocument = await getPDFDocument();
     const pdfDoc = await PDFDocument.load(arrayBuffer);
     const form = pdfDoc.getForm();
     const fields = form.getFields();
 
-    console.log("=== LOG TOÀN BỘ PLACEHOLDER TÌM ĐƯỢC TRONG FILE MẪU PDF ===");
-    const activeRecord = previewData[0] || {};
     const foundPlaceholders = fields.map(f => f.getName());
+
+    console.log("=== KIỂM TRA ĐỌC TEMPLATE PDF ===");
+    console.log(`Tên file mẫu: ${template.fileName || template.name}`);
+    console.log(`Số trang: ${pdfDoc.getPageCount()}`);
+    console.log("Danh sách Placeholder tìm thấy:");
+    foundPlaceholders.forEach(p => console.log(`  - {{${p}}}`));
+
+    if (foundPlaceholders.length === 0) {
+      const msg = `Lỗi: Không tìm thấy bất kỳ Placeholder nào trong template PDF!`;
+      console.error(msg);
+      if (onTriggerToast) {
+        onTriggerToast(msg, 'error');
+      }
+      return; // Dừng kết xuất
+    }
+
+    console.log("=== KIỂM TRA NGUỒN DỮ LIỆU PDF ===");
+    console.log(`Bộ lọc Dashboard:
+  - Chi nhánh: ${selectedBranch}
+  - Thương hiệu: ${selectedBrandFilter}
+  - Tính năng: ${selectedFeatureFilter}
+  - Chiết suất: ${selectedChietXuatFilter}
+  - Từ ngày: ${startDate}
+  - Đến ngày: ${endDate}`);
+    console.log(`Số bản ghi lấy được: ${previewData.length}`);
+    console.log("===============================");
+
+    if (previewData.length === 0) {
+      const msg = `Cảnh báo: Không tìm thấy dữ liệu phù hợp với bộ lọc hiện tại (0 bản ghi)!`;
+      console.warn(msg);
+      if (onTriggerToast) {
+        onTriggerToast(msg, 'warning');
+      }
+    }
+
+    console.log("=== KIỂM TRA MAPPING PLACEHOLDER PDF ===");
+    const activeRecord = previewData[0] || {};
     
     foundPlaceholders.forEach(placeholder => {
       let mappedValue: any = undefined;
+      let dataField = '';
       
       if (previewStaticValues[placeholder] !== undefined) {
+        dataField = '(STATIC_VALUE)';
         mappedValue = previewStaticValues[placeholder];
       } else if (template.columnMappings) {
         const m = template.columnMappings.find(cm => cm.excelColumn === placeholder);
         if (m && m.dataField) {
+          dataField = m.dataField;
           mappedValue = activeRecord[m.dataField];
         }
       }
       
       if (mappedValue === undefined && activeRecord[placeholder] !== undefined) {
+        dataField = placeholder;
         mappedValue = activeRecord[placeholder];
       }
       
       if (placeholder === 'DETAILS' || placeholder === 'REPORT_ROWS') {
-        mappedValue = `[Danh sách bảng: ${previewData.length} dòng]`;
+        dataField = '(TABLE_DATA)';
+        const hasGroupBy = template.groupByFields && template.groupByFields.length > 0;
+        const count = hasGroupBy 
+          ? groupAndAggregateData({ data: previewData, groupByFields: template.groupByFields || [] }).length
+          : previewData.length;
+        mappedValue = `[Danh sách bảng: ${count} dòng]`;
       }
       
-      console.log(`{{${placeholder}}} -> ${mappedValue !== undefined && mappedValue !== '' ? mappedValue : '(Không có dữ liệu)'}`);
+      console.log(`{{${placeholder}}} → ${dataField || 'null'} → ${mappedValue !== undefined && mappedValue !== '' ? mappedValue : 'null/undefined'}`);
+
+      if (mappedValue === null || mappedValue === undefined) {
+        const isSpecial = ['STT', 'DETAILS', 'REPORT_ROWS', 'VALUE'].includes(placeholder);
+        if (!isSpecial) {
+          console.warn(`[WARNING] Placeholder {{${placeholder}}} có giá trị là null hoặc undefined (Trường dữ liệu: ${dataField || placeholder})`);
+        }
+      }
     });
     console.log("=============================================================");
 
@@ -1877,6 +2572,7 @@ export async function exportReportWithFilters({
           const textField = form.getTextField(name);
           textField.setText(textTable);
           isFilled = true;
+          console.log(`[PDF Write] Ghi giá trị PIVOT vào field ${name}: ${textTable.substring(0, 50)}...`);
         } catch (e) {}
       }
       
@@ -1884,11 +2580,40 @@ export async function exportReportWithFilters({
         try {
           const detailField = form.getTextField(name);
           let detailsText = '';
-          previewData.forEach((item, idx) => {
-            detailsText += `${idx + 1}. SKU: ${item.SKU} | Tên: ${item.TEN_SP || item.TEN_SAN_PHAM || ''} | SL: ${item.SO_LUONG ?? 0} | Loại: ${item.LOAI || ''}\n`;
+          const hasGroupBy = template.groupByFields && template.groupByFields.length > 0;
+          const finalRows = hasGroupBy 
+            ? groupAndAggregateData({ data: previewData, groupByFields: template.groupByFields || [] })
+            : previewData;
+
+          finalRows.forEach((item, idx) => {
+            if (template.columnMappings && template.columnMappings.length > 0) {
+              const mappedCols = template.columnMappings.map(m => {
+                let val = '';
+                if (m.dataField && item[m.dataField] !== undefined) {
+                  val = item[m.dataField];
+                } else if (item[m.excelColumn] !== undefined) {
+                  val = item[m.excelColumn];
+                }
+                return `${m.label}: ${val ?? ''}`;
+              });
+              detailsText += `${idx + 1}. ${mappedCols.join(' | ')}\n`;
+            } else if (hasGroupBy) {
+              const groupDescParts = (template.groupByFields || []).map(f => {
+                let label = f === 'CHIET_XUAT' || f === 'CHIET_SUAT' ? 'Chiết suất' : f === 'THUONG_HIEU' ? 'Thương hiệu' : f === 'TINH_NANG' ? 'Tính năng' : f;
+                let val = item[f];
+                if (f === 'CHIET_XUAT' || f === 'CHIET_SUAT') val = item.CHIET_SUAT || item.CHIET_XUAT;
+                if (f === 'SPH' || f === 'CAN') val = item.SPH ?? item.CAN;
+                if (f === 'CYL' || f === 'LOAN') val = item.CYL ?? item.LOAN;
+                return `${label}: ${val !== undefined ? val : 'Tất cả'}`;
+              });
+              detailsText += `${idx + 1}. ${groupDescParts.join(' | ')} | SL: ${item.SO_LUONG ?? 0} | Số lần GD: ${item.COUNT ?? 0}\n`;
+            } else {
+              detailsText += `${idx + 1}. SKU: ${item.SKU} | Tên: ${item.TEN_SP || item.TEN_SAN_PHAM || ''} | SL: ${item.SO_LUONG ?? 0} | Loại: ${item.LOAI || ''}\n`;
+            }
           });
           detailField.setText(detailsText);
           isFilled = true;
+          console.log(`[PDF Write] Ghi giá trị DETAILS vào field ${name}: [${finalRows.length} dòng]`);
         } catch (e) {}
       }
       
@@ -1897,6 +2622,7 @@ export async function exportReportWithFilters({
           const textField = form.getTextField(name);
           textField.setText(String(previewStaticValues[name] ?? ''));
           isFilled = true;
+          console.log(`[PDF Write] Ghi giá trị STATIC vào field ${name}: ${previewStaticValues[name]}`);
         } catch (e) {}
       }
       
@@ -1906,6 +2632,7 @@ export async function exportReportWithFilters({
             const textField = form.getTextField(name);
             textField.setText(String(activeRecord[mapping.dataField] ?? ''));
             isFilled = true;
+            console.log(`[PDF Write] Ghi giá trị MAPPED vào field ${name}: ${activeRecord[mapping.dataField]}`);
           } catch (e) {}
         }
       }
@@ -1915,6 +2642,7 @@ export async function exportReportWithFilters({
           const textField = form.getTextField(name);
           textField.setText(String(activeRecord[name] ?? ''));
           isFilled = true;
+          console.log(`[PDF Write] Ghi giá trị DIRECT vào field ${name}: ${activeRecord[name]}`);
         } catch (e) {}
       }
       
@@ -1923,6 +2651,7 @@ export async function exportReportWithFilters({
         try {
           const textField = form.getTextField(name);
           textField.setText(''); // xóa trống
+          console.log(`[PDF Write] Xóa trống field chưa có dữ liệu ${name}`);
         } catch (e) {}
       }
     });

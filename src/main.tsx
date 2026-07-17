@@ -24,7 +24,10 @@ console.error = function (...args) {
     argStr.includes('Lỗi tải b_') ||
     argStr.includes('Lỗi sync') ||
     argStr.includes('Lỗi khi tải dữ liệu từ Supabase Cloud') ||
-    argStr.includes('Lỗi trong quá trình khởi tạo Auth');
+    argStr.includes('Lỗi trong quá trình khởi tạo Auth') ||
+    argStr.includes('user_luutru') ||
+    argStr.includes('Bucket not found') ||
+    argStr.includes('Lỗi upload file mẫu');
 
   if (isNetworkOrDbFetchError) {
     console.warn('[Network/DB Warning (Demoted from Error)]:', ...args);

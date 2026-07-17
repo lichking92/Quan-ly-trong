@@ -38,7 +38,8 @@ import {
   Database,
   Plus,
   Trash2,
-  ShieldCheck
+  ShieldCheck,
+  ArrowUpRight
 } from 'lucide-react';
 import { motion } from 'motion/react';
 import { 
@@ -58,6 +59,7 @@ import {
 } from 'recharts';
 import { SanPham, NhapXuat, NhapXuatCT } from '../types';
 import TemplateExportManager from './TemplateExportManager';
+import { monitor } from '../utils/debugMonitor';
 import { 
   calculateResolvedValues, 
   exportReportByTemplate, 
@@ -68,7 +70,7 @@ import {
   exportRawData,
   exportReportWithFilters
 } from '../utils/exportEngine';
-import { fetchExportTemplates, fetchExportMappings } from '../supabaseSync';
+import { fetchExportTemplates, fetchExportMappings, syncExportTemplate } from '../supabaseSync';
 
 /**
  * FILE: Dashboard.tsx
@@ -85,6 +87,78 @@ interface DashboardProps {
   chiNhanhs: string[];
   onQuickRestock?: (sku: string) => void;
   onTriggerToast?: (message: string, type?: 'success' | 'warning' | 'error') => void;
+  currentUser?: any;
+  onDrillDown?: (filters: {
+    historyTypeFilter: 'Tất cả' | 'NHẬP' | 'XUẤT' | 'KIỂM KHO' | 'NHẬP_KIEM_KHO' | 'XUAT_KIEM_KHO';
+    branchFilter: string;
+    fromDate: string;
+    toDate: string;
+  }) => void;
+}
+
+// --- HEATMAP HELPER FUNCTIONS ---
+export function getHeatmapLevel(val: number, maxVal: number): number {
+  if (val <= 0) return 0;
+  if (maxVal <= 0) return 1;
+  const level = Math.ceil((val / maxVal) * 7);
+  return Math.min(Math.max(level, 1), 7);
+}
+
+export function getLevelStyle(level: number, txType: 'XUẤT' | 'NHẬP') {
+  const isXuat = txType === 'XUẤT';
+  if (isXuat) {
+    switch (level) {
+      case 1: return { bg: '#fef2f2', text: '#ef4444', border: '#fee2e2', name: 'Rất thấp' };
+      case 2: return { bg: '#fee2e2', text: '#dc2626', border: '#fca5a5', name: 'Thấp' };
+      case 3: return { bg: '#fca5a5', text: '#991b1b', border: '#f87171', name: 'Trung bình thấp' };
+      case 4: return { bg: '#f87171', text: '#ffffff', border: '#ef4444', name: 'Trung bình' };
+      case 5: return { bg: '#ef4444', text: '#ffffff', border: '#dc2626', name: 'Trung bình cao' };
+      case 6: return { bg: '#dc2626', text: '#ffffff', border: '#b91c1c', name: 'Cao' };
+      case 7: return { bg: '#991b1b', text: '#ffffff', border: '#7f1d1d', name: 'Rất cao' };
+      default: return { bg: '#ffffff', text: '#cbd5e1', border: '#e2e8f0', name: 'N/A' };
+    }
+  } else {
+    // NHẬP: Emerald/Green
+    switch (level) {
+      case 1: return { bg: '#f0fdf4', text: '#22c55e', border: '#dcfce7', name: 'Rất thấp' };
+      case 2: return { bg: '#dcfce7', text: '#16a34a', border: '#86efac', name: 'Thấp' };
+      case 3: return { bg: '#86efac', text: '#166534', border: '#4ade80', name: 'Trung bình thấp' };
+      case 4: return { bg: '#4ade80', text: '#ffffff', border: '#22c55e', name: 'Trung bình' };
+      case 5: return { bg: '#22c55e', text: '#ffffff', border: '#16a34a', name: 'Trung bình cao' };
+      case 6: return { bg: '#16a34a', text: '#ffffff', border: '#15803d', name: 'Cao' };
+      case 7: return { bg: '#166534', text: '#ffffff', border: '#14532d', name: 'Rất cao' };
+      default: return { bg: '#ffffff', text: '#cbd5e1', border: '#e2e8f0', name: 'N/A' };
+    }
+  }
+}
+
+export function getLevelRanges(maxVal: number) {
+  if (maxVal <= 0) return [];
+  const ranges = [];
+  if (maxVal < 7) {
+    for (let i = 1; i <= maxVal; i++) {
+      ranges.push({
+        level: Math.min(7, Math.max(1, Math.ceil((i / maxVal) * 7))),
+        lower: i,
+        upper: i,
+        label: `${i}`
+      });
+    }
+    return ranges;
+  }
+  for (let i = 1; i <= 7; i++) {
+    const lower = Math.floor(((i - 1) * maxVal) / 7) + 1;
+    const upper = i === 7 ? maxVal : Math.floor((i * maxVal) / 7);
+    if (lower <= upper) {
+      ranges.push({
+        level: i,
+        lower,
+        upper,
+        label: lower === upper ? `${lower}` : `${lower} - ${upper}`
+      });
+    }
+  }
+  return ranges;
 }
 
 export default function Dashboard({ 
@@ -93,21 +167,73 @@ export default function Dashboard({
   nhapXuatCTs, 
   chiNhanhs, 
   onQuickRestock,
-  onTriggerToast
+  onTriggerToast,
+  currentUser,
+  onDrillDown
 }: DashboardProps) {
+  monitor.trackRender('Dashboard');
   const [dashboardSubTab, setDashboardSubTab] = useState<'ANALYTICS' | 'TEMPLATES'>('ANALYTICS');
+  const [isMounted, setIsMounted] = useState<boolean>(false);
+  
+  React.useEffect(() => {
+    setIsMounted(true);
+    return () => setIsMounted(false);
+  }, []);
   
   // --- 1. QUẢN LÝ TRẠNG THÁI BỘ LỌC ---
-  const [selectedBranch, setSelectedBranch] = useState<string>('Tất cả');
-  const [selectedBrandFilter, setSelectedBrandFilter] = useState<string>('Tất cả');
-  const [selectedFeatureFilter, setSelectedFeatureFilter] = useState<string>('Tất cả');
-  const [selectedChietXuatFilter, setSelectedChietXuatFilter] = useState<string>('Tất cả');
+  const [selectedBranch, setSelectedBranch] = useState<string>(() => {
+    return localStorage.getItem('DASHBOARD_FILTER_BRANCH') || 'Tất cả';
+  });
+  const [selectedBrandFilter, setSelectedBrandFilter] = useState<string>(() => {
+    return localStorage.getItem('DASHBOARD_FILTER_BRAND') || 'Tất cả';
+  });
+  const [selectedFeatureFilter, setSelectedFeatureFilter] = useState<string>(() => {
+    return localStorage.getItem('DASHBOARD_FILTER_FEATURE') || 'Tất cả';
+  });
+  const [selectedChietXuatFilter, setSelectedChietXuatFilter] = useState<string>(() => {
+    return localStorage.getItem('DASHBOARD_FILTER_CHIET_XUAT') || 'Tất cả';
+  });
   const [chartType, setChartType] = useState<'line' | 'stacked'>('line');
   
   // Dữ liệu mẫu năm 2026, nên mặc định đặt khoảng thời gian từ 2026-07-01 đến 2026-07-31
-  const [startDate, setStartDate] = useState<string>('2026-07-01');
-  const [endDate, setEndDate] = useState<string>('2026-07-31');
-  const [activeQuickFilter, setActiveQuickFilter] = useState<string>('30d');
+  const [startDate, setStartDate] = useState<string>(() => {
+    return localStorage.getItem('DASHBOARD_FILTER_START_DATE') || '2026-07-01';
+  });
+  const [endDate, setEndDate] = useState<string>(() => {
+    return localStorage.getItem('DASHBOARD_FILTER_END_DATE') || '2026-07-31';
+  });
+  const [activeQuickFilter, setActiveQuickFilter] = useState<string>(() => {
+    return localStorage.getItem('DASHBOARD_FILTER_QUICK') || '30d';
+  });
+
+  React.useEffect(() => {
+    localStorage.setItem('DASHBOARD_FILTER_BRANCH', selectedBranch);
+  }, [selectedBranch]);
+
+  React.useEffect(() => {
+    localStorage.setItem('DASHBOARD_FILTER_BRAND', selectedBrandFilter);
+  }, [selectedBrandFilter]);
+
+  React.useEffect(() => {
+    localStorage.setItem('DASHBOARD_FILTER_FEATURE', selectedFeatureFilter);
+  }, [selectedFeatureFilter]);
+
+  React.useEffect(() => {
+    localStorage.setItem('DASHBOARD_FILTER_CHIET_XUAT', selectedChietXuatFilter);
+  }, [selectedChietXuatFilter]);
+
+  React.useEffect(() => {
+    localStorage.setItem('DASHBOARD_FILTER_START_DATE', startDate);
+  }, [startDate]);
+
+  React.useEffect(() => {
+    localStorage.setItem('DASHBOARD_FILTER_END_DATE', endDate);
+  }, [endDate]);
+
+  React.useEffect(() => {
+    localStorage.setItem('DASHBOARD_FILTER_QUICK', activeQuickFilter);
+  }, [activeQuickFilter]);
+
   const [isExporting, setIsExporting] = useState<boolean>(false);
 
   // --- QUẢN LÝ DANH SÁCH MẪU XUẤT CHO DASHBOARD ---
@@ -123,18 +249,138 @@ export default function Dashboard({
   const [exportGroupByFields, setExportGroupByFields] = useState<string[]>([]);
   const [currentMappings, setCurrentMappings] = useState<ColumnMapping[]>([]);
 
+  // Trạng thái Form thêm cột mới trong Modal nâng cao
+  const [showAddColForm, setShowAddColForm] = useState<boolean>(false);
+  const [newColLabel, setNewColLabel] = useState<string>('');
+  const [newColField, setNewColField] = useState<string>('');
+  const [newColExcel, setNewColExcel] = useState<string>('');
+  const [newColIsPivot, setNewColIsPivot] = useState<boolean>(false);
+  const [newColAgg, setNewColAgg] = useState<'SUM_SO_LUONG' | 'SUM_NHAP' | 'SUM_XUAT' | 'SUM_TON' | 'COUNT_SKU' | 'COUNT_CHUNG_TU' | 'SUM_GIA_TRI_NHAP' | 'SUM_GIA_TRI_XUAT'>('SUM_SO_LUONG');
+
+  const handleMoveColumnUp = (index: number) => {
+    if (index === 0) return;
+    setCurrentMappings(prev => {
+      const next = [...prev];
+      const temp = next[index];
+      next[index] = next[index - 1];
+      next[index - 1] = temp;
+      return next;
+    });
+  };
+
+  const handleMoveColumnDown = (index: number) => {
+    if (index === currentMappings.length - 1) return;
+    setCurrentMappings(prev => {
+      const next = [...prev];
+      const temp = next[index];
+      next[index] = next[index + 1];
+      next[index + 1] = temp;
+      return next;
+    });
+  };
+
+  const handleRemoveColumnByIndex = (index: number) => {
+    setCurrentMappings(prev => prev.filter((_, i) => i !== index));
+  };
+
+  const handleAddNewColumnCustom = () => {
+    if (!newColLabel.trim()) {
+      alert('Vui lòng nhập tên cột hiển thị');
+      return;
+    }
+    const excelCol = newColExcel.trim().toUpperCase() || `COL_${currentMappings.length + 1}`;
+    
+    const newMapping: ColumnMapping = {
+      excelColumn: excelCol,
+      dataField: newColField || 'SO_LUONG',
+      label: newColLabel.trim(),
+      isPivot: newColIsPivot,
+      pivotSource: 'PHIEU',
+      pivotGroupBy: [],
+      pivotAggregation: newColIsPivot ? newColAgg : undefined,
+      pivotFilters: []
+    };
+
+    setCurrentMappings(prev => [...prev, newMapping]);
+    setNewColLabel('');
+    setNewColField('');
+    setNewColExcel('');
+    setNewColIsPivot(false);
+    setNewColAgg('SUM_SO_LUONG');
+    setShowAddColForm(false);
+  };
+
+  const handleAddGroupByField = (fieldKey: string) => {
+    if (!fieldKey) return;
+    if (!exportGroupByFields.includes(fieldKey)) {
+      setExportGroupByFields(prev => [...prev, fieldKey]);
+    }
+  };
+
+  const handleRemoveGroupByField = (fieldKey: string) => {
+    setExportGroupByFields(prev => prev.filter(f => f !== fieldKey));
+  };
+
+  const handleMoveGroupByFieldUp = (index: number) => {
+    if (index === 0) return;
+    setExportGroupByFields(prev => {
+      const next = [...prev];
+      const temp = next[index];
+      next[index] = next[index - 1];
+      next[index - 1] = temp;
+      return next;
+    });
+  };
+
+  const handleMoveGroupByFieldDown = (index: number) => {
+    if (index === exportGroupByFields.length - 1) return;
+    setExportGroupByFields(prev => {
+      const next = [...prev];
+      const temp = next[index];
+      next[index] = next[index + 1];
+      next[index + 1] = temp;
+      return next;
+    });
+  };
+
   React.useEffect(() => {
     const loadTemplates = async () => {
       try {
         const dbTemplates = await fetchExportTemplates();
         const dbMappings = await fetchExportMappings();
         if (dbTemplates && dbTemplates.length > 0) {
-          setExportTemplates(dbTemplates);
+          const cleaned = dbTemplates.map((t: any) => {
+            let fields = t.groupByFields || [];
+            if (t.id === 'default-phieu-xuat-excel' && (fields.includes('SKU') || fields.includes('TEN_SP'))) {
+              fields = [];
+            }
+            if (t.id === 'default-dashboard-excel') {
+              fields = [];
+            }
+            return {
+              ...t,
+              groupByFields: fields
+            };
+          });
+          setExportTemplates(cleaned);
         } else {
           // Khôi phục từ localStorage làm dự phòng
           const savedTemplates = localStorage.getItem('export_templates');
           if (savedTemplates) {
-            setExportTemplates(JSON.parse(savedTemplates));
+            const parsed = JSON.parse(savedTemplates).map((t: any) => {
+              let fields = t.groupByFields || [];
+              if (t.id === 'default-phieu-xuat-excel' && (fields.includes('SKU') || fields.includes('TEN_SP'))) {
+                fields = [];
+              }
+              if (t.id === 'default-dashboard-excel') {
+                fields = [];
+              }
+              return {
+                ...t,
+                groupByFields: fields
+              };
+            });
+            setExportTemplates(parsed);
           }
         }
         if (dbMappings && dbMappings.length > 0) {
@@ -372,10 +618,24 @@ export default function Dashboard({
 
     let numPhieuNhap = 0;
     let numPhieuXuat = 0;
+    let numPhieuNhapKK = 0;
+    let numPhieuXuatKK = 0;
 
     filteredHeaders.forEach(h => {
-      if (h.LOAI === 'NHẬP') numPhieuNhap++;
-      if (h.LOAI === 'XUẤT') numPhieuXuat++;
+      if (h.LOAI === 'NHẬP') {
+        if (h.HOA_DON.startsWith('PNK')) {
+          numPhieuNhapKK++;
+        } else {
+          numPhieuNhap++;
+        }
+      }
+      if (h.LOAI === 'XUẤT') {
+        if (h.HOA_DON.startsWith('PXK')) {
+          numPhieuXuatKK++;
+        } else {
+          numPhieuXuat++;
+        }
+      }
     });
 
     let totalNhap = 0;
@@ -392,6 +652,8 @@ export default function Dashboard({
       totalProducts,
       numPhieuNhap,
       numPhieuXuat,
+      numPhieuNhapKK,
+      numPhieuXuatKK,
       totalNhap,
       totalXuat,
       lowStockCount
@@ -554,8 +816,25 @@ export default function Dashboard({
         return;
       }
 
+      // Tích hợp cấu hình tùy chỉnh trực tiếp từ Modal
+      const customizedTemplate: Template = {
+        ...matchedTemplate,
+        groupByFields: exportGroupByFields,
+        columnMappings: currentMappings
+      };
+
+      // Lưu tự động thay đổi vào mẫu báo cáo
+      const updatedList = exportTemplates.map(t => t.id === selectedTemplateId ? customizedTemplate : t);
+      setExportTemplates(updatedList);
+      localStorage.setItem('export_templates', JSON.stringify(updatedList));
+
+      // Đồng bộ ngầm lên Supabase để lưu trữ lâu dài
+      syncExportTemplate(customizedTemplate).catch(err => {
+        console.warn('Lỗi đồng bộ ngầm mẫu báo cáo:', err);
+      });
+
       await exportReportWithFilters({
-        template: matchedTemplate,
+        template: customizedTemplate,
         startDate,
         endDate,
         selectedBranch,
@@ -859,6 +1138,10 @@ export default function Dashboard({
       maxQtyVal
     };
   }, [filteredDetails, salesDbTxType]);
+
+  const heatmapLevelRanges = useMemo(() => {
+    return getLevelRanges(heatmapData.maxQtyVal);
+  }, [heatmapData.maxQtyVal]);
 
   // Chi tiết ô được click trong Heatmap
   const selectedCellDetails = useMemo(() => {
@@ -1297,43 +1580,117 @@ export default function Dashboard({
       </div>
 
       {/* 2. CHỈ SỐ KPI CHỦ CHỐT - PHÙ HỢP HOÀN TOÀN VỚI YÊU CẦU NGHIỆP VỤ */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        <div className="bento-card !p-4 flex items-center gap-4 bg-white border border-slate-100 rounded-2xl shadow-xs">
-          <div className="p-3 bg-emerald-50 text-emerald-600 rounded-xl">
+      <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-4">
+        {/* Card 1: Tổng phiếu nhập */}
+        <div 
+          onClick={() => onDrillDown && onDrillDown({
+            historyTypeFilter: 'NHẬP',
+            branchFilter: selectedBranch,
+            fromDate: startDate,
+            toDate: endDate
+          })}
+          className="bento-card !p-4 flex items-center gap-4 bg-white border border-slate-100 rounded-2xl shadow-xs cursor-pointer hover:scale-[1.02] active:scale-[0.98] hover:border-emerald-300 transition-all duration-150 group"
+          title="Bấm để xem danh sách chi tiết các Phiếu Nhập"
+        >
+          <div className="p-3 bg-emerald-50 text-emerald-600 rounded-xl group-hover:bg-emerald-100 transition-colors">
             <FileSpreadsheet className="w-6 h-6" />
           </div>
-          <div>
-            <p className="stat-label !mb-0 text-slate-400 font-bold text-[10px] uppercase">Tổng phiếu nhập</p>
+          <div className="flex-1 min-w-0">
+            <p className="stat-label !mb-0 text-slate-400 font-bold text-[10px] uppercase flex items-center gap-1 justify-between">
+              <span className="truncate">Tổng phiếu nhập</span>
+              <ArrowUpRight className="w-3.5 h-3.5 opacity-0 group-hover:opacity-100 transition-opacity text-emerald-500 shrink-0" />
+            </p>
             <p className="stat-value text-slate-850 font-mono font-bold text-lg">{kpis.numPhieuNhap}</p>
           </div>
         </div>
 
-        <div className="bento-card !p-4 flex items-center gap-4 bg-white border border-slate-100 rounded-2xl shadow-xs">
-          <div className="p-3 bg-rose-50 text-rose-600 rounded-xl">
+        {/* Card 2: Tổng phiếu xuất */}
+        <div 
+          onClick={() => onDrillDown && onDrillDown({
+            historyTypeFilter: 'XUẤT',
+            branchFilter: selectedBranch,
+            fromDate: startDate,
+            toDate: endDate
+          })}
+          className="bento-card !p-4 flex items-center gap-4 bg-white border border-slate-100 rounded-2xl shadow-xs cursor-pointer hover:scale-[1.02] active:scale-[0.98] hover:border-rose-300 transition-all duration-150 group"
+          title="Bấm để xem danh sách chi tiết các Phiếu Xuất"
+        >
+          <div className="p-3 bg-rose-50 text-rose-600 rounded-xl group-hover:bg-rose-100 transition-colors">
             <FileText className="w-6 h-6" />
           </div>
-          <div>
-            <p className="stat-label !mb-0 text-slate-400 font-bold text-[10px] uppercase">Tổng phiếu xuất</p>
+          <div className="flex-1 min-w-0">
+            <p className="stat-label !mb-0 text-slate-400 font-bold text-[10px] uppercase flex items-center gap-1 justify-between">
+              <span className="truncate">Tổng phiếu xuất</span>
+              <ArrowUpRight className="w-3.5 h-3.5 opacity-0 group-hover:opacity-100 transition-opacity text-rose-500 shrink-0" />
+            </p>
             <p className="stat-value text-slate-850 font-mono font-bold text-lg">{kpis.numPhieuXuat}</p>
           </div>
         </div>
 
+        {/* Card 3: Tổng phiếu nhập kiểm kho */}
+        <div 
+          onClick={() => onDrillDown && onDrillDown({
+            historyTypeFilter: 'NHẬP_KIEM_KHO',
+            branchFilter: selectedBranch,
+            fromDate: startDate,
+            toDate: endDate
+          })}
+          className="bento-card !p-4 flex items-center gap-4 bg-white border border-slate-100 rounded-2xl shadow-xs cursor-pointer hover:scale-[1.02] active:scale-[0.98] hover:border-teal-300 transition-all duration-150 group"
+          title="Bấm để xem danh sách chi tiết các Phiếu Nhập Kiểm Kho (PNK)"
+        >
+          <div className="p-3 bg-teal-50 text-teal-600 rounded-xl group-hover:bg-teal-100 transition-colors">
+            <ShieldCheck className="w-6 h-6" />
+          </div>
+          <div className="flex-1 min-w-0">
+            <p className="stat-label !mb-0 text-slate-400 font-bold text-[10px] uppercase flex items-center gap-1 justify-between">
+              <span className="truncate">Nhập kiểm kho (PNK)</span>
+              <ArrowUpRight className="w-3.5 h-3.5 opacity-0 group-hover:opacity-100 transition-opacity text-teal-500 shrink-0" />
+            </p>
+            <p className="stat-value text-slate-850 font-mono font-bold text-lg">{kpis.numPhieuNhapKK}</p>
+          </div>
+        </div>
+
+        {/* Card 4: Tổng phiếu xuất kiểm kho */}
+        <div 
+          onClick={() => onDrillDown && onDrillDown({
+            historyTypeFilter: 'XUAT_KIEM_KHO',
+            branchFilter: selectedBranch,
+            fromDate: startDate,
+            toDate: endDate
+          })}
+          className="bento-card !p-4 flex items-center gap-4 bg-white border border-slate-100 rounded-2xl shadow-xs cursor-pointer hover:scale-[1.02] active:scale-[0.98] hover:border-indigo-300 transition-all duration-150 group"
+          title="Bấm để xem danh sách chi tiết các Phiếu Xuất Kiểm Kho (PXK)"
+        >
+          <div className="p-3 bg-indigo-50 text-indigo-600 rounded-xl group-hover:bg-indigo-100 transition-colors">
+            <ShieldCheck className="w-6 h-6" />
+          </div>
+          <div className="flex-1 min-w-0">
+            <p className="stat-label !mb-0 text-slate-400 font-bold text-[10px] uppercase flex items-center gap-1 justify-between">
+              <span className="truncate">Xuất kiểm kho (PXK)</span>
+              <ArrowUpRight className="w-3.5 h-3.5 opacity-0 group-hover:opacity-100 transition-opacity text-indigo-500 shrink-0" />
+            </p>
+            <p className="stat-value text-slate-850 font-mono font-bold text-lg">{kpis.numPhieuXuatKK}</p>
+          </div>
+        </div>
+
+        {/* Card 5: Số lượng đã nhập */}
         <div className="bento-card !p-4 flex items-center gap-4 bg-white border border-slate-100 rounded-2xl shadow-xs">
-          <div className="p-3 bg-teal-50 text-teal-600 rounded-xl">
+          <div className="p-3 bg-sky-50 text-sky-600 rounded-xl">
             <TrendingUp className="w-6 h-6" />
           </div>
-          <div>
-            <p className="stat-label !mb-0 text-slate-400 font-bold text-[10px] uppercase">Số lượng đã nhập</p>
+          <div className="flex-1 min-w-0">
+            <p className="stat-label !mb-0 text-slate-400 font-bold text-[10px] uppercase">Lượng đã nhập</p>
             <p className="stat-value text-slate-855 font-mono font-bold text-lg">{kpis.totalNhap} <span className="text-[10px] text-slate-400">miếng</span></p>
           </div>
         </div>
 
+        {/* Card 6: Số lượng đã xuất */}
         <div className="bento-card !p-4 flex items-center gap-4 bg-white border border-slate-100 rounded-2xl shadow-xs">
-          <div className="p-3 bg-indigo-50 text-indigo-600 rounded-xl">
+          <div className="p-3 bg-slate-50 text-slate-600 rounded-xl">
             <TrendingDown className="w-6 h-6" />
           </div>
-          <div>
-            <p className="stat-label !mb-0 text-slate-400 font-bold text-[10px] uppercase">Số lượng đã xuất</p>
+          <div className="flex-1 min-w-0">
+            <p className="stat-label !mb-0 text-slate-400 font-bold text-[10px] uppercase">Lượng đã xuất</p>
             <p className="stat-value text-slate-855 font-mono font-bold text-lg">{kpis.totalXuat} <span className="text-[10px] text-slate-400">miếng</span></p>
           </div>
         </div>
@@ -1362,9 +1719,9 @@ export default function Dashboard({
           </h3>
           
           {!collapsedCharts['dailyTx'] && (
-            <div className={`w-full ${fullscreenChart === 'dailyTx' ? 'flex-1 h-[calc(100%-60px)]' : 'h-64'}`}>
-              {zoomDailyTxData.length > 0 ? (
-                <ResponsiveContainer width="100%" height="100%">
+            <div className={`w-full ${fullscreenChart === 'dailyTx' ? 'flex-1 h-[calc(100%-60px)] min-h-[300px]' : 'h-80 min-h-[300px]'}`}>
+              {zoomDailyTxData.length > 0 && isMounted ? (
+                <ResponsiveContainer width="100%" height="100%" minHeight={250}>
                   {chartType === 'line' ? (
                     <LineChart 
                       data={zoomDailyTxData} 
@@ -1435,11 +1792,11 @@ export default function Dashboard({
           </h3>
           
           {!collapsedCharts['brandStock'] && (
-            <div className={`flex flex-col sm:flex-row items-center justify-around gap-4 ${fullscreenChart === 'brandStock' ? 'flex-1 h-[calc(100%-60px)]' : 'h-64'}`}>
-              {zoomBrandStockData.length > 0 ? (
+            <div className={`flex flex-col sm:flex-row items-center justify-around gap-4 ${fullscreenChart === 'brandStock' ? 'flex-1 h-[calc(100%-60px)] min-h-[300px]' : 'h-80 min-h-[300px]'}`}>
+              {zoomBrandStockData.length > 0 && isMounted ? (
                 <>
-                  <div className={`${fullscreenChart === 'brandStock' ? 'h-72 w-72' : 'h-44 w-44'} transition-all duration-300`}>
-                    <ResponsiveContainer width="100%" height="100%">
+                  <div className={`${fullscreenChart === 'brandStock' ? 'h-72 w-72 min-h-[288px] min-w-[288px]' : 'h-44 w-44 min-h-[176px] min-w-[176px]'} transition-all duration-300 relative`}>
+                    <ResponsiveContainer width="100%" height="100%" minHeight={176}>
                       <PieChart>
                         <Pie
                           data={zoomBrandStockData}
@@ -1499,9 +1856,9 @@ export default function Dashboard({
           </h3>
           
           {!collapsedCharts['topXuat'] && (
-            <div className={`w-full ${fullscreenChart === 'topXuat' ? 'flex-1 h-[calc(100%-60px)]' : 'h-64'}`}>
-              {zoomTopXuatData.length > 0 ? (
-                <ResponsiveContainer width="100%" height="100%">
+            <div className={`w-full ${fullscreenChart === 'topXuat' ? 'flex-1 h-[calc(100%-60px)] min-h-[300px]' : 'h-80 min-h-[300px]'}`}>
+              {zoomTopXuatData.length > 0 && isMounted ? (
+                <ResponsiveContainer width="100%" height="100%" minHeight={250}>
                   <BarChart 
                     data={zoomTopXuatData} 
                     margin={{ top: 10, right: 10, left: -20, bottom: 0 }}
@@ -1555,9 +1912,9 @@ export default function Dashboard({
           </h3>
           
           {!collapsedCharts['branch'] && (
-            <div className={`w-full ${fullscreenChart === 'branch' ? 'flex-1 h-[calc(100%-60px)]' : 'h-64'}`}>
-              {zoomBranchData.length > 0 ? (
-                <ResponsiveContainer width="100%" height="100%">
+            <div className={`w-full ${fullscreenChart === 'branch' ? 'flex-1 h-[calc(100%-60px)] min-h-[300px]' : 'h-80 min-h-[300px]'}`}>
+              {zoomBranchData.length > 0 && isMounted ? (
+                <ResponsiveContainer width="100%" height="100%" minHeight={250}>
                   <BarChart 
                     data={zoomBranchData} 
                     layout="vertical" 
@@ -1664,15 +2021,22 @@ export default function Dashboard({
               </div>
 
               {/* Chú giải màu sắc */}
-              <div className="flex items-center gap-2 text-[10px] font-semibold text-slate-400">
-                <span>Thấp</span>
-                <div className="flex items-center h-2.5 w-16 rounded overflow-hidden border border-slate-150">
-                  <div className={`h-full w-1/4 ${salesDbTxType === 'XUẤT' ? 'bg-red-50' : 'bg-emerald-50'}`} />
-                  <div className={`h-full w-1/4 ${salesDbTxType === 'XUẤT' ? 'bg-red-200' : 'bg-emerald-200'}`} />
-                  <div className={`h-full w-1/4 ${salesDbTxType === 'XUẤT' ? 'bg-red-400' : 'bg-emerald-400'}`} />
-                  <div className={`h-full w-1/4 ${salesDbTxType === 'XUẤT' ? 'bg-red-600' : 'bg-emerald-650'}`} />
-                </div>
-                <span>Cao</span>
+              <div className="flex flex-wrap items-center gap-1.5 p-1.5 bg-slate-50/50 rounded-xl border border-slate-150 shadow-3xs max-w-full">
+                <span className="text-[9px] font-bold text-slate-500 uppercase tracking-wider mr-1">Thang 7 Mức Độ:</span>
+                {heatmapLevelRanges.length > 0 ? (
+                  heatmapLevelRanges.map(range => {
+                    const style = getLevelStyle(range.level, salesDbTxType);
+                    return (
+                      <div key={range.level} className="flex items-center gap-1 px-1.5 py-0.5 bg-white border border-slate-200 rounded-md text-[9px] text-slate-600 font-mono shadow-3xs" title={`${style.name}: từ ${range.lower} đến ${range.upper} cái`}>
+                        <span className="w-2.5 h-2.5 rounded-xs inline-block shadow-3xs" style={{ backgroundColor: style.bg, border: `1px solid ${style.border}` }} />
+                        <span className="font-bold hidden sm:inline">{style.name}:</span>
+                        <span>{range.label}</span>
+                      </div>
+                    );
+                  })
+                ) : (
+                  <span className="text-[9px] text-slate-400 font-mono">Chưa có dữ liệu</span>
+                )}
               </div>
             </div>
 
@@ -1757,7 +2121,7 @@ export default function Dashboard({
               
               {/* Bên trái: Bảng Heatmap Matrix */}
               <div className="xl:col-span-2 space-y-2">
-                <div className="overflow-x-auto border border-slate-100 rounded-xl max-h-[380px] overflow-y-auto shadow-2xs bg-slate-50/10">
+                <div className="overflow-x-auto border border-slate-100 rounded-xl max-h-[460px] overflow-y-auto shadow-2xs bg-slate-50/10">
                   <table className="min-w-full text-xs text-left border-collapse">
                     <thead className="bg-slate-100 sticky top-0 z-20 shadow-3xs">
                       <tr>
@@ -1784,33 +2148,42 @@ export default function Dashboard({
                               const val = cell ? (salesDbTxType === 'XUẤT' ? cell.x_qty : cell.n_qty) : 0;
                               const maxVal = heatmapData.maxQtyVal;
                               
-                              // Tỉ lệ mật độ màu
-                              const ratio = maxVal > 0 ? val / maxVal : 0;
                               const isSelected = selectedHeatmapCell?.sph === sph && selectedHeatmapCell?.cyl === cyl;
-                              
-                              let bgStyle = {};
-                              if (val > 0) {
-                                bgStyle = {
-                                  backgroundColor: salesDbTxType === 'XUẤT' 
-                                    ? `rgba(239, 68, 68, ${0.1 + ratio * 0.9})` 
-                                    : `rgba(16, 185, 129, ${0.1 + ratio * 0.9})`,
-                                  color: ratio > 0.45 ? '#ffffff' : '#1e293b'
-                                };
-                              }
+                              const isHighest = val > 0 && val === maxVal;
+                              const cellLevel = getHeatmapLevel(val, maxVal);
+                              const style = getLevelStyle(cellLevel, salesDbTxType);
 
                               return (
                                 <td 
                                   key={cyl} 
                                   onClick={() => setSelectedHeatmapCell({ sph, cyl })}
-                                  style={bgStyle}
-                                  className={`p-2.5 border border-slate-150 text-center font-bold font-mono cursor-pointer transition-all duration-150 hover:scale-[1.04] hover:shadow-sm hover:z-20 ${
+                                  style={val > 0 ? { backgroundColor: style.bg, color: style.text, borderColor: style.border } : {}}
+                                  className={`p-2.5 border border-slate-150 text-center font-bold font-mono cursor-pointer transition-all duration-150 hover:scale-[1.1] hover:shadow-md hover:z-25 group relative ${
                                     val === 0 ? 'text-slate-300 bg-white' : ''
                                   } ${
                                     isSelected ? 'ring-2 ring-indigo-600 ring-offset-1 z-10' : ''
+                                  } ${
+                                    isHighest ? 'ring-2 ring-amber-500 ring-offset-1 z-10' : ''
                                   }`}
                                   title={`Cận: ${formatDopValue(sph)} | Loạn: ${formatDopValue(cyl)} => ${val} cái`}
                                 >
-                                  {val > 0 ? val : '-'}
+                                  {val > 0 ? (
+                                    <>
+                                      <span>{val}</span>
+                                      {isHighest && <span className="absolute top-0.5 right-0.5 text-[8px]" title="Bán chạy nhất!">👑</span>}
+                                      
+                                      {/* Custom Tooltip on Hover */}
+                                      <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 hidden group-hover:block z-50 pointer-events-none">
+                                        <div className="bg-slate-900/95 text-white text-[10px] px-2.5 py-2 rounded-lg shadow-xl whitespace-nowrap text-left border border-slate-700 font-sans space-y-1">
+                                          <div>Cận (SPH): <span className="font-mono font-bold text-sky-300">{formatDopValue(sph)}</span></div>
+                                          <div>Loạn (CYL): <span className="font-mono font-bold text-sky-300">{formatDopValue(cyl)}</span></div>
+                                          <div>Số lượng: <span className="font-mono font-extrabold text-amber-400">{val}</span> cái</div>
+                                          {isHighest && <div className="text-[9px] font-bold text-yellow-400 flex items-center gap-0.5">⭐ Cao nhất hiện tại</div>}
+                                        </div>
+                                        <div className="w-1.5 h-1.5 bg-slate-900 rotate-45 -mt-1 mx-auto" />
+                                      </div>
+                                    </>
+                                  ) : '-'}
                                 </td>
                               );
                             })}
@@ -2081,9 +2454,9 @@ export default function Dashboard({
                 </div>
 
                 {/* Rendering Bar Chart */}
-                <div className={`w-full ${fullscreenChart === 'salesBar' ? 'flex-1 h-[calc(100%-180px)]' : 'h-56'}`}>
-                  {zoomSalesDbBarData.length > 0 ? (
-                    <ResponsiveContainer width="100%" height="100%">
+                <div className={`w-full ${fullscreenChart === 'salesBar' ? 'flex-1 h-[calc(100%-180px)] min-h-[300px]' : 'h-80 min-h-[300px]'}`}>
+                  {zoomSalesDbBarData.length > 0 && isMounted ? (
+                    <ResponsiveContainer width="100%" height="100%" minHeight={250}>
                       <BarChart 
                         data={zoomSalesDbBarData} 
                         margin={{ top: 15, right: 10, left: -25, bottom: 10 }}
@@ -2357,164 +2730,404 @@ export default function Dashboard({
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-xs p-4 overflow-y-auto">
           <div className="bg-white rounded-3xl shadow-2xl border border-slate-150 w-full max-w-4xl max-h-[90vh] flex flex-col overflow-hidden animate-in fade-in zoom-in-95 duration-200">
             {/* Header */}
-            <div className="p-6 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">
+            <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">
               <div className="flex items-center gap-3">
-                <div className={`p-2.5 rounded-xl ${exportModalType === 'EXCEL' ? 'bg-emerald-50 text-emerald-600' : 'bg-rose-50 text-rose-600'}`}>
-                  {exportModalType === 'EXCEL' ? <FileSpreadsheet className="w-6 h-6" /> : <FileText className="w-6 h-6" />}
+                <div className={`p-2 rounded-xl ${exportModalType === 'EXCEL' ? 'bg-emerald-50 text-emerald-600' : 'bg-rose-50 text-rose-600'}`}>
+                  {exportModalType === 'EXCEL' ? <FileSpreadsheet className="w-5 h-5" /> : <FileText className="w-5 h-5" />}
                 </div>
                 <div>
-                  <h3 className="text-sm font-bold uppercase text-slate-850 tracking-wider font-sans">Chi tiết Mẫu Kết Xuất {exportModalType}</h3>
-                  <p className="text-[11px] text-slate-400 font-mono">Thông tin cấu hình mẫu xuất, dòng bắt đầu ghi dữ liệu, mapping cột và quy tắc gom nhóm</p>
+                  <h3 className="text-sm font-extrabold uppercase text-slate-850 tracking-wider font-sans">Chi tiết Mẫu Kết Xuất {exportModalType}</h3>
+                  <p className="text-[11px] text-slate-400 font-medium">Thay thế Placeholder trực quan theo cấu trúc file mẫu của bạn</p>
                 </div>
               </div>
               <button 
                 type="button"
                 onClick={() => setShowExportModal(false)}
-                className="p-1.5 hover:bg-slate-100 rounded-lg text-slate-400 hover:text-slate-600 transition-all cursor-pointer"
+                className="p-1.5 hover:bg-slate-100 rounded-lg text-slate-400 hover:text-slate-600 transition-all cursor-pointer border-0 bg-transparent"
               >
                 <X className="w-5 h-5" />
               </button>
             </div>
 
             {/* Content */}
-            <div className="p-6 overflow-y-auto space-y-6 flex-1 text-slate-755 text-xs">
+            <div className="p-5 overflow-y-auto space-y-4 flex-1 text-slate-755 text-xs">
               
-              {/* PHÂN VÙNG 1: CHẾ ĐỘ XUẤT */}
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-                <div className="space-y-2">
-                  <label className="block text-[10px] font-extrabold uppercase text-slate-400 tracking-wider">Chế độ kết xuất</label>
-                  <div className="bg-slate-50 p-3 rounded-xl border border-slate-150 flex items-center gap-2.5">
-                    <div className="w-8 h-8 rounded-lg bg-indigo-50 text-indigo-600 flex items-center justify-center">
-                      <Layers className="w-4 h-4" />
+              {/* PHÂN VÙNG 1: THÔNG TIN MẪU & VỊ TRÍ GHI & GROUP BY (BENTO GRID CỰC GỌN) */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                
+                {/* Cột trái: Cấu hình File & Dòng ghi */}
+                <div className="space-y-3 bg-slate-50/50 p-4 rounded-2xl border border-slate-150">
+                  <div className="text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-1">Cấu hình File & Dòng ghi</div>
+                  
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div className="space-y-1">
+                      <label className="text-[10px] font-bold text-slate-500 uppercase">Mẫu báo cáo áp dụng</label>
+                      <select
+                        value={selectedTemplateId}
+                        onChange={(e) => {
+                          const tid = e.target.value;
+                          setSelectedTemplateId(tid);
+                          const matched = exportTemplates.find(t => t.id === tid);
+                          if (matched) {
+                            setExportStartRow(matched.startRow || 10);
+                            setExportGroupByFields(matched.groupByFields || []);
+                            setCurrentMappings(matched.columnMappings || []);
+                          }
+                        }}
+                        className="w-full bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 font-bold text-slate-700 text-xs focus:outline-none cursor-pointer"
+                      >
+                        {exportTemplates
+                          .filter(t => t.type === exportModalType)
+                          .map(t => (
+                            <option key={t.id} value={t.id}>
+                              {t.name} {t.isDefault ? '(Mặc định)' : ''}
+                            </option>
+                          ))}
+                      </select>
                     </div>
-                    <div>
-                      <div className="font-bold text-slate-750">Theo mẫu cấu hình hệ thống</div>
-                      <div className="text-[10px] text-slate-400">Đồng bộ tự động từ tab Mẫu Excel/PDF</div>
+
+                    <div className="space-y-1">
+                      <label className="text-[10px] font-bold text-slate-500 uppercase">File mẫu hiện tại</label>
+                      <div className="bg-slate-100 border border-slate-200/60 px-2.5 py-1.5 rounded-lg text-slate-700 text-xs font-semibold truncate" title={exportTemplates.find(t => t.id === selectedTemplateId)?.fileName}>
+                        {exportTemplates.find(t => t.id === selectedTemplateId)?.fileName || '(Preset hệ thống)'}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
+                    <div className="space-y-1">
+                      <label className="text-[10px] font-bold text-slate-500 uppercase">Dòng bắt đầu ghi dữ liệu</label>
+                      <input
+                        type="number"
+                        min="1"
+                        max="1000"
+                        value={exportStartRow}
+                        onChange={e => setExportStartRow(Math.max(1, parseInt(e.target.value) || 1))}
+                        className="w-full bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs font-bold font-mono text-center focus:ring-1 focus:ring-indigo-500 focus:outline-none"
+                      />
+                    </div>
+                    <div className="flex flex-col justify-end">
+                      <p className="text-[10px] text-slate-400 leading-normal">
+                        Dữ liệu chi tiết/bảng sẽ tự động ghi đè hoặc chèn liên tiếp bắt đầu từ dòng này.
+                      </p>
                     </div>
                   </div>
                 </div>
 
-                <div className="space-y-2">
-                  <label className="block text-[10px] font-extrabold uppercase text-slate-400 tracking-wider">Mẫu báo cáo áp dụng</label>
-                  <select
-                    value={selectedTemplateId}
-                    onChange={(e) => {
-                      const tid = e.target.value;
-                      setSelectedTemplateId(tid);
-                      const matched = exportTemplates.find(t => t.id === tid);
-                      if (matched) {
-                        setExportStartRow(matched.startRow || 10);
-                        setExportGroupByFields(matched.groupByFields || []);
-                        setCurrentMappings(matched.columnMappings || []);
-                      }
-                    }}
-                    className="w-full bg-white border border-slate-200 rounded-xl py-3 px-3.5 font-bold text-slate-700 focus:outline-hidden focus:ring-1 focus:ring-indigo-500 cursor-pointer text-xs"
-                  >
-                    {exportTemplates
-                      .filter(t => t.type === exportModalType)
-                      .map(t => (
-                        <option key={t.id} value={t.id}>
-                          {t.name} {t.isDefault ? '(Mặc định)' : ''}
-                        </option>
-                      ))}
-                  </select>
+                {/* Cột phải: Các trường gom nhóm */}
+                <div className="space-y-3 bg-slate-50/50 p-4 rounded-2xl border border-slate-150 flex flex-col justify-between">
+                  <div className="flex items-center justify-between mb-1">
+                    <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider">Các trường gom nhóm (Group By)</span>
+                    <select
+                      value=""
+                      onChange={(e) => {
+                        handleAddGroupByField(e.target.value);
+                        e.target.value = ''; // Reset select
+                      }}
+                      className="bg-white border border-slate-200 rounded-lg px-2 py-1 text-[10px] font-bold text-indigo-700 cursor-pointer focus:outline-none shadow-3xs"
+                    >
+                      <option value="">+ Thêm trường...</option>
+                      {[
+                        { key: 'THUONG_HIEU', label: 'Thương hiệu' },
+                        { key: 'CHIET_SUAT', label: 'Chiết suất' },
+                        { key: 'TINH_NANG', label: 'Tính năng' },
+                        { key: 'CHI_NHANH', label: 'Chi nhánh' },
+                        { key: 'KHO', label: 'Kho' },
+                        { key: 'CAN', label: 'Độ cận' },
+                        { key: 'LOAN', label: 'Độ loạn' },
+                        { key: 'VIEN', label: 'Độ viễn' },
+                        { key: 'SKU', label: 'SKU' },
+                        { key: 'TEN_NGUOI_TAO', label: 'Người tạo' },
+                        { key: 'LOAI', label: 'Loại chứng từ' }
+                      ]
+                        .filter(opt => !exportGroupByFields.includes(opt.key))
+                        .map(opt => (
+                          <option key={opt.key} value={opt.key}>{opt.label}</option>
+                        ))}
+                    </select>
+                  </div>
+
+                  <div className="space-y-1.5 max-h-36 overflow-y-auto p-2 bg-white border border-slate-150 rounded-xl flex-1 min-h-[90px]">
+                    {exportGroupByFields.length > 0 ? (
+                      exportGroupByFields.map((fieldKey, index) => {
+                        const optMap: Record<string, string> = {
+                          THUONG_HIEU: 'Thương hiệu',
+                          CHIET_SUAT: 'Chiết suất',
+                          TINH_NANG: 'Tính năng',
+                          CHI_NHANH: 'Chi nhánh',
+                          KHO: 'Kho',
+                          CAN: 'Độ cận',
+                          LOAN: 'Độ loạn',
+                          VIEN: 'Độ viễn',
+                          SKU: 'SKU',
+                          TEN_NGUOI_TAO: 'Người tạo',
+                          LOAI: 'Loại chứng từ'
+                        };
+                        const label = optMap[fieldKey] || fieldKey;
+                        return (
+                          <div key={fieldKey} className="flex items-center justify-between bg-slate-50 px-2.5 py-1 border border-slate-150 rounded-lg text-[11px]">
+                            <div className="flex items-center gap-1.5">
+                              <span className="w-4 h-4 flex items-center justify-center bg-indigo-50 text-indigo-700 rounded-full text-[9px] font-bold">
+                                {index + 1}
+                              </span>
+                              <span className="font-bold text-slate-700">{label}</span>
+                              <span className="text-[9px] font-mono text-slate-400">({fieldKey})</span>
+                            </div>
+                            <div className="flex items-center gap-0.5">
+                              <button
+                                type="button"
+                                disabled={index === 0}
+                                onClick={() => handleMoveGroupByFieldUp(index)}
+                                className="p-0.5 text-slate-400 hover:text-slate-700 hover:bg-slate-200 rounded disabled:opacity-30 disabled:pointer-events-none cursor-pointer bg-transparent border-0"
+                                title="Đẩy lên"
+                              >
+                                <ChevronUp className="w-3 h-3" />
+                              </button>
+                              <button
+                                type="button"
+                                disabled={index === exportGroupByFields.length - 1}
+                                onClick={() => handleMoveGroupByFieldDown(index)}
+                                className="p-0.5 text-slate-400 hover:text-slate-700 hover:bg-slate-200 rounded disabled:opacity-30 disabled:pointer-events-none cursor-pointer bg-transparent border-0"
+                                title="Đẩy xuống"
+                              >
+                                <ChevronDown className="w-3 h-3" />
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleRemoveGroupByField(fieldKey)}
+                                className="p-0.5 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded bg-transparent border-0 cursor-pointer"
+                                title="Xóa"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      })
+                    ) : (
+                      <div className="h-full flex flex-col items-center justify-center text-slate-400 italic text-[10px] py-4">
+                        Không gom nhóm (Báo cáo sẽ kết xuất chi tiết từng dòng)
+                      </div>
+                    )}
+                  </div>
                 </div>
               </div>
 
               <hr className="border-slate-100" />
 
-              {/* PHÂN VÙNG 2: DÒNG BẮT ĐẦU & GOM NHÓM (GROUP BY) */}
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                <div className="space-y-2">
-                  <label className="block text-[10px] font-extrabold uppercase text-slate-400 tracking-wider">Vị trí ghi dữ liệu</label>
-                  <div className="bg-slate-50 p-4 rounded-xl border border-slate-150 h-[100px] flex flex-col justify-center">
-                    <div className="text-slate-500 font-bold">Dòng bắt đầu chèn:</div>
-                    <div className="text-slate-800 font-mono font-bold text-lg mt-1">
-                      Hàng {exportStartRow}
-                    </div>
-                    <p className="text-[10px] text-slate-400 mt-1">Các hàng dữ liệu chi tiết sẽ tự động chèn bắt đầu từ hàng này.</p>
-                  </div>
-                </div>
-
-                <div className="space-y-2">
-                  <label className="block text-[10px] font-extrabold uppercase text-slate-400 tracking-wider">Quy tắc gom nhóm & tổng hợp dữ liệu</label>
-                  <div className="bg-slate-50 p-4 rounded-xl border border-slate-150 h-[100px] flex flex-col justify-center">
-                    <div className="text-slate-500 font-bold">Các trường gom nhóm (Group By):</div>
-                    <div className="flex flex-wrap gap-1.5 mt-2">
-                      {exportGroupByFields.length > 0 ? (
-                        exportGroupByFields.map(field => {
-                          const labelMap: Record<string, string> = {
-                            THUONG_HIEU: 'Thương hiệu',
-                            CHIET_XUAT: 'Chiết suất',
-                            TINH_NANG: 'Tính năng',
-                            CHI_NHANH: 'Chi nhánh',
-                            SKU: 'Mã SKU',
-                            LOAI: 'Loại GD'
-                          };
-                          return (
-                            <span key={field} className="px-2 py-0.5 bg-indigo-50 text-indigo-700 rounded text-[10px] font-bold border border-indigo-100/50">
-                              {labelMap[field] || field}
-                            </span>
-                          );
-                        })
-                      ) : (
-                        <span className="px-2 py-0.5 bg-slate-100 text-slate-500 rounded text-[10px] font-bold border border-slate-200">
-                          Không gom nhóm (Xuất chi tiết từng dòng)
-                        </span>
-                      )}
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              <hr className="border-slate-100" />
-
-              {/* PHÂN VÙNG 3: COLUMN MAPPING DISPLAY */}
+              {/* PHÂN VÙNG 2: MAPPING CỘT DỮ LIỆU */}
               <div className="space-y-3">
-                <label className="block text-[10px] font-extrabold uppercase text-slate-400 tracking-wider">Bản đồ ánh xạ cột Excel (Column Mapping - Chỉ đọc)</label>
+                <div className="flex items-center justify-between">
+                  <div>
+                    <label className="block text-[11px] font-extrabold uppercase text-slate-400 tracking-wider">Cấu hình Mapping cột dữ liệu ({currentMappings.length} cột)</label>
+                    <p className="text-[10px] text-slate-400">Thiết lập mối quan hệ giữa Placeholder trong file mẫu và các thuộc tính dữ liệu hệ thống</p>
+                  </div>
+                  
+                  <button
+                    type="button"
+                    onClick={() => setShowAddColForm(!showAddColForm)}
+                    className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-[11px] font-bold flex items-center gap-1 cursor-pointer transition-colors border-0"
+                  >
+                    <Plus className="w-3.5 h-3.5" /> Thêm cột mới
+                  </button>
+                </div>
 
-                <div className="border border-slate-150 rounded-xl overflow-hidden max-h-56 overflow-y-auto bg-slate-50/30">
-                  <table className="min-w-full text-xs text-left border-collapse">
-                    <thead className="bg-slate-100 sticky top-0 z-10">
-                      <tr>
-                        <th className="p-3 font-bold text-slate-500 border-b border-slate-200 w-28 text-center">Cột Excel</th>
-                        <th className="p-3 font-bold text-slate-500 border-b border-slate-200">Trường dữ liệu ánh xạ</th>
-                        <th className="p-3 font-bold text-slate-500 border-b border-slate-200">Nhãn tiêu đề cột</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-100">
-                      {currentMappings.length > 0 ? (
-                        currentMappings.map((m, idx) => (
-                          <tr key={idx} className="hover:bg-slate-50/50 bg-white">
-                            <td className="p-3 font-mono font-bold text-indigo-600 text-center bg-indigo-50/10">
-                              {m.excelColumn}
-                            </td>
-                            <td className="p-3 font-semibold text-slate-700">
-                              {m.dataField}
-                            </td>
-                            <td className="p-3 text-slate-500 font-medium">
-                              {m.label || '(Chưa đặt nhãn)'}
+                {/* FORM THÊM CỘT MỚI (COLLAPSIBLE FORM) */}
+                {showAddColForm && (
+                  <div className="bg-slate-50 border border-slate-200 rounded-xl p-3.5 space-y-3 shadow-xs animate-in fade-in duration-150">
+                    <div className="text-[11px] font-bold text-slate-700 uppercase tracking-wider flex items-center gap-1">
+                      <Plus className="w-3.5 h-3.5 text-indigo-600" /> Thêm cột dữ liệu mới vào bảng báo cáo
+                    </div>
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                      <div className="space-y-1">
+                        <label className="block text-[10px] font-bold text-slate-500">Tên cột hiển thị</label>
+                        <input
+                          type="text"
+                          value={newColLabel}
+                          onChange={e => setNewColLabel(e.target.value)}
+                          placeholder="VD: Thương hiệu"
+                          className="w-full bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-indigo-500 font-semibold"
+                        />
+                      </div>
+                      <div className="space-y-1">
+                        <label className="block text-[10px] font-bold text-slate-500">Mã cột / Placeholder</label>
+                        <input
+                          type="text"
+                          value={newColExcel}
+                          onChange={e => setNewColExcel(e.target.value)}
+                          placeholder="VD: THUONG_HIEU"
+                          className="w-full bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-indigo-500 font-semibold font-mono"
+                        />
+                      </div>
+                      <div className="space-y-1">
+                        <label className="block text-[10px] font-bold text-slate-500">Trường dữ liệu / Nguồn</label>
+                        <select
+                          value={newColField}
+                          onChange={e => setNewColField(e.target.value)}
+                          className="w-full bg-white border border-slate-200 rounded-lg px-2 py-1.5 text-xs focus:outline-none cursor-pointer font-semibold text-slate-700"
+                        >
+                          <option value="">-- Chọn trường nguồn --</option>
+                          <option value="THUONG_HIEU">THUONG_HIEU (Thương hiệu)</option>
+                          <option value="CHIET_SUAT">CHIET_SUAT (Chiết suất)</option>
+                          <option value="TINH_NANG">TINH_NANG (Tính năng)</option>
+                          <option value="CHI_NHANH">CHI_NHANH (Chi nhánh)</option>
+                          <option value="KHO">KHO (Kho hàng)</option>
+                          <option value="CAN">CAN (Độ cận)</option>
+                          <option value="LOAN">LOAN (Độ loạn)</option>
+                          <option value="VIEN">VIEN (Độ viễn)</option>
+                          <option value="SKU">SKU (Mã SKU)</option>
+                          <option value="TEN_NGUOI_TAO">TEN_NGUOI_TAO (Người tạo)</option>
+                          <option value="LOAI">LOAI (Loại chứng từ)</option>
+                          <option value="SO_LUONG">SO_LUONG (Số lượng)</option>
+                          <option value="DVT">DVT (Đơn vị tính)</option>
+                          <option value="NGAY">NGAY (Ngày giao dịch)</option>
+                          <option value="HOA_DON">HOA_DON (Mã phiếu / Số hóa đơn)</option>
+                        </select>
+                      </div>
+                    </div>
+                    <div className="flex justify-end gap-2 pt-1">
+                      <button
+                        type="button"
+                        onClick={() => setShowAddColForm(false)}
+                        className="px-3 py-1.5 border border-slate-200 text-slate-600 rounded-lg text-xs bg-white hover:bg-slate-50 cursor-pointer font-bold"
+                      >
+                        Hủy
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleAddNewColumnCustom}
+                        className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-xs font-bold cursor-pointer border-0"
+                      >
+                        Xác nhận Thêm
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                <div className="border border-slate-150 rounded-2xl overflow-hidden bg-white shadow-3xs">
+                  <div className="overflow-x-auto max-h-[250px]">
+                    <table className="min-w-full text-xs text-left border-collapse">
+                      <thead className="bg-slate-50 sticky top-0 z-10 border-b border-slate-150">
+                        <tr>
+                          <th className="p-2 pl-4 w-12 text-center text-slate-500 font-bold">STT</th>
+                          <th className="p-2 w-1/3 text-slate-500 font-bold">Tên cột hiển thị</th>
+                          <th className="p-2 w-1/3 text-slate-500 font-bold">Mã cột / Placeholder (Copy)</th>
+                          <th className="p-2 w-1/3 text-slate-500 font-bold">Trường dữ liệu / Nguồn</th>
+                          <th className="p-2 text-center w-28 text-slate-500 font-bold">Thao tác</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100">
+                        {currentMappings.length > 0 ? (
+                          currentMappings.map((m, index) => (
+                            <tr key={index} className="hover:bg-slate-50/40 transition-colors">
+                              <td className="p-2 text-center font-mono font-bold text-slate-400">
+                                {index + 1}
+                              </td>
+                              
+                              {/* Edit Label */}
+                              <td className="p-2">
+                                <input
+                                  type="text"
+                                  value={m.label || ''}
+                                  onChange={(e) => {
+                                    const next = [...currentMappings];
+                                    next[index] = { ...next[index], label: e.target.value };
+                                    setCurrentMappings(next);
+                                  }}
+                                  className="bg-slate-50 border border-slate-200 hover:border-slate-300 rounded-lg px-2.5 py-1.5 text-xs font-semibold text-slate-800 focus:outline-none focus:ring-1 focus:ring-indigo-500 w-full"
+                                  placeholder="Tên cột hiển thị"
+                                />
+                              </td>
+
+                              {/* Pure Text Placeholder (No textbox, easy copy) */}
+                              <td className="p-2 select-all cursor-pointer font-mono font-bold text-indigo-700 text-center" title="Bôi đen hoặc click đúp để copy">
+                                <span className="inline-block bg-indigo-50 text-indigo-700 px-2.5 py-1 rounded-lg border border-indigo-100/50 hover:bg-indigo-100 transition-colors">
+                                  {`{{${m.excelColumn}}}`}
+                                </span>
+                              </td>
+
+                              {/* Edit Data Field */}
+                              <td className="p-2">
+                                <select
+                                  value={m.dataField}
+                                  onChange={(e) => {
+                                    const next = [...currentMappings];
+                                    next[index] = { ...next[index], dataField: e.target.value };
+                                    setCurrentMappings(next);
+                                  }}
+                                  className="w-full bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs font-semibold text-slate-700 focus:outline-none cursor-pointer"
+                                >
+                                  <option value="">-- Không ánh xạ --</option>
+                                  <option value="THUONG_HIEU">THUONG_HIEU (Thương hiệu)</option>
+                                  <option value="CHIET_SUAT">CHIET_SUAT (Chiết suất)</option>
+                                  <option value="TINH_NANG">TINH_NANG (Tính năng)</option>
+                                  <option value="CHI_NHANH">CHI_NHANH (Chi nhánh)</option>
+                                  <option value="KHO">KHO (Kho hàng)</option>
+                                  <option value="CAN">CAN (Độ cận)</option>
+                                  <option value="LOAN">LOAN (Độ loạn)</option>
+                                  <option value="VIEN">VIEN (Độ viễn)</option>
+                                  <option value="SKU">SKU (Mã SKU)</option>
+                                  <option value="TEN_NGUOI_TAO">TEN_NGUOI_TAO (Người tạo)</option>
+                                  <option value="LOAI">LOAI (Loại chứng từ)</option>
+                                  <option value="SO_LUONG">SO_LUONG (Số lượng)</option>
+                                  <option value="DVT">DVT (Đơn vị tính)</option>
+                                  <option value="NGAY">NGAY (Ngày giao dịch)</option>
+                                  <option value="HOA_DON">HOA_DON (Mã phiếu / Số hóa đơn)</option>
+                                </select>
+                              </td>
+
+                              {/* Action buttons */}
+                              <td className="p-2 text-center">
+                                <div className="flex items-center justify-center gap-0.5">
+                                  <button
+                                    type="button"
+                                    disabled={index === 0}
+                                    onClick={() => handleMoveColumnUp(index)}
+                                    className="p-1 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded disabled:opacity-30 disabled:pointer-events-none transition-all cursor-pointer bg-transparent border-0"
+                                    title="Di chuyển lên"
+                                  >
+                                    <ChevronUp className="w-3.5 h-3.5" />
+                                  </button>
+                                  <button
+                                    type="button"
+                                    disabled={index === currentMappings.length - 1}
+                                    onClick={() => handleMoveColumnDown(index)}
+                                    className="p-1 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded disabled:opacity-30 disabled:pointer-events-none transition-all cursor-pointer bg-transparent border-0"
+                                    title="Di chuyển xuống"
+                                  >
+                                    <ChevronDown className="w-3.5 h-3.5" />
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => handleRemoveColumnByIndex(index)}
+                                    className="p-1 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded bg-transparent border-0 cursor-pointer transition-colors"
+                                    title="Xóa cột"
+                                  >
+                                    <Trash2 className="w-3.5 h-3.5" />
+                                  </button>
+                                </div>
+                              </td>
+                            </tr>
+                          ))
+                        ) : (
+                          <tr>
+                            <td colSpan={5} className="p-6 text-center text-slate-400 italic">
+                              Chưa có cấu hình cột nào. Hãy bấm "Thêm cột mới" để tự thiết kế cấu trúc báo cáo của bạn.
                             </td>
                           </tr>
-                        ))
-                      ) : (
-                        <tr>
-                          <td colSpan={3} className="p-4 text-center text-slate-400 italic">
-                            Chưa cấu hình ánh xạ cột dữ liệu cho mẫu báo cáo này.
-                          </td>
-                        </tr>
-                      )}
-                    </tbody>
-                  </table>
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
                 </div>
               </div>
 
             </div>
 
             {/* Footer buttons */}
-            <div className="p-6 border-t border-slate-100 flex items-center justify-between bg-slate-50/30">
+            <div className="px-6 py-4 border-t border-slate-100 flex items-center justify-between bg-slate-50/30">
               <div className="text-[10px] text-slate-400 font-mono flex items-center gap-1">
-                <ShieldCheck className="w-3.5 h-3.5 text-indigo-500" /> Hệ thống áp dụng cấu hình và bộ lọc tự động
+                <ShieldCheck className="w-3.5 h-3.5 text-indigo-500" /> Hệ thống tự động đồng bộ và áp dụng cấu hình
               </div>
               <div className="flex gap-3">
                 <button

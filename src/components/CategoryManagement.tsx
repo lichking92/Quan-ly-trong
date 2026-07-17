@@ -21,7 +21,7 @@ import {
   Key
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { ThươngHieu, ChiNhanh, NhanVien, UserRole, EmailLog, Role, safeParseArray } from '../types';
+import { ThuongHieu, ChiNhanh, NhanVien, UserRole, EmailLog, Role, safeParseArray } from '../types';
 import { formatDop } from '../data/mockData';
 
 /**
@@ -33,14 +33,14 @@ import { formatDop } from '../data/mockData';
  */
 
 interface CategoryManagementProps {
-  thuongHieus: ThươngHieu[];
+  thuongHieus: ThuongHieu[];
   chiNhanhs: ChiNhanh[];
   nhanViens: NhanVien[];
   emailLogs?: EmailLog[];
-  onAddThuongHieu: (brand: ThươngHieu) => void;
+  onAddThuongHieu: (brand: ThuongHieu) => void;
   onAddChiNhanh: (branch: ChiNhanh) => void;
   onAddNhanVien: (staff: NhanVien) => void;
-  onUpdateThuongHieu: (oldBrandName: string, oldFeature: string, updatedBrand: ThươngHieu) => void;
+  onUpdateThuongHieu: (oldBrandName: string, oldFeature: string, updatedBrand: ThuongHieu) => void;
   onDeleteThuongHieu: (brandName: string, feature: string) => void;
   onUpdateChiNhanh: (oldBranchName: string, updatedBranch: ChiNhanh) => void;
   onDeleteChiNhanh: (branchName: string) => void;
@@ -189,7 +189,7 @@ export default function CategoryManagement({
     });
   }, [nhanViens]);
 
-  const [editingBrand, setEditingBrand] = useState<{ oldName: string; oldFeature: string; brand: ThươngHieu } | null>(null);
+  const [editingBrand, setEditingBrand] = useState<{ oldName: string; oldFeature: string; brand: ThuongHieu } | null>(null);
   const [editingBranch, setEditingBranch] = useState<{ oldName: string; branch: ChiNhanh } | null>(null);
   const [editingStaff, setEditingStaff] = useState<{ oldEmail: string; staff: NhanVien } | null>(null);
 
@@ -314,7 +314,7 @@ export default function CategoryManagement({
       return;
     }
 
-    const brandRecord: ThươngHieu = {
+    const brandRecord: ThuongHieu = {
       THUONG_HIEU: newBrandName.trim(),
       CHIET_XUAT_MAC_DINH: newBrandChietXuats.join(','),
       TINH_NANG_MAC_DINH: newBrandFeatures.join(','),
@@ -332,7 +332,7 @@ export default function CategoryManagement({
     setTimeout(() => setSuccessMsg(''), 3000);
   };
 
-  const handleStartEditBrand = (brand: ThươngHieu) => {
+  const handleStartEditBrand = (brand: ThuongHieu) => {
     const features = (brand.TINH_NANG_MAC_DINH || brand.TINH_NANG || '')
       .split(',')
       .map(s => s.trim())
@@ -380,7 +380,7 @@ export default function CategoryManagement({
       return;
     }
 
-    const updatedBrand: ThươngHieu = {
+    const updatedBrand: ThuongHieu = {
       THUONG_HIEU: newBrandName.trim(),
       CHIET_XUAT_MAC_DINH: newBrandChietXuats.join(','),
       TINH_NANG_MAC_DINH: newBrandFeatures.join(','),

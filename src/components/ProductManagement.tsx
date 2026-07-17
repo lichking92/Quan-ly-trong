@@ -19,7 +19,7 @@ import {
   ArrowRight
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { SanPham, ThươngHieu } from '../types';
+import { SanPham, ThuongHieu } from '../types';
 import { generateSKUString, formatDop, formatSKUForDisplay, cleanSKU, generateSphOptions } from '../data/mockData';
 
 /**
@@ -35,7 +35,7 @@ interface ProductManagementProps {
   onAddProduct: (newProduct: SanPham) => void;
   onUpdateProduct?: (sku: string, updatedFields: Partial<SanPham>) => void;
   thuongHieus: string[];
-  brandList?: ThươngHieu[];
+  brandList?: ThuongHieu[];
   currentUser: any;
 }
 

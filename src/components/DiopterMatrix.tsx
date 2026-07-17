@@ -21,7 +21,7 @@ import {
   Compass
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { SanPham, NhapXuat, NhapXuatCT, KiemKho, ThươngHieu } from '../types';
+import { SanPham, NhapXuat, NhapXuatCT, KiemKho, ThuongHieu } from '../types';
 import { formatDop, generateSKUString, generateSphOptions } from '../data/mockData';
 
 interface DiopterMatrixProps {
@@ -31,7 +31,7 @@ interface DiopterMatrixProps {
   kiemKhos: KiemKho[];
   chiNhanhs: string[];
   thuongHieus: string[];
-  brandList?: ThươngHieu[];
+  brandList?: ThuongHieu[];
   currentUser: any;
   onUpdateMatrixCell?: (
     sku: string,

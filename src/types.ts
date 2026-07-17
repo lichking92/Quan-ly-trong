@@ -103,7 +103,7 @@ export interface KiemKho {
 }
 
 // B_THUONGHIEU: Danh mục thương hiệu tròng kính được quản lý trong hệ thống
-export interface ThươngHieu {
+export interface ThuongHieu {
   THUONG_HIEU: string;     // Tên thương hiệu (Blick, Element, Nikki, Zeiss, Essilor, HEN...)
   CHIET_XUAT_MAC_DINH?: string; // Cấu hình chiết suất mặc định cho thương hiệu này
   TINH_NANG_MAC_DINH?: string;  // Cấu hình tính năng mặc định cho thương hiệu này

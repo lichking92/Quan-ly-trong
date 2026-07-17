@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { SanPham, NhapXuat, NhapXuatCT, KiemKho, ThươngHieu, ChiNhanh, NhanVien } from '../types';
+import { SanPham, NhapXuat, NhapXuatCT, KiemKho, ThuongHieu, ChiNhanh, NhanVien } from '../types';
 
 /**
  * FILE: mockData.ts
@@ -27,7 +27,7 @@ export const formatDop = (val: number): string => {
 export function generateSphOptions(
   brandName: string,
   chietXuat: string,
-  brandList: ThươngHieu[] = [],
+  brandList: ThuongHieu[] = [],
   diopterType: 'CẬN' | 'VIỄN' = 'CẬN'
 ): number[] {
   // 1. Tìm bản ghi thương hiệu khớp chính xác nhất

@@ -50,6 +50,72 @@ export const syncTimeWithSupabase = async () => {
 // Chạy đồng bộ thời gian ngay lập tức khi ứng dụng khởi chạy
 syncTimeWithSupabase();
 
+// -------------------------------------------------------------------------
+// THIẾT LẬP INTERCEPTOR CHO FETCH ĐỂ PHÁT HIỆN LỖI 401 (UNAUTHORIZED)
+// VỚI CLIENT SUPABASE (TRÁNH LỖI WINDOW.FETCH LÀ READ-ONLY Ở MỘT SỐ PHIÊN BẢN TRÌNH DUYỆT)
+// -------------------------------------------------------------------------
+const customFetch = async function(input, init) {
+  let requestUrl = "";
+  let requestMethod = "GET";
+
+  if (typeof input === "string") {
+    requestUrl = input;
+  } else if (input instanceof URL) {
+    requestUrl = input.href;
+  } else if (input && typeof input === "object") {
+    requestUrl = input.url || "";
+    if (!init || !init.method) {
+      requestMethod = (input.method || "GET").toUpperCase();
+    }
+  }
+
+  if (init && init.method) {
+    requestMethod = init.method.toUpperCase();
+  }
+
+  try {
+    const response = await window.fetch(input, init);
+
+    if (response.status === 401) {
+      const responseStatus = response.status;
+      
+      // Log lỗi theo đúng định dạng yêu cầu của user
+      console.error(
+        'API 401:',
+        requestUrl,
+        requestMethod,
+        responseStatus
+      );
+
+      // Thêm log chi tiết về Tab và Trạng thái chạy ngầm/chạy nổi
+      const activeTab = window.__activeTab || "UNKNOWN_TAB";
+      const isBg = window.__isBackgroundRequest ? "Chạy ngầm (Background Polling)" : "Mở màn hình (Foreground)";
+      console.error(`[401 Debug Info] Tab kích hoạt: ${activeTab} | Trạng thái: ${isBg}`);
+
+      // Kiểm tra nếu có người dùng đang đăng nhập trong cache
+      const hasCurrentUser = localStorage.getItem('CURRENT_USER') !== null;
+      if (hasCurrentUser) {
+        if (typeof window.__forceLogout === 'function') {
+          console.warn("[401 Interceptor] Phát hiện tài khoản bị vô hiệu hóa hoặc hết hạn. Thực hiện đăng xuất cưỡng chế qua App UI...");
+          window.__forceLogout();
+        } else {
+          console.warn("[401 Interceptor] Phát hiện 401 nhưng App UI chưa load xong. Tự động dọn sạch session...");
+          localStorage.clear();
+          sessionStorage.clear();
+        }
+      }
+    }
+
+    return response;
+  } catch (err) {
+    throw err;
+  }
+};
+
 // Khởi tạo Supabase client / Initialize Supabase client
-export const supabase = createClient(SUPABASE_URL, SUPABASE_PUBLIC_KEY);
+export const supabase = createClient(SUPABASE_URL, SUPABASE_PUBLIC_KEY, {
+  global: {
+    fetch: customFetch
+  }
+});
 

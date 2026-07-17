@@ -24,21 +24,23 @@ import {
   ChevronDown,
   ChevronUp,
   Filter,
-  Sliders
+  Sliders,
+  GripVertical
 } from 'lucide-react';
-import ExcelJS from 'exceljs';
-import { PDFDocument } from 'pdf-lib';
 import { SanPham, NhapXuat, NhapXuatCT } from '../types';
 import { 
   Template, 
   ColumnMapping,
   arrayBufferToBase64,
+  getExcelJS,
+  getPDFDocument,
 } from '../utils/exportEngine';
 import { 
   syncExportTemplate, 
   deleteExportTemplate, 
   fetchExportTemplates, 
 } from '../supabaseSync';
+import { monitor } from '../utils/debugMonitor';
 
 interface DataField {
   key: string;
@@ -141,6 +143,20 @@ const FIELDS_BY_SOURCE: Record<string, DataField[]> = {
   ]
 };
 
+const AVAILABLE_GROUP_BY_FIELDS = [
+  { key: 'THUONG_HIEU', label: 'Thương hiệu (THUONG_HIEU)' },
+  { key: 'CHIET_SUAT', label: 'Chiết suất (CHIET_SUAT)' },
+  { key: 'TINH_NANG', label: 'Tính năng (TINH_NANG)' },
+  { key: 'CHI_NHANH', label: 'Chi nhánh (CHI_NHANH)' },
+  { key: 'KHO', label: 'Kho hàng (KHO)' },
+  { key: 'CAN', label: 'Độ cận (CAN)' },
+  { key: 'LOAN', label: 'Độ loạn (LOAN)' },
+  { key: 'VIEN', label: 'Độ viễn (VIEN)' },
+  { key: 'SKU', label: 'Mã SKU (SKU)' },
+  { key: 'TEN_NGUOI_TAO', label: 'Người tạo (TEN_NGUOI_TAO)' },
+  { key: 'LOAI', label: 'Loại chứng từ (LOAI)' }
+];
+
 interface TemplateExportManagerProps {
   sanPhams: SanPham[];
   nhapXuats: NhapXuat[];
@@ -154,6 +170,7 @@ export default function TemplateExportManager({
   nhapXuatCTs,
   chiNhanhs
 }: TemplateExportManagerProps) {
+  monitor.trackRender('TemplateExportManager');
   // --- STATE QUẢN LÝ ---
   const [templates, setTemplates] = useState<Template[]>([]);
   const [selectedTemplateId, setSelectedTemplateId] = useState<string>('');
@@ -169,6 +186,33 @@ export default function TemplateExportManager({
   const [columnMappings, setColumnMappings] = useState<ColumnMapping[]>([]);
   const [expandedPivotPlaceholder, setExpandedPivotPlaceholder] = useState<string | null>(null);
   const [newManualPlaceholder, setNewManualPlaceholder] = useState<string>('');
+  const [draggedIndex, setDraggedIndex] = useState<number | null>(null);
+  const [newColExcel, setNewColExcel] = useState<string>('');
+
+  const handleColDragStart = (index: number) => {
+    setDraggedIndex(index);
+  };
+
+  const handleColDragOver = (e: React.DragEvent, index: number) => {
+    e.preventDefault();
+  };
+
+  const handleColDrop = (index: number) => {
+    if (draggedIndex === null || draggedIndex === index) return;
+    const next = [...columnMappings];
+    const draggedItem = next[draggedIndex];
+    next.splice(draggedIndex, 1);
+    next.splice(index, 0, draggedItem);
+    setColumnMappings(next);
+    setDraggedIndex(null);
+  };
+
+  // Form Thêm cột mới
+  const [showAddColForm, setShowAddColForm] = useState(false);
+  const [newColLabel, setNewColLabel] = useState('');
+  const [newColField, setNewColField] = useState('');
+  const [newColIsPivot, setNewColIsPivot] = useState(false);
+  const [newColAgg, setNewColAgg] = useState<'SUM_SO_LUONG' | 'SUM_NHAP' | 'SUM_XUAT' | 'SUM_TON' | 'COUNT_SKU' | 'COUNT_CHUNG_TU' | 'SUM_GIA_TRI_NHAP' | 'SUM_GIA_TRI_XUAT'>('SUM_SO_LUONG');
 
   // Tên & mô tả chỉnh sửa trực tiếp cho mẫu đang chọn
   const [editingName, setEditingName] = useState<string>('');
@@ -183,18 +227,61 @@ export default function TemplateExportManager({
         let finalTemplates: Template[] = [];
         
         if (dbTemplates && dbTemplates.length > 0) {
-          finalTemplates = dbTemplates.map(t => ({
-            ...t,
-            applicableReportTypes: t.applicableReportTypes || [],
-            columnMappings: t.columnMappings || [],
-            groupByFields: t.groupByFields || []
-          }));
+          finalTemplates = dbTemplates.map(t => {
+            if (t.fileData && t.fileData !== 'PRESET' && t.fileData !== 'PRESET_DASHBOARD') {
+              if (t.fileData.startsWith('STORAGE_PATH:')) {
+                // Giữ nguyên reference dạng STORAGE_PATH: để nhận diện và tải về sau
+              } else {
+                try {
+                  localStorage.setItem(`template_file_${t.id}`, t.fileData);
+                } catch (err) {
+                  console.warn('LocalStorage full, failed to cache fileData:', err);
+                }
+                t.fileData = ''; // strip to save memory
+              }
+            }
+            let fields = t.groupByFields || [];
+            if (t.id === 'default-phieu-xuat-excel' && (fields.includes('SKU') || fields.includes('TEN_SP'))) {
+              fields = [];
+            }
+            if (t.id === 'default-dashboard-excel') {
+              fields = [];
+            }
+            return {
+              ...t,
+              applicableReportTypes: t.applicableReportTypes || [],
+              columnMappings: t.columnMappings || [],
+              groupByFields: fields
+            };
+          });
           setTemplates(finalTemplates);
           localStorage.setItem('export_templates', JSON.stringify(finalTemplates));
         } else {
           const savedTemplates = localStorage.getItem('export_templates');
           if (savedTemplates) {
-            finalTemplates = JSON.parse(savedTemplates);
+            finalTemplates = JSON.parse(savedTemplates).map((t: Template) => {
+              if (t.fileData && t.fileData !== 'PRESET' && t.fileData !== 'PRESET_DASHBOARD') {
+                if (t.fileData.startsWith('STORAGE_PATH:')) {
+                  // Giữ nguyên reference dạng STORAGE_PATH:
+                } else {
+                  try {
+                    localStorage.setItem(`template_file_${t.id}`, t.fileData);
+                  } catch (err) {}
+                  t.fileData = ''; // strip to save memory
+                }
+              }
+              let fields = t.groupByFields || [];
+              if (t.id === 'default-phieu-xuat-excel' && (fields.includes('SKU') || fields.includes('TEN_SP'))) {
+                fields = [];
+              }
+              if (t.id === 'default-dashboard-excel') {
+                fields = [];
+              }
+              return {
+                ...t,
+                groupByFields: fields
+              };
+            });
           } else {
             // Danh sách mẫu mặc định ban đầu
             finalTemplates = [
@@ -217,7 +304,7 @@ export default function TemplateExportManager({
                   { excelColumn: 'E', dataField: 'TEN_SP', label: 'Tên sản phẩm', isPivot: false },
                   { excelColumn: 'F', dataField: 'SO_LUONG', label: 'Số lượng', isPivot: false }
                 ],
-                groupByFields: ['STT', 'HOA_DON', 'NGAY', 'SKU', 'TEN_SP', 'SO_LUONG'],
+                groupByFields: [],
                 startRow: 10
               },
               {
@@ -236,7 +323,7 @@ export default function TemplateExportManager({
                   { excelColumn: 'TONG_XUAT', dataField: 'TONG_XUAT', label: 'Tổng xuất', isPivot: false },
                   { excelColumn: 'THUONG_HIEU_BAN_CHAY', dataField: 'THUONG_HIEU_BAN_CHAY', label: 'Thương hiệu bán chạy', isPivot: false }
                 ],
-                groupByFields: ['TONG_TON', 'TONG_XUAT', 'THUONG_HIEU_BAN_CHAY'],
+                groupByFields: [],
                 startRow: 4
               }
             ];
@@ -276,12 +363,7 @@ export default function TemplateExportManager({
       setSelectedSource(source);
 
       const savedFields = activeTemplate.groupByFields || [];
-      if (savedFields.length > 0) {
-        setSelectedFields(savedFields);
-      } else {
-        const available = FIELDS_BY_SOURCE[source] || [];
-        setSelectedFields(available.map(f => f.key));
-      }
+      setSelectedFields(savedFields);
 
       const detected = activeTemplate.detectedPlaceholders || [];
       const availableFields = FIELDS_BY_SOURCE[source] || [];
@@ -317,8 +399,8 @@ export default function TemplateExportManager({
   // Thay đổi nguồn dữ liệu chính
   const handleSourceChange = (source: string) => {
     setSelectedSource(source);
+    setSelectedFields([]);
     const available = FIELDS_BY_SOURCE[source] || [];
-    setSelectedFields(available.map(f => f.key));
 
     setColumnMappings(prev => prev.map(m => {
       if (m.isPivot) return m;
@@ -341,31 +423,105 @@ export default function TemplateExportManager({
     });
   };
 
-  // Cập nhật ánh xạ field cho placeholder đơn lẻ
-  const handleMapPlaceholder = (placeholder: string, fieldKey: string) => {
-    setColumnMappings(prev => prev.map(m => {
-      if (m.excelColumn === placeholder) {
-        return {
-          ...m,
-          dataField: fieldKey,
-          isPivot: false
-        };
-      }
-      return m;
-    }));
+  // Cập nhật trường excelColumn (Placeholder) bằng index
+  const handleUpdateExcelColumn = (index: number, newCol: string) => {
+    setColumnMappings(prev => {
+      const next = [...prev];
+      next[index] = {
+        ...next[index],
+        excelColumn: newCol,
+        label: next[index].label === next[index].excelColumn ? newCol : next[index].label
+      };
+      return next;
+    });
   };
 
-  // Cập nhật các trường Pivot của Placeholder cụ thể
-  const handleUpdatePivotConfig = (placeholder: string, updates: Partial<ColumnMapping>) => {
-    setColumnMappings(prev => prev.map(m => {
-      if (m.excelColumn === placeholder) {
-        return {
-          ...m,
-          ...updates
-        };
-      }
-      return m;
-    }));
+  // Cập nhật ánh xạ field cho placeholder đơn lẻ bằng index
+  const handleMapPlaceholderByIndex = (index: number, fieldKey: string) => {
+    setColumnMappings(prev => {
+      const next = [...prev];
+      next[index] = {
+        ...next[index],
+        dataField: fieldKey,
+        isPivot: false
+      };
+      return next;
+    });
+  };
+
+  // Cập nhật các trường Pivot của Placeholder cụ thể bằng index
+  const handleUpdatePivotConfigByIndex = (index: number, updates: Partial<ColumnMapping>) => {
+    setColumnMappings(prev => {
+      const next = [...prev];
+      next[index] = {
+        ...next[index],
+        ...updates
+      };
+      return next;
+    });
+  };
+
+  const handleMoveColumnUp = (index: number) => {
+    if (index === 0) return;
+    setColumnMappings(prev => {
+      const next = [...prev];
+      const temp = next[index];
+      next[index] = next[index - 1];
+      next[index - 1] = temp;
+      return next;
+    });
+  };
+
+  const handleMoveColumnDown = (index: number) => {
+    if (index === columnMappings.length - 1) return;
+    setColumnMappings(prev => {
+      const next = [...prev];
+      const temp = next[index];
+      next[index] = next[index + 1];
+      next[index + 1] = temp;
+      return next;
+    });
+  };
+
+  const handleAddNewColumnCustom = () => {
+    if (!newColLabel.trim()) {
+      setErrorMessage('❌ Vui lòng nhập Tên cột hiển thị!');
+      setTimeout(() => setErrorMessage(null), 3000);
+      return;
+    }
+    
+    let nextColName = newColExcel.trim().toUpperCase().replace(/[{}]/g, '');
+    if (!nextColName) {
+      const nextIndex = columnMappings.length + 1;
+      nextColName = `COL_${nextIndex}`;
+    }
+
+    if (columnMappings.some(m => m.excelColumn.toUpperCase() === nextColName.toUpperCase())) {
+      setErrorMessage(`❌ Mã cột {{${nextColName}}} đã tồn tại trong cấu hình!`);
+      setTimeout(() => setErrorMessage(null), 3000);
+      return;
+    }
+
+    const newMapping: ColumnMapping = {
+      excelColumn: nextColName,
+      dataField: newColField || 'SO_LUONG',
+      label: newColLabel.trim(),
+      isPivot: newColIsPivot,
+      pivotSource: selectedSource as any,
+      pivotGroupBy: [],
+      pivotAggregation: newColIsPivot ? newColAgg : undefined,
+      pivotFilters: []
+    };
+
+    setColumnMappings(prev => [...prev, newMapping]);
+    setNewColLabel('');
+    setNewColExcel('');
+    setNewColField('');
+    setNewColIsPivot(false);
+    setNewColAgg('SUM_SO_LUONG');
+    setShowAddColForm(false);
+    setSuccessMessage(`➕ Đã thêm cột "${newColLabel}" vào bảng cấu hình thành công!`);
+    setTimeout(() => setSuccessMessage(null), 3000);
   };
 
   // Thêm placeholder thủ công
@@ -392,11 +548,14 @@ export default function TemplateExportManager({
     setTimeout(() => setSuccessMessage(null), 3000);
   };
 
-  // Xóa placeholder khỏi cấu hình
-  const handleRemovePlaceholder = (placeholder: string) => {
-    setColumnMappings(prev => prev.filter(m => m.excelColumn !== placeholder));
-    setSuccessMessage(`🗑️ Đã xóa placeholder {{${placeholder}}}`);
-    setTimeout(() => setSuccessMessage(null), 3000);
+  // Xóa placeholder khỏi cấu hình bằng index
+  const handleRemovePlaceholderByIndex = (index: number) => {
+    const removedPlaceholder = columnMappings[index]?.excelColumn;
+    setColumnMappings(prev => prev.filter((_, idx) => idx !== index));
+    if (removedPlaceholder) {
+      setSuccessMessage(`🗑️ Đã xóa placeholder {{${removedPlaceholder}}}`);
+      setTimeout(() => setSuccessMessage(null), 3000);
+    }
   };
 
   // Đặt làm mặc định
@@ -527,6 +686,7 @@ export default function TemplateExportManager({
           const placeholders: string[] = [];
 
           if (isExcel) {
+            const ExcelJS = await getExcelJS();
             const workbook = new ExcelJS.Workbook();
             await workbook.xlsx.load(arrayBuffer);
             
@@ -547,7 +707,14 @@ export default function TemplateExportManager({
                 });
               });
             });
+
+            // Clean workbook worksheets to free references immediately
+            try {
+              workbook.worksheets.forEach((s: any) => { s.eachRow((r: any) => { r.values = []; }); });
+              (workbook as any)._worksheets = [];
+            } catch (e) {}
           } else {
+            const PDFDocument = await getPDFDocument();
             const pdfDoc = await PDFDocument.load(arrayBuffer);
             const form = pdfDoc.getForm();
             const fields = form.getFields();
@@ -564,13 +731,20 @@ export default function TemplateExportManager({
           }
 
           const base64Data = arrayBufferToBase64(arrayBuffer);
+          const newId = `temp-${Date.now()}`;
+          
+          try {
+            localStorage.setItem(`template_file_${newId}`, base64Data);
+          } catch (lsErr) {
+            console.warn('LocalStorage full, failed to save template file:', lsErr);
+          }
 
           const newTemplate: Template = {
-            id: `temp-${Date.now()}`,
+            id: newId,
             name: file.name.replace(/\.[^/.]+$/, ""),
             type: isExcel ? 'EXCEL' : 'PDF',
             fileName: file.name,
-            fileData: base64Data,
+            fileData: '', // Keep empty in react state to save RAM!
             isDefault: templates.length === 0,
             detectedPlaceholders: placeholders,
             description: `Mẫu nhập ngày ${new Date().toLocaleDateString()}`,
@@ -611,6 +785,7 @@ export default function TemplateExportManager({
   // Tạo & tải file mẫu Excel thử nghiệm cho người dùng tham khảo cấu trúc
   const handleDownloadTestTemplate = async () => {
     try {
+      const ExcelJS = await getExcelJS();
       const workbook = new ExcelJS.Workbook();
       const sheet = workbook.addWorksheet('Báo_Cáo_Tròng_Kính');
 
@@ -621,7 +796,7 @@ export default function TemplateExportManager({
       sheet.mergeCells('A2:F2');
       const c2 = sheet.getCell('A2');
       c2.value = 'BÁO CÁO KẾT XUẤT MẪU (KHO TRÒNG KÍNH)';
-      c2.font = { name: 'Arial', size: 14, bold: true, color: { argb: 'FF1E3B8A' } };
+      c2.font = { name: 'Arial', size: 14, bold: true, color: { argb: 'FF1E3A8A' } };
       c2.alignment = { horizontal: 'center' };
 
       sheet.getCell('A4').value = 'Báo cáo từ ngày:';
@@ -655,6 +830,12 @@ export default function TemplateExportManager({
       document.body.removeChild(a);
       setSuccessMessage('📥 Tải xuống mẫu Excel thử nghiệm thành công!');
       setTimeout(() => setSuccessMessage(null), 3000);
+
+      // Clean workbook worksheets to free references immediately
+      try {
+        workbook.worksheets.forEach((s: any) => { s.eachRow((r: any) => { r.values = []; }); });
+        (workbook as any)._worksheets = [];
+      } catch (e) {}
     } catch (e) {
       console.error(e);
       setErrorMessage('❌ Lỗi tạo file mẫu thử nghiệm.');
@@ -787,6 +968,11 @@ export default function TemplateExportManager({
                             {temp.isDefault && (
                               <span className="bg-amber-100 text-amber-850 text-[8px] px-1.5 py-0.5 rounded-md font-bold font-mono">
                                 DEFAULT
+                              </span>
+                            )}
+                            {(temp.fileData?.startsWith('STORAGE_PATH:') || (temp.id !== 'default-phieu-xuat-excel' && temp.id !== 'default-dashboard-excel')) && (
+                              <span className="bg-blue-50 text-blue-700 text-[8px] px-1.5 py-0.5 rounded-md font-bold font-mono flex items-center gap-0.5 border border-blue-100">
+                                ☁️ user_luutru
                               </span>
                             )}
                           </div>
@@ -923,157 +1109,377 @@ export default function TemplateExportManager({
                 </p>
               </div>
 
-              {/* PHẦN 3: MULTI-SELECT TRƯỜNG DỮ LIỆU */}
-              <div className="space-y-2">
-                <label className="block text-[10px] font-bold uppercase text-slate-400 tracking-wider">Các trường dữ liệu được kích hoạt sử dụng</label>
-                <div className="p-3 bg-slate-50 border border-slate-150 rounded-xl max-h-36 overflow-y-auto grid grid-cols-2 gap-2">
-                  {(FIELDS_BY_SOURCE[selectedSource] || []).map(f => {
-                    const isChecked = selectedFields.includes(f.key);
-                    return (
-                      <label key={f.key} className="flex items-center gap-2 text-xs text-slate-650 hover:text-slate-800 cursor-pointer">
-                        <input
-                          type="checkbox"
-                          checked={isChecked}
-                          onChange={() => handleToggleField(f.key)}
-                          className="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 w-3.5 h-3.5"
-                        />
-                        <span className="font-semibold truncate">{f.label}</span>
-                      </label>
-                    );
-                  })}
+              {/* PHẦN 3: CẤU HÌNH GOM NHÓM DỮ LIỆU (GROUP BY) */}
+              <div className="space-y-3">
+                <div className="flex items-center justify-between">
+                  <label className="block text-[10px] font-bold uppercase text-slate-400 tracking-wider">
+                    Các trường gom nhóm (Group By)
+                  </label>
+                  <div className="flex items-center gap-2">
+                    <select
+                      value=""
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        if (val && !selectedFields.includes(val)) {
+                          setSelectedFields([...selectedFields, val]);
+                        }
+                      }}
+                      className="bg-slate-50 border border-slate-200 rounded-lg px-2 py-1 text-xs font-semibold text-slate-700 cursor-pointer"
+                    >
+                      <option value="">+ Thêm trường gom nhóm...</option>
+                      {AVAILABLE_GROUP_BY_FIELDS
+                        .filter(f => !selectedFields.includes(f.key))
+                        .map(f => (
+                          <option key={f.key} value={f.key}>{f.label}</option>
+                        ))}
+                    </select>
+                  </div>
                 </div>
+
+                {selectedFields.length === 0 ? (
+                  <div className="p-4 bg-slate-50 border border-slate-200 border-dashed rounded-xl text-center text-xs text-slate-400">
+                    Không gom nhóm (Báo cáo sẽ kết xuất chi tiết từng dòng dữ liệu)
+                  </div>
+                ) : (
+                  <div className="space-y-1.5 max-h-48 overflow-y-auto p-1.5 bg-slate-50 border border-slate-150 rounded-xl">
+                    {selectedFields.map((fieldKey, index) => {
+                      const fieldInfo = AVAILABLE_GROUP_BY_FIELDS.find(f => f.key === fieldKey) || { key: fieldKey, label: fieldKey };
+                      return (
+                        <div key={fieldKey} className="flex items-center justify-between bg-white px-3 py-2 border border-slate-150 rounded-lg shadow-3xs">
+                          <div className="flex items-center gap-2">
+                            <span className="w-5 h-5 flex items-center justify-center bg-indigo-50 text-indigo-650 rounded-md text-[10px] font-mono font-bold">
+                              {index + 1}
+                            </span>
+                            <span className="text-xs font-bold text-slate-700">{fieldInfo.label.split(' (')[0]}</span>
+                            <span className="text-[9px] font-mono text-slate-400">({fieldKey})</span>
+                          </div>
+                          
+                          <div className="flex items-center gap-1">
+                            <button
+                              type="button"
+                              disabled={index === 0}
+                              onClick={() => {
+                                const next = [...selectedFields];
+                                const temp = next[index];
+                                next[index] = next[index - 1];
+                                next[index - 1] = temp;
+                                setSelectedFields(next);
+                              }}
+                              className="p-1 text-slate-400 hover:text-slate-750 hover:bg-slate-100 rounded-md disabled:opacity-30 disabled:pointer-events-none transition-all cursor-pointer border-0 bg-transparent"
+                            >
+                              <ChevronUp className="w-3.5 h-3.5" />
+                            </button>
+                            <button
+                              type="button"
+                              disabled={index === selectedFields.length - 1}
+                              onClick={() => {
+                                const next = [...selectedFields];
+                                const temp = next[index];
+                                next[index] = next[index + 1];
+                                next[index + 1] = temp;
+                                setSelectedFields(next);
+                              }}
+                              className="p-1 text-slate-400 hover:text-slate-750 hover:bg-slate-100 rounded-md disabled:opacity-30 disabled:pointer-events-none transition-all cursor-pointer border-0 bg-transparent"
+                            >
+                              <ChevronDown className="w-3.5 h-3.5" />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setSelectedFields(selectedFields.filter(k => k !== fieldKey));
+                              }}
+                              className="p-1 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded-md transition-all cursor-pointer border-0 bg-transparent"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
               </div>
 
               {/* PHẦN 4: THIẾT LẬP MAPPING CHI TIẾT */}
               <div className="space-y-4">
                 <div className="flex items-center justify-between border-b border-slate-100 pb-2">
                   <div>
-                    <label className="block text-[10px] font-bold uppercase text-slate-400 tracking-wider">Bản đồ Ánh xạ Placeholders ({columnMappings.length})</label>
-                    <p className="text-[10px] text-slate-400 mt-0.5">Đặt gán giá trị đơn hoặc chuyển đổi sang Bảng tổng hợp Pivot</p>
+                    <label className="block text-[10px] font-bold uppercase text-slate-400 tracking-wider">Cấu hình bảng dữ liệu xuất ({columnMappings.length} cột)</label>
+                    <p className="text-[10px] text-slate-400 mt-0.5">Sửa đổi trực tiếp: thêm, xóa, đổi tên, thay đổi thứ tự và chọn trường nguồn dữ liệu.</p>
                   </div>
                   
-                  {/* Thêm placeholder thủ công */}
-                  <div className="flex items-center gap-2" onClick={e => e.stopPropagation()}>
-                    <input
-                      type="text"
-                      placeholder="Gõ placeholder..."
-                      value={newManualPlaceholder}
-                      onChange={e => setNewManualPlaceholder(e.target.value)}
-                      className="bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1 text-[11px] w-36 focus:outline-hidden font-mono"
-                    />
-                    <button
-                      type="button"
-                      onClick={handleAddManualPlaceholder}
-                      className="text-[10px] font-bold text-indigo-600 hover:text-indigo-800 flex items-center gap-0.5 bg-transparent border-0 cursor-pointer"
-                    >
-                      <Plus className="w-3.5 h-3.5" /> Thêm nhanh
-                    </button>
-                  </div>
+                  {/* Nút thêm cột */}
+                  <button
+                    type="button"
+                    onClick={() => setShowAddColForm(!showAddColForm)}
+                    className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-[11px] font-bold flex items-center gap-1 cursor-pointer transition-colors border-0"
+                  >
+                    <Plus className="w-3.5 h-3.5" /> Thêm cột
+                  </button>
                 </div>
+
+                {/* FORM THÊM CỘT MỚI (COLLAPSIBLE FORM) */}
+                {showAddColForm && (
+                  <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 space-y-3 shadow-3xs animate-in fade-in duration-150">
+                    <div className="text-[11px] font-bold text-slate-700 uppercase tracking-wider flex items-center gap-1">
+                      <Plus className="w-3.5 h-3.5 text-indigo-600" /> Thêm cột dữ liệu xuất mới
+                    </div>
+                    <div className="grid grid-cols-1 md:grid-cols-5 gap-3">
+                      <div className="space-y-1">
+                        <label className="block text-[10px] font-bold text-slate-500">Tên cột hiển thị</label>
+                        <input
+                          type="text"
+                          value={newColLabel}
+                          onChange={e => setNewColLabel(e.target.value)}
+                          placeholder="VD: Tổng xuất..."
+                          className="w-full bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs focus:outline-hidden focus:ring-1 focus:ring-indigo-500 font-semibold"
+                        />
+                      </div>
+                      <div className="space-y-1">
+                        <label className="block text-[10px] font-bold text-slate-500">Mã cột / Placeholder</label>
+                        <input
+                          type="text"
+                          value={newColExcel}
+                          onChange={e => setNewColExcel(e.target.value)}
+                          placeholder="VD: TONG_SL"
+                          className="w-full bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs focus:outline-hidden focus:ring-1 focus:ring-indigo-500 font-mono font-bold text-indigo-700"
+                        />
+                      </div>
+                      <div className="space-y-1">
+                        <label className="block text-[10px] font-bold text-slate-500">Trường dữ liệu / Nguồn</label>
+                        <select
+                          value={newColField}
+                          onChange={e => setNewColField(e.target.value)}
+                          className="w-full bg-white border border-slate-200 rounded-lg px-2 py-1.5 text-xs focus:outline-hidden cursor-pointer font-semibold text-slate-750"
+                        >
+                          <option value="">-- Chọn trường nguồn --</option>
+                          <optgroup label="Dữ liệu đơn">
+                            {(FIELDS_BY_SOURCE[selectedSource] || []).map(f => (
+                              <option key={f.key} value={f.key}>{f.label}</option>
+                            ))}
+                          </optgroup>
+                          <optgroup label="Bảng / Pivot">
+                            <option value="REPORT_ROWS">REPORT_ROWS (Bảng dòng báo cáo)</option>
+                            <option value="TOP_BRANDS">TOP_BRANDS (Bảng thương hiệu)</option>
+                            <option value="TOP_FEATURES">TOP_FEATURES (Bảng tính năng)</option>
+                            <option value="TOP_DEGREES">TOP_DEGREES (Bảng tổ hợp độ)</option>
+                            <option value="TOP_BRANCHES">TOP_BRANCHES (Bảng chi nhánh)</option>
+                          </optgroup>
+                        </select>
+                      </div>
+                      <div className="space-y-1">
+                        <label className="block text-[10px] font-bold text-slate-500">Loại cấu trúc</label>
+                        <select
+                          value={newColIsPivot ? 'pivot' : 'single'}
+                          onChange={e => setNewColIsPivot(e.target.value === 'pivot')}
+                          className="w-full bg-white border border-slate-200 rounded-lg px-2 py-1.5 text-xs focus:outline-hidden cursor-pointer font-semibold text-slate-750"
+                        >
+                          <option value="single">Cột dữ liệu thường</option>
+                          <option value="pivot">Bảng tổng hợp (Pivot)</option>
+                        </select>
+                      </div>
+                      <div className="space-y-1">
+                        {newColIsPivot ? (
+                          <>
+                            <label className="block text-[10px] font-bold text-slate-500">Hàm tích hợp</label>
+                            <select
+                              value={newColAgg}
+                              onChange={e => setNewColAgg(e.target.value as any)}
+                              className="w-full bg-white border border-slate-200 rounded-lg px-2 py-1.5 text-xs focus:outline-hidden cursor-pointer font-semibold text-slate-750"
+                            >
+                              <option value="SUM_SO_LUONG">Tổng Số Lượng (SUM)</option>
+                              <option value="SUM_NHAP">Tổng lượng Nhập</option>
+                              <option value="SUM_XUAT">Tổng lượng Xuất</option>
+                              <option value="SUM_TON">Tổng lượng Tồn</option>
+                              <option value="COUNT_SKU">Đếm số SKU (COUNT)</option>
+                            </select>
+                          </>
+                        ) : (
+                          <div className="h-full flex items-center pt-4">
+                            <span className="text-[10px] text-slate-400 italic">Ánh xạ trực tiếp giá trị</span>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                    <div className="flex justify-end gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setShowAddColForm(false)}
+                        className="px-3 py-1.5 border border-slate-200 text-slate-600 rounded-lg text-xs bg-white hover:bg-slate-50 cursor-pointer"
+                      >
+                        Hủy
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleAddNewColumnCustom}
+                        className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-xs font-bold cursor-pointer border-0"
+                      >
+                        Xác nhận Thêm
+                      </button>
+                    </div>
+                  </div>
+                )}
 
                 <div className="border border-slate-150 rounded-xl overflow-hidden bg-white shadow-2xs">
                   <table className="w-full text-xs text-left border-collapse">
                     <thead className="bg-slate-50 font-bold text-slate-500 border-b border-slate-150">
                       <tr>
-                        <th className="p-3 pl-4">Placeholder</th>
-                        <th className="p-3">Chế độ kết xuất & Cài đặt</th>
-                        <th className="p-3 text-center w-12">Xóa</th>
+                        <th className="p-3 pl-4 w-16 text-center">STT</th>
+                        <th className="p-3 w-1/3">Tên cột hiển thị</th>
+                        <th className="p-3 w-1/4 text-center">Mã cột</th>
+                        <th className="p-3 w-1/3">Trường dữ liệu nguồn</th>
+                        <th className="p-3 text-center w-28">Thao tác</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100">
-                      {columnMappings.map((m) => {
+                      {columnMappings.map((m, index) => {
                         const isExpanded = expandedPivotPlaceholder === m.excelColumn;
                         return (
-                          <React.Fragment key={m.excelColumn}>
-                            <tr className={`hover:bg-slate-50/20 transition-colors ${m.isPivot ? 'bg-indigo-50/5' : ''}`}>
-                              <td className="p-3 pl-4 font-mono font-bold text-indigo-600 align-top pt-4">
-                                {`{{${m.excelColumn}}}`}
-                              </td>
-                              <td className="p-3 space-y-2">
-                                <div className="flex items-center justify-between gap-3 flex-wrap">
-                                  {/* Toggle mode: Single Value vs Pivot Table */}
-                                  <div className="flex items-center gap-1.5">
-                                    <button
-                                      type="button"
-                                      onClick={() => handleUpdatePivotConfig(m.excelColumn, { isPivot: false })}
-                                      className={`px-2.5 py-1 rounded-md text-[10px] font-bold transition-all border cursor-pointer ${
-                                        !m.isPivot
-                                          ? 'bg-slate-900 text-white border-slate-900 shadow-3xs'
-                                          : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
-                                      }`}
-                                    >
-                                      Giá trị đơn
-                                    </button>
-                                    <button
-                                      type="button"
-                                      onClick={() => handleUpdatePivotConfig(m.excelColumn, { isPivot: true })}
-                                      className={`px-2.5 py-1 rounded-md text-[10px] font-bold transition-all border cursor-pointer ${
-                                        m.isPivot
-                                          ? 'bg-indigo-600 text-white border-indigo-600 shadow-3xs'
-                                          : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
-                                      }`}
-                                    >
-                                      Bảng tổng hợp (Pivot)
-                                    </button>
-                                  </div>
-
-                                  {/* Quick Summary or Select box */}
-                                  <div className="flex items-center gap-2 shrink-0">
-                                    {m.isPivot && (
-                                      <button
-                                        type="button"
-                                        onClick={() => setExpandedPivotPlaceholder(isExpanded ? null : m.excelColumn)}
-                                        className="flex items-center gap-1 px-2.5 py-1 text-[11px] font-bold bg-indigo-50 text-indigo-700 hover:bg-indigo-100 rounded-md border-0 transition-colors cursor-pointer"
-                                      >
-                                        <Sliders className="w-3.5 h-3.5" />
-                                        Cấu hình Pivot
-                                        {isExpanded ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
-                                      </button>
-                                    )}
-                                  </div>
+                          <React.Fragment key={index}>
+                            <tr 
+                              draggable
+                              onDragStart={() => handleColDragStart(index)}
+                              onDragOver={(e) => handleColDragOver(e, index)}
+                              onDrop={() => handleColDrop(index)}
+                              className={`hover:bg-slate-50/25 transition-colors ${m.isPivot ? 'bg-indigo-50/5' : ''} ${draggedIndex === index ? 'opacity-40 bg-slate-100' : ''}`}
+                            >
+                              {/* STT with Drag Handle */}
+                              <td className="p-3 text-center font-mono font-bold text-slate-500">
+                                <div className="flex items-center gap-1.5 justify-center">
+                                  <GripVertical className="w-3.5 h-3.5 text-slate-300 cursor-grab active:cursor-grabbing hover:text-slate-500 transition-colors" />
+                                  <span>{index + 1}</span>
                                 </div>
+                              </td>
+                              
+                              {/* Tên cột hiển thị */}
+                              <td className="p-3">
+                                <input
+                                  type="text"
+                                  value={m.label || ''}
+                                  onChange={(e) => {
+                                    const next = [...columnMappings];
+                                    next[index] = { ...next[index], label: e.target.value };
+                                    setColumnMappings(next);
+                                  }}
+                                  className="bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs font-semibold text-slate-800 focus:outline-hidden focus:ring-1 focus:ring-indigo-500 w-full hover:bg-slate-100/50 transition-colors"
+                                  placeholder="Tên cột hiển thị"
+                                />
+                              </td>
 
+                              {/* Mã cột */}
+                              <td className="p-3 text-center font-mono">
+                                <div className="flex items-center justify-center gap-1">
+                                  <span className="text-slate-400 font-semibold select-none">{"{{"}</span>
+                                  <input
+                                    type="text"
+                                    value={m.excelColumn}
+                                    onChange={(e) => handleUpdateExcelColumn(index, e.target.value)}
+                                    className="bg-transparent border-0 border-b border-transparent hover:border-slate-300 focus:border-indigo-500 focus:ring-0 focus:outline-hidden px-1 py-0.5 text-xs font-bold text-slate-700 font-mono text-center w-28 transition-colors select-all"
+                                    placeholder="MA_COT"
+                                    title="Nhấp để sửa mã cột hiển thị"
+                                  />
+                                  <span className="text-slate-400 font-semibold select-none">{"}}"}</span>
+                                </div>
+                              </td>
+
+                              {/* Trường dữ liệu nguồn */}
+                              <td className="p-3">
                                 {!m.isPivot ? (
                                   <select
                                     value={m.dataField}
-                                    onChange={(e) => handleMapPlaceholder(m.excelColumn, e.target.value)}
-                                    className="w-full bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs font-semibold text-slate-700 focus:outline-hidden cursor-pointer"
+                                    onChange={(e) => {
+                                      if (e.target.value === 'pivot') {
+                                        handleUpdatePivotConfigByIndex(index, { isPivot: true });
+                                        setExpandedPivotPlaceholder(m.excelColumn);
+                                      } else {
+                                        handleUpdatePivotConfigByIndex(index, { isPivot: false });
+                                        handleMapPlaceholderByIndex(index, e.target.value);
+                                      }
+                                    }}
+                                    className="w-full bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs font-semibold text-slate-700 focus:outline-hidden cursor-pointer hover:bg-slate-100 hover:border-slate-300 transition-colors"
                                   >
-                                    <option value="">-- Không ánh xạ (Bỏ qua) --</option>
-                                    {(FIELDS_BY_SOURCE[selectedSource] || []).map(f => (
-                                      <option key={f.key} value={f.key}>{f.label}</option>
-                                    ))}
+                                    <option value="">-- Không ánh xạ --</option>
+                                    <optgroup label="Trường dữ liệu đơn">
+                                      {(FIELDS_BY_SOURCE[selectedSource] || []).map(f => (
+                                        <option key={f.key} value={f.key}>{f.label}</option>
+                                      ))}
+                                    </optgroup>
+                                    <optgroup label="Nâng cao">
+                                      <option value="pivot">📊 Bảng tổng hợp (Pivot / Group By)</option>
+                                    </optgroup>
                                   </select>
                                 ) : (
-                                  <div className="text-[10px] bg-slate-50 text-slate-500 rounded-lg p-2 font-mono leading-relaxed border border-slate-100 space-y-0.5">
-                                    <div><span className="font-bold text-slate-700">Nguồn dữ liệu:</span> {m.pivotSource === 'PHIEU' ? 'Phiếu Nhập/Xuất' : m.pivotSource === 'LIC_SU' ? 'Lịch sử tổng hợp' : m.pivotSource === 'SAN_PHAM' ? 'Sản phẩm' : m.pivotSource === 'KIEM_KHO' ? 'Kiểm kho' : 'Bảng Độ'}</div>
-                                    <div><span className="font-bold text-slate-700">Gom nhóm (Group):</span> {m.pivotGroupBy && m.pivotGroupBy.length > 0 ? m.pivotGroupBy.join(', ') : <span className="text-amber-500 italic">Chưa chọn trường</span>}</div>
-                                    <div><span className="font-bold text-slate-700">Tính tổng hợp (Agg):</span> {m.pivotAggregation === 'SUM_SO_LUONG' ? 'Tổng Số Lượng' : m.pivotAggregation === 'SUM_NHAP' ? 'Tổng Nhập' : m.pivotAggregation === 'SUM_XUAT' ? 'Tổng Xuất' : m.pivotAggregation === 'SUM_TON' ? 'Tổng Tồn' : m.pivotAggregation === 'COUNT_SKU' ? 'Số lượng SKU' : m.pivotAggregation === 'COUNT_CHUNG_TU' ? 'Số lượng chứng từ' : m.pivotAggregation === 'SUM_GIA_TRI_NHAP' ? 'Tổng giá trị nhập' : 'Tổng giá trị xuất'}</div>
-                                    {m.pivotFilters && m.pivotFilters.length > 0 && (
-                                      <div><span className="font-bold text-slate-700">Bộ lọc con:</span> {m.pivotFilters.map(f => `[${f.field} ${f.operator} ${f.value}]`).join(' & ')}</div>
-                                    )}
+                                  <div className="flex items-center gap-2">
+                                    <div className="flex-1 text-[10px] bg-indigo-50/50 text-indigo-950 rounded-lg p-2 font-mono border border-indigo-100 space-y-0.5">
+                                      <div className="truncate"><span className="font-bold text-indigo-800">Pivot Nguồn:</span> {m.pivotSource === 'PHIEU' ? 'Phiếu' : m.pivotSource === 'LIC_SU' ? 'Lịch sử' : m.pivotSource === 'SAN_PHAM' ? 'Sản phẩm' : m.pivotSource === 'KIEM_KHO' ? 'Kiểm kho' : 'Bảng Độ'}</div>
+                                      <div className="truncate"><span className="font-bold text-indigo-800">Gom nhóm:</span> {m.pivotGroupBy && m.pivotGroupBy.length > 0 ? m.pivotGroupBy.join(',') : 'Chưa chọn'}</div>
+                                      <div className="truncate"><span className="font-bold text-indigo-800">Hàm:</span> {m.pivotAggregation}</div>
+                                    </div>
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        handleUpdatePivotConfigByIndex(index, { isPivot: false });
+                                        handleMapPlaceholderByIndex(index, '');
+                                      }}
+                                      className="text-[10px] text-red-600 hover:text-red-700 font-bold hover:bg-red-50 px-2 py-1 rounded-md transition-colors border border-red-100 bg-white cursor-pointer whitespace-nowrap"
+                                    >
+                                      Hủy Pivot
+                                    </button>
                                   </div>
                                 )}
                               </td>
-                              <td className="p-3 text-center align-top pt-4">
-                                <button
-                                  type="button"
-                                  onClick={() => handleRemovePlaceholder(m.excelColumn)}
-                                  className="text-slate-400 hover:text-red-500 p-1 rounded hover:bg-red-50 bg-transparent border-0 cursor-pointer transition-colors"
-                                >
-                                  <Trash2 className="w-3.5 h-3.5" />
-                                </button>
+
+                              {/* Thao tác */}
+                              <td className="p-3 text-center">
+                                <div className="flex items-center justify-center gap-1">
+                                  <button
+                                    type="button"
+                                    disabled={index === 0}
+                                    onClick={() => handleMoveColumnUp(index)}
+                                    className="p-1 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-md disabled:opacity-35 disabled:pointer-events-none transition-all cursor-pointer bg-transparent border-0"
+                                    title="Di chuyển lên"
+                                  >
+                                    <ChevronUp className="w-4 h-4" />
+                                  </button>
+                                  <button
+                                    type="button"
+                                    disabled={index === columnMappings.length - 1}
+                                    onClick={() => handleMoveColumnDown(index)}
+                                    className="p-1 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-md disabled:opacity-35 disabled:pointer-events-none transition-all cursor-pointer bg-transparent border-0"
+                                    title="Di chuyển xuống"
+                                  >
+                                    <ChevronDown className="w-4 h-4" />
+                                  </button>
+                                  {m.isPivot && (
+                                    <button
+                                      type="button"
+                                      onClick={() => setExpandedPivotPlaceholder(isExpanded ? null : m.excelColumn)}
+                                      className={`p-1 rounded-md transition-colors border-0 cursor-pointer ${isExpanded ? 'bg-indigo-150 text-indigo-700' : 'text-indigo-600 hover:bg-indigo-50'}`}
+                                      title="Cấu hình Pivot"
+                                    >
+                                      <Sliders className="w-4 h-4" />
+                                    </button>
+                                  )}
+                                  <button
+                                    type="button"
+                                    onClick={() => handleRemovePlaceholderByIndex(index)}
+                                    className="p-1 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded-md bg-transparent border-0 cursor-pointer transition-colors"
+                                    title="Xóa cột"
+                                  >
+                                    <Trash2 className="w-4 h-4" />
+                                  </button>
+                                </div>
                               </td>
                             </tr>
 
                             {/* COLLAPSIBLE DETAILED PIVOT CONFIGURATION PANEL */}
                             {m.isPivot && isExpanded && (
                               <tr>
-                                <td colSpan={3} className="bg-indigo-50/15 p-4 border-t border-b border-indigo-100/30">
-                                  <div className="space-y-4 max-w-2xl mx-auto text-slate-700 animate-in slide-in-from-top duration-200">
+                                <td colSpan={5} className="bg-indigo-50/15 p-4 border-t border-b border-indigo-100/30">
+                                  <div className="space-y-4 max-w-2xl mx-auto text-slate-700">
                                     <div className="flex items-center gap-2 border-b border-indigo-100/40 pb-2">
                                       <Sliders className="w-4 h-4 text-indigo-600" />
-                                      <h4 className="font-bold text-xs text-indigo-900 uppercase tracking-wider">Cấu hình Bảng tổng hợp Pivot: {m.excelColumn}</h4>
+                                      <h4 className="font-bold text-xs text-indigo-900 uppercase tracking-wider">Cấu hình Bảng tổng hợp Pivot cho: {m.excelColumn}</h4>
                                     </div>
 
                                     {/* 1. Select Pivot Source */}
@@ -1081,7 +1487,7 @@ export default function TemplateExportManager({
                                       <label className="block text-[10px] font-black uppercase text-slate-500 tracking-wider">1. Nguồn dữ liệu Pivot</label>
                                       <select
                                         value={m.pivotSource || 'PHIEU'}
-                                        onChange={(e) => handleUpdatePivotConfig(m.excelColumn, { 
+                                        onChange={(e) => handleUpdatePivotConfigByIndex(index, { 
                                           pivotSource: e.target.value as any,
                                           pivotGroupBy: [], // Reset group by when source changes
                                           pivotSortBy: '' 
@@ -1096,7 +1502,7 @@ export default function TemplateExportManager({
                                       </select>
                                     </div>
 
-                                    {/* 2. Group By Fields (Multi-select) */}
+                                    {/* 2. Group By Fields */}
                                     <div className="space-y-1.5">
                                       <label className="block text-[10px] font-black uppercase text-slate-500 tracking-wider">2. Gom nhóm theo các trường (Group By)</label>
                                       <div className="p-3 bg-white border border-slate-150 rounded-xl max-h-32 overflow-y-auto grid grid-cols-2 gap-2 shadow-3xs">
@@ -1112,7 +1518,7 @@ export default function TemplateExportManager({
                                                   const nextGroup = isChecked 
                                                     ? groupFields.filter(k => k !== f.key)
                                                     : [...groupFields, f.key];
-                                                  handleUpdatePivotConfig(m.excelColumn, { pivotGroupBy: nextGroup });
+                                                  handleUpdatePivotConfigByIndex(index, { pivotGroupBy: nextGroup });
                                                 }}
                                                 className="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 w-3.5 h-3.5"
                                               />
@@ -1129,7 +1535,7 @@ export default function TemplateExportManager({
                                         <label className="block text-[10px] font-black uppercase text-slate-500 tracking-wider">3. Phép toán Tổng hợp (Aggregation)</label>
                                         <select
                                           value={m.pivotAggregation || 'SUM_SO_LUONG'}
-                                          onChange={(e) => handleUpdatePivotConfig(m.excelColumn, { pivotAggregation: e.target.value as any })}
+                                          onChange={(e) => handleUpdatePivotConfigByIndex(index, { pivotAggregation: e.target.value as any })}
                                           className="w-full bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs font-semibold focus:outline-hidden cursor-pointer"
                                         >
                                           <option value="SUM_SO_LUONG">SUM (Của trường Số lượng)</option>
@@ -1149,7 +1555,7 @@ export default function TemplateExportManager({
                                         <div className="flex gap-2">
                                           <select
                                             value={m.pivotSortBy || 'VALUE'}
-                                            onChange={(e) => handleUpdatePivotConfig(m.excelColumn, { pivotSortBy: e.target.value })}
+                                            onChange={(e) => handleUpdatePivotConfigByIndex(index, { pivotSortBy: e.target.value })}
                                             className="w-1/2 bg-white border border-slate-200 rounded-lg px-2 py-1.5 text-xs font-semibold focus:outline-hidden cursor-pointer"
                                           >
                                             <option value="VALUE">Trường Kết quả (VALUE)</option>
@@ -1159,7 +1565,7 @@ export default function TemplateExportManager({
                                           </select>
                                           <select
                                             value={m.pivotSortOrder || 'DESC'}
-                                            onChange={(e) => handleUpdatePivotConfig(m.excelColumn, { pivotSortOrder: e.target.value as any })}
+                                            onChange={(e) => handleUpdatePivotConfigByIndex(index, { pivotSortOrder: e.target.value as any })}
                                             className="w-1/2 bg-white border border-slate-200 rounded-lg px-2 py-1.5 text-xs font-semibold focus:outline-hidden cursor-pointer"
                                           >
                                             <option value="DESC">Giảm dần (Z-A)</option>
@@ -1169,7 +1575,7 @@ export default function TemplateExportManager({
                                       </div>
                                     </div>
 
-                                    {/* 5. Subset Filters (Pivot filters) */}
+                                    {/* 5. Subset Filters */}
                                     <div className="space-y-2 border-t border-indigo-100/20 pt-3">
                                       <div className="flex items-center justify-between">
                                         <label className="block text-[10px] font-black uppercase text-slate-500 tracking-wider flex items-center gap-1">
@@ -1183,7 +1589,7 @@ export default function TemplateExportManager({
                                             const available = FIELDS_BY_SOURCE[m.pivotSource || 'PHIEU'] || [];
                                             const field = available[0]?.key || 'SKU';
                                             const updatedFilters = [...filters, { field, operator: 'EQUALS' as const, value: '' }];
-                                            handleUpdatePivotConfig(m.excelColumn, { pivotFilters: updatedFilters });
+                                            handleUpdatePivotConfigByIndex(index, { pivotFilters: updatedFilters });
                                           }}
                                           className="text-[10px] font-bold text-indigo-600 hover:text-indigo-800 flex items-center gap-0.5 border-0 bg-transparent cursor-pointer"
                                         >
@@ -1202,7 +1608,7 @@ export default function TemplateExportManager({
                                                 onChange={(e) => {
                                                   const next = [...(m.pivotFilters || [])];
                                                   next[fIdx].field = e.target.value;
-                                                  handleUpdatePivotConfig(m.excelColumn, { pivotFilters: next });
+                                                  handleUpdatePivotConfigByIndex(index, { pivotFilters: next });
                                                 }}
                                                 className="w-1/3 bg-slate-50 border border-slate-200 rounded px-1.5 py-1 text-[11px] focus:outline-hidden cursor-pointer"
                                               >
@@ -1216,7 +1622,7 @@ export default function TemplateExportManager({
                                                 onChange={(e) => {
                                                   const next = [...(m.pivotFilters || [])];
                                                   next[fIdx].operator = e.target.value as any;
-                                                  handleUpdatePivotConfig(m.excelColumn, { pivotFilters: next });
+                                                  handleUpdatePivotConfigByIndex(index, { pivotFilters: next });
                                                 }}
                                                 className="w-1/4 bg-slate-50 border border-slate-200 rounded px-1.5 py-1 text-[11px] focus:outline-hidden cursor-pointer"
                                               >
@@ -1232,7 +1638,7 @@ export default function TemplateExportManager({
                                                 onChange={(e) => {
                                                   const next = [...(m.pivotFilters || [])];
                                                   next[fIdx].value = e.target.value;
-                                                  handleUpdatePivotConfig(m.excelColumn, { pivotFilters: next });
+                                                  handleUpdatePivotConfigByIndex(index, { pivotFilters: next });
                                                 }}
                                                 placeholder="Giá trị lọc..."
                                                 className="w-1/3 bg-slate-50 border border-slate-200 rounded px-2 py-1 text-[11px] focus:outline-hidden"
@@ -1242,7 +1648,7 @@ export default function TemplateExportManager({
                                                 type="button"
                                                 onClick={() => {
                                                   const next = (m.pivotFilters || []).filter((_, idx) => idx !== fIdx);
-                                                  handleUpdatePivotConfig(m.excelColumn, { pivotFilters: next });
+                                                  handleUpdatePivotConfigByIndex(index, { pivotFilters: next });
                                                 }}
                                                 className="text-slate-400 hover:text-red-500 p-1 bg-transparent border-0 cursor-pointer"
                                               >
@@ -1253,7 +1659,6 @@ export default function TemplateExportManager({
                                         </div>
                                       )}
                                     </div>
-
                                   </div>
                                 </td>
                               </tr>

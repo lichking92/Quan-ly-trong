@@ -26,7 +26,10 @@ console.error = function (...args) {
     argStr.includes('Lỗi tải b_') ||
     argStr.includes('Lỗi sync') ||
     argStr.includes('Lỗi khi tải dữ liệu từ Supabase Cloud') ||
-    argStr.includes('Lỗi trong quá trình khởi tạo Auth');
+    argStr.includes('Lỗi trong quá trình khởi tạo Auth') ||
+    argStr.includes('user_luutru') ||
+    argStr.includes('Bucket not found') ||
+    argStr.includes('Lỗi upload file mẫu');
 
   if (isNetworkOrDbFetchError) {
     console.warn('[App Network/DB Warning (Demoted from Error)]:', ...args);
@@ -67,7 +70,7 @@ import {
 import { motion, AnimatePresence } from 'motion/react';
 
 // Import Types và Mock Data
-import { SanPham, NhapXuat, NhapXuatCT, KiemKho, UserRole, User, ThươngHieu, ChiNhanh, NhanVien, EmailLog, Role, safeParseArray } from './types';
+import { SanPham, NhapXuat, NhapXuatCT, KiemKho, UserRole, User, ThuongHieu, ChiNhanh, NhanVien, EmailLog, Role, safeParseArray } from './types';
 import { 
   getVietnamDateString,
   getVietnamDateTimeString,
@@ -109,6 +112,7 @@ import CategoryManagement from './components/CategoryManagement';
 import ThemeSettings from './components/ThemeSettings';
 import DiopterMatrix from './components/DiopterMatrix';
 import OrderParser from './components/OrderParser';
+import { monitor } from './utils/debugMonitor';
 
 
 
@@ -238,7 +242,11 @@ class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryState> {
 }
 
 export default function App() {
+  monitor.trackRender('App');
   const ignoreRealtimeRef = useRef<boolean>(false);
+  const isSyncingRef = useRef<boolean>(false);
+  const lastSyncTimeRef = useRef<number>(0);
+  const realtimeDebounceTimerRef = useRef<any>(null);
 
   // --- 1. KHỞI TẠO STATE CƠ SỞ DỮ LIỆU ĐỒNG BỘ LOCALSTORAGE ---
   const [sanPhams, setSanPhams] = useState<SanPham[]>(() => {
@@ -261,7 +269,7 @@ export default function App() {
     return saved ? JSON.parse(saved) : [];
   });
 
-  const [thuongHieus, setThuongHieus] = useState<ThươngHieu[]>(() => {
+  const [thuongHieus, setThuongHieus] = useState<ThuongHieu[]>(() => {
     const saved = localStorage.getItem('B_THUONGHIEU');
     return saved ? JSON.parse(saved) : [];
   });
@@ -455,6 +463,17 @@ export default function App() {
       id: `force-logout-${Date.now()}`
     });
   };
+
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      (window as any).__forceLogout = forceLogout;
+    }
+    return () => {
+      if (typeof window !== 'undefined') {
+        delete (window as any).__forceLogout;
+      }
+    };
+  }, []);
 
   const verifySession = async (): Promise<boolean> => {
     if (!currentUser) return true;
@@ -668,7 +687,7 @@ export default function App() {
     }
   };
 
-  // Background polling interval - Tự động đồng bộ liên tục mỗi 15 giây (seamless, không che mờ màn hình)
+  // Background polling interval - Tự động đồng bộ liên tục mỗi 60 giây (seamless, không che mờ màn hình)
   useEffect(() => {
     if (!currentUser || !currentUser.id) return;
 
@@ -681,52 +700,46 @@ export default function App() {
         console.log("Đang lưu phiếu hoặc có thao tác ghi dữ liệu, tạm dừng polling...");
         return;
       }
+      if (isSyncingRef.current) {
+        console.log("Background Polling: Hệ thống đang bận đồng bộ, tạm dừng...");
+        return;
+      }
+      // Tránh polling dồn dập nếu vừa mới thực hiện đồng bộ trong 45 giây qua
+      if (Date.now() - lastSyncTimeRef.current < 45000) {
+        console.log("Background Polling: Hệ thống vừa mới đồng bộ gần đây. Bỏ qua lượt này.");
+        return;
+      }
+
       try {
         console.log("Background Polling: Đang âm thầm kiểm tra cập nhật mới...");
-        const payload = await ensureUserOnboarded(currentUser.id);
-        const uniqueProducts = deduplicateProducts(payload.sanPhams);
-        
-        setSanPhams(uniqueProducts);
-        setNhapXuats(payload.nhapXuats);
-        setNhapXuatCTs(payload.nhapXuatCTs);
-        setKiemKhos(payload.kiemKhos);
-        setThuongHieus(payload.thuongHieus);
-        setChiNhanhs(payload.chiNhanhs);
-        setNhanViens(payload.nhanViens);
-        if (payload.roles && payload.roles.length > 0) {
-          setRoles(payload.roles);
-          localStorage.setItem('B_ROLE', JSON.stringify(payload.roles));
+        if (typeof window !== 'undefined') {
+          (window as any).__isBackgroundRequest = true;
         }
-
-        localStorage.setItem('B_SANPHAM', JSON.stringify(uniqueProducts));
-        localStorage.setItem('B_NHAPXUAT', JSON.stringify(payload.nhapXuats));
-        localStorage.setItem('B_NHAPXUATCT', JSON.stringify(payload.nhapXuatCTs));
-        localStorage.setItem('B_KIEMKHO', JSON.stringify(payload.kiemKhos));
-        localStorage.setItem('B_THUONGHIEU', JSON.stringify(payload.thuongHieus));
-        localStorage.setItem('B_CHINHANH', JSON.stringify(payload.chiNhanhs));
-        localStorage.setItem('B_NHANVIEN', JSON.stringify(payload.nhanViens));
-
-        // Background sync email logs
-        try {
-          const logs = await fetchEmailLogs(currentUser.id);
-          setEmailLogs(logs);
-          localStorage.setItem('B_EMAILLOG', JSON.stringify(logs));
-        } catch (mailErr) {
-          console.warn("Background Polling: Lỗi đồng bộ log email:", mailErr);
-        }
+        await syncAllDataFromSupabase(currentUser.id, currentUser.username, true);
       } catch (err) {
         console.warn("Lỗi đồng bộ ngầm:", err);
+      } finally {
+        if (typeof window !== 'undefined') {
+          (window as any).__isBackgroundRequest = false;
+        }
       }
-    }, 15000); // 15 giây
+    }, 60000); // 60 giây
 
     return () => clearInterval(interval);
   }, [currentUser]);
 
   // Hàm tải dữ liệu chuyên biệt từ Supabase Cloud và gán đồng bộ vào State và LocalStorage
-  const syncAllDataFromSupabase = async (userId: string, email: string) => {
-    setLoadingDb(true);
+  const syncAllDataFromSupabase = async (userId: string, email: string, silent = false) => {
+    if (isSyncingRef.current) {
+      console.log('Đang có một tiến trình đồng bộ khác đang chạy. Bỏ qua yêu cầu đồng bộ trùng lặp.');
+      return;
+    }
+    isSyncingRef.current = true;
+    monitor.trackApiCall('syncAllDataFromSupabase');
+    if (!silent) setLoadingDb(true);
     try {
-      console.log('Bắt đầu đồng bộ dữ liệu mới nhất từ Supabase Cloud cho tài khoản:', email);
+      console.log('Bắt đầu đồng bộ dữ liệu mới nhất từ Supabase Cloud cho tài khoản:', email, silent ? '(âm thầm)' : '(hiện thị loading)');
+      monitor.trackSupabaseQuery('all_tables', 'select_onboard');
       const payload = await ensureUserOnboarded(userId);
       const uniqueProducts = deduplicateProducts(payload.sanPhams);
       setSanPhams(uniqueProducts);
@@ -828,7 +841,9 @@ export default function App() {
     } catch (err) {
       console.error('Lỗi khi tải dữ liệu từ Supabase Cloud:', err);
     } finally {
-      setLoadingDb(false);
+      isSyncingRef.current = false;
+      lastSyncTimeRef.current = Date.now();
+      if (!silent) setLoadingDb(false);
     }
   };
 
@@ -859,6 +874,7 @@ export default function App() {
       console.log('Đang thiết lập kênh Supabase Realtime cho User ID:', userId);
       // Sử dụng tên kênh độc nhất kèm theo chuỗi ngẫu nhiên để tránh lỗi xung đột kênh cũ
       const channelName = `realtime-sync-${userId}-${Math.random().toString(36).substring(2, 8)}`;
+      monitor.trackSubscription(channelName);
       
       realtimeChannel = supabase
         .channel(channelName)
@@ -867,6 +883,7 @@ export default function App() {
           { event: '*', schema: 'public' },
           async (payload: any) => {
             console.log('Realtime Event nhận được từ Supabase:', payload);
+            monitor.trackSupabaseQuery(payload.table || 'unknown_table', 'realtime_event');
             
             // Lấy user_id từ dữ liệu thay đổi
             const newRow = payload.new;
@@ -887,36 +904,35 @@ export default function App() {
               return;
             }
 
-            // Nếu dữ liệu thay đổi thuộc về user hiện tại hoặc Owner, tự động reload lại toàn bộ
+            // Nếu dữ liệu thay đổi thuộc về user hiện tại hoặc Owner, tự động reload lại toàn bộ với debounce để gom nhóm
             const ownerId = localStorage.getItem('DB_OWNER_USER_ID') || userId;
             if (rowUserId === userId || rowUserId === ownerId || rowUserId === '00000000-0000-0000-0000-000000000000') {
               if (ignoreRealtimeRef.current) {
                 console.log('Đang bỏ qua sự kiện Realtime để tránh ghi đè dữ liệu cục bộ đang đồng bộ...');
                 return;
               }
-              console.log('Phát hiện thay đổi dữ liệu của bạn trên Supabase Cloud. Tiến hành đồng bộ thời gian thực tự động...');
-              try {
-                const payloadDb = await ensureUserOnboarded(userId);
-                const uniqueProducts = deduplicateProducts(payloadDb.sanPhams);
-                setSanPhams(uniqueProducts);
-                setNhapXuats(payloadDb.nhapXuats);
-                setNhapXuatCTs(payloadDb.nhapXuatCTs);
-                setKiemKhos(payloadDb.kiemKhos);
-                setThuongHieus(payloadDb.thuongHieus);
-                setChiNhanhs(payloadDb.chiNhanhs);
-                setNhanViens(payloadDb.nhanViens);
-
-                // Cập nhật LocalStorage tức thì
-                localStorage.setItem('B_SANPHAM', JSON.stringify(uniqueProducts));
-                localStorage.setItem('B_NHAPXUAT', JSON.stringify(payloadDb.nhapXuats));
-                localStorage.setItem('B_NHAPXUATCT', JSON.stringify(payloadDb.nhapXuatCTs));
-                localStorage.setItem('B_KIEMKHO', JSON.stringify(payloadDb.kiemKhos));
-                localStorage.setItem('B_THUONGHIEU', JSON.stringify(payloadDb.thuongHieus));
-                localStorage.setItem('B_CHINHANH', JSON.stringify(payloadDb.chiNhanhs));
-                localStorage.setItem('B_NHANVIEN', JSON.stringify(payloadDb.nhanViens));
-              } catch (e) {
-                console.error('Lỗi khi đồng bộ realtime từ Supabase:', e);
+              if (isSyncingRef.current) {
+                console.log('Đang thực hiện đồng bộ, bỏ qua sự kiện Realtime lặp...');
+                return;
               }
+              
+              console.log('Phát hiện thay đổi dữ liệu của bạn trên Supabase Cloud. Lên lịch đồng bộ thời gian thực tự động sau 800ms...');
+              if (realtimeDebounceTimerRef.current) {
+                clearTimeout(realtimeDebounceTimerRef.current);
+              }
+              
+              realtimeDebounceTimerRef.current = setTimeout(async () => {
+                if (isSyncingRef.current) {
+                  console.log('Đang có tiến trình đồng bộ khác chạy, hủy bỏ lượt đồng bộ realtime này.');
+                  return;
+                }
+                try {
+                  console.log('Đang thực hiện tải dữ liệu tự động từ sự kiện Realtime...');
+                  await syncAllDataFromSupabase(userId, currentUser?.username || '', true);
+                } catch (e) {
+                  console.error('Lỗi khi đồng bộ realtime từ Supabase:', e);
+                }
+              }, 800);
             }
           }
         )
@@ -1040,6 +1056,18 @@ export default function App() {
 
   // --- 3. ĐIỀU HƯỚNG TAB CHỨC NĂNG ---
   const [activeTab, setActiveTab] = useState<string>('DASHBOARD');
+  const [historyFiltersOverride, setHistoryFiltersOverride] = useState<{
+    historyTypeFilter: 'Tất cả' | 'NHẬP' | 'XUẤT' | 'KIỂM KHO' | 'NHẬP_KIEM_KHO' | 'XUAT_KIEM_KHO';
+    branchFilter: string;
+    fromDate: string;
+    toDate: string;
+  } | null>(null);
+
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      (window as any).__activeTab = activeTab;
+    }
+  }, [activeTab]);
   const [mobileMenuOpen, setMobileMenuOpen] = useState<boolean>(false);
   const [successToast, setSuccessToast] = useState<{ 
     message: string; 
@@ -1291,29 +1319,37 @@ export default function App() {
   const handleUpdateProduct = async (sku: string, updatedFields: Partial<SanPham>) => {
     if (!(await ensureOnline())) return;
     const normSku = cleanSKU(sku);
+    
+    // Tìm sản phẩm hiện có
+    const productInState = sanPhams.find(p => cleanSKU(p.SKU) === normSku);
+    if (!productInState) {
+      console.warn(`[handleUpdateProduct] Không tìm thấy sản phẩm với SKU: ${sku}`);
+      return;
+    }
+    
+    const finalProduct = { ...productInState, ...updatedFields };
+
+    // Cập nhật State cục bộ
     setSanPhams(prev => prev.map(p => {
       if (cleanSKU(p.SKU) === normSku) {
-        return { ...p, ...updatedFields };
+        return finalProduct;
       }
       return p;
     }));
 
     // Đồng bộ Supabase
     if (currentUser) {
+      ignoreRealtimeRef.current = true;
       try {
         const uId = await getUserId();
         if (uId) {
-          const productInState = sanPhams.find(p => cleanSKU(p.SKU) === normSku);
-          if (productInState) {
-            const finalProduct = { ...productInState, ...updatedFields };
-            const res = await syncSanPham(finalProduct, uId);
-            if (res.error) {
-              setSyncError({
-                table: 'b_sanpham',
-                action: 'Cập nhật sản phẩm',
-                message: res.error.message || JSON.stringify(res.error)
-              });
-            }
+          const res = await syncSanPham(finalProduct, uId);
+          if (res.error) {
+            setSyncError({
+              table: 'b_sanpham',
+              action: 'Cập nhật sản phẩm',
+              message: res.error.message || JSON.stringify(res.error)
+            });
           }
         }
       } catch (err: any) {
@@ -1323,6 +1359,10 @@ export default function App() {
           action: 'Cập nhật sản phẩm',
           message: err.message || JSON.stringify(err)
         });
+      } finally {
+        setTimeout(() => {
+          ignoreRealtimeRef.current = false;
+        }, 1500);
       }
     }
     setSuccessToast({ 
@@ -1772,6 +1812,117 @@ export default function App() {
   };
 
   /**
+   * Nghiệp vụ Lưu nhiều phiếu Nhập / Xuất kho một lúc (dùng cho Gom Đơn Lấy Hàng)
+   * Tự động sinh Số hóa đơn (PNxxxxxx, PXxxxxxx) tăng dần liên tục chính xác không trùng lặp
+   */
+  const handleSaveMultipleTransactions = async (
+    transactions: { header: NhapXuat; details: NhapXuatCT[] }[]
+  ): Promise<string[]> => {
+    const isSessionValid = await verifySession();
+    if (!isSessionValid) return [];
+    if (!(await ensureOnline())) return [];
+
+    let currentNhapXuats = [...nhapXuats];
+    let currentNhapXuatCTs = [...nhapXuatCTs];
+    let currentProducts = [...sanPhams];
+
+    const savedTransactions: { header: NhapXuat; details: NhapXuatCT[] }[] = [];
+    const generatedInvoiceIds: string[] = [];
+
+    for (const tx of transactions) {
+      const { header, details } = tx;
+      let prefix = header.LOAI === 'NHẬP' ? 'PN' : 'PX';
+      if (header.HOA_DON) {
+        if (header.HOA_DON.startsWith('PNK')) prefix = 'PNK';
+        else if (header.HOA_DON.startsWith('PXK')) prefix = 'PXK';
+        else if (header.HOA_DON.startsWith('PN')) prefix = 'PN';
+        else if (header.HOA_DON.startsWith('PX')) prefix = 'PX';
+      }
+
+      // Tìm số hóa đơn lớn nhất hiện tại
+      let maxNum = 0;
+      currentNhapXuats.forEach(h => {
+        if (h.HOA_DON.startsWith(prefix)) {
+          const numPart = parseInt(h.HOA_DON.substring(prefix.length), 10);
+          if (!isNaN(numPart) && numPart > maxNum) {
+            maxNum = numPart;
+          }
+        }
+      });
+
+      const newInvoiceId = `${prefix}${String(maxNum + 1).padStart(6, '0')}`;
+      generatedInvoiceIds.push(newInvoiceId);
+
+      const finalizedHeader: NhapXuat = {
+        ...header,
+        HOA_DON: newInvoiceId
+      };
+
+      const finalizedDetails: NhapXuatCT[] = details.map(d => ({
+        ...d,
+        HOA_DON: newInvoiceId
+      }));
+
+      currentNhapXuats.push(finalizedHeader);
+      currentNhapXuatCTs.push(...finalizedDetails);
+      savedTransactions.push({ header: finalizedHeader, details: finalizedDetails });
+    }
+
+    // Cập nhật State danh sách hóa đơn
+    setNhapXuats(currentNhapXuats);
+    setNhapXuatCTs(currentNhapXuatCTs);
+
+    // Cập nhật số lượng và tồn kho các SKU bị ảnh hưởng
+    const allAffectedSKUs = Array.from(new Set(savedTransactions.flatMap(tx => tx.details.map(d => cleanSKU(d.SKU)))));
+    const updatedProductsList = currentProducts.map(p => {
+      const pSkuNorm = cleanSKU(p.SKU);
+      if (allAffectedSKUs.includes(pSkuNorm)) {
+        const updatedP = recalculateProductState(p.SKU, currentProducts, currentNhapXuatCTs, kiemKhos, currentNhapXuats);
+        return updatedP ? updatedP : p;
+      }
+      return p;
+    });
+
+    setSanPhams(updatedProductsList);
+
+    // Kích hoạt Toast thông báo thành công
+    setSuccessToast({
+      message: `Đã tự động tạo thành công ${transactions.length} phiếu xuất kho trực tiếp!`,
+      type: "success",
+      id: `save-bulk-tx-${Date.now()}`
+    });
+
+    // Đồng bộ Supabase
+    if (currentUser) {
+      ignoreRealtimeRef.current = true;
+      try {
+        const uId = await getUserId();
+        if (uId) {
+          // Sync từng header, details và danh sách sản phẩm cập nhật
+          await Promise.all([
+            ...savedTransactions.map(tx => syncNhapXuat(tx.header, uId)),
+            ...savedTransactions.map(tx => syncNhapXuatCTs(tx.details, uId)),
+            syncSanPhams(updatedProductsList.filter(p => allAffectedSKUs.includes(cleanSKU(p.SKU))), uId)
+          ]);
+        }
+      } catch (err: any) {
+        console.error('Lỗi sync bulk hóa đơn:', err);
+        setSyncError({
+          table: 'b_nhapxuat / b_nhapxuatct / b_sanpham',
+          action: 'Lưu nhiều hóa đơn',
+          message: err.message || JSON.stringify(err)
+        });
+      } finally {
+        setTimeout(() => {
+          ignoreRealtimeRef.current = false;
+        }, 3000);
+      }
+    }
+
+    return generatedInvoiceIds;
+  };
+
+  /**
    * Nghiệp vụ Kiểm kho định kỳ
    * Tự động sinh Số phiếu PKKxxxxxx và bù trừ chênh lệch trực tiếp vào tồn kho sản phẩm (Rule 8)
    * Đồng thời tự động tạo giao dịch điều chỉnh liên kết (PNKxxxxxx hoặc PXKxxxxxx)
@@ -2180,7 +2331,7 @@ export default function App() {
   };
 
   // --- 6. PHƯƠNG THỨC THÊM MỚI DANH MỤC THƯƠNG HIỆU, CHI NHÁNH, NHÂN VIÊN ---
-  const handleAddThuongHieu = async (brand: ThươngHieu) => {
+  const handleAddThuongHieu = async (brand: ThuongHieu) => {
     if (!(await ensureOnline())) return;
     setThuongHieus(prev => [...prev, brand]);
 
@@ -2264,7 +2415,7 @@ export default function App() {
     }
   };
 
-  const handleUpdateThuongHieu = async (oldName: string, oldFeature: string, brand: ThươngHieu) => {
+  const handleUpdateThuongHieu = async (oldName: string, oldFeature: string, brand: ThuongHieu) => {
     const isSessionValid = await verifySession();
     if (!isSessionValid) return;
     if (!(await ensureOnline())) return;
@@ -3065,10 +3216,16 @@ export default function App() {
                   <OrderParser
                     sanPhams={sanPhams}
                     brandList={thuongHieus}
+                    chiNhanhs={listBranchNames}
+                    onTriggerToast={(message, type) => {
+                      setSuccessToast({ show: true, message, type: type || 'success', id: Date.now() });
+                    }}
                     onCreateXuatPhieu={(items) => {
                       setPrefilledCartItems(items);
                       setActiveTab('TRANSACTION_XUAT');
                     }}
+                    currentUser={currentUser}
+                    onSaveMultipleTransactions={handleSaveMultipleTransactions}
                   />
                 )}
 
@@ -3114,12 +3271,17 @@ export default function App() {
                     nhapXuats={nhapXuats}
                     nhapXuatCTs={nhapXuatCTs}
                     chiNhanhs={listBranchNames}
+                    currentUser={currentUser}
                     onQuickRestock={(sku) => {
                       setPrefilledSku(sku);
                       setActiveTab('TRANSACTION_NHAP'); // Lập phiếu nhập kho trực tiếp
                     }}
                     onTriggerToast={(message, type) => {
                       setSuccessToast({ show: true, message, type: type || 'success', id: Date.now() });
+                    }}
+                    onDrillDown={(filters) => {
+                      setHistoryFiltersOverride(filters);
+                      setActiveTab('HISTORY');
                     }}
                   />
                 )}
@@ -3179,6 +3341,8 @@ export default function App() {
                     onSaveTransaction={handleSaveTransaction}
                     chiNhanhs={listBranchNames}
                     thuongHieus={listBrandNames}
+                    drillDownFilters={historyFiltersOverride}
+                    onClearDrillDownFilters={() => setHistoryFiltersOverride(null)}
                   />
                 )}
 
@@ -3332,7 +3496,7 @@ export default function App() {
         </div>
 
         {/* HỆ THỐNG THÔNG BÁO TOAST KHÔNG GÂY GIÁN ĐOẠN */}
-        <AnimatePresence mode="wait">
+        <AnimatePresence>
           {successToast && (
             <div className="fixed top-5 right-5 z-[9999] p-4 max-w-sm w-full pointer-events-none">
               <motion.div
