@@ -463,6 +463,99 @@ export async function tryCreateColumnsOnSupabase() {
         END;
       END IF;
       END $$;
+
+      CREATE OR REPLACE FUNCTION public.register_nhanvien(
+        p_ma_nv text,
+        p_ho_ten text,
+        p_email text,
+        p_ten_dang_nhap text,
+        p_mat_khau text,
+        p_user_id uuid
+      ) RETURNS jsonb AS $func$
+      DECLARE
+        v_admin_count integer;
+        v_email_exists boolean;
+        v_username_exists boolean;
+        v_role text;
+        v_trang_thai text;
+        v_chuc_vu text;
+        v_bo_phan text;
+        v_write_access boolean;
+        v_current_date text;
+        v_roles text[];
+        v_permissions text[];
+      BEGIN
+        -- 1. Check if email exists
+        SELECT EXISTS (
+          SELECT 1 FROM public.b_nhanvien 
+          WHERE lower(trim("EMAIL")) = lower(trim(p_email)) 
+            AND user_id = p_user_id
+        ) INTO v_email_exists;
+
+        IF v_email_exists THEN
+          RETURN jsonb_build_object('success', false, 'message', 'Email này đã được sử dụng. Vui lòng chọn Email khác.');
+        END IF;
+
+        -- 2. Check if username exists
+        SELECT EXISTS (
+          SELECT 1 FROM public.b_nhanvien 
+          WHERE lower(trim("TEN_DANG_NHAP")) = lower(trim(p_ten_dang_nhap)) 
+            AND user_id = p_user_id
+        ) INTO v_username_exists;
+
+        IF v_username_exists THEN
+          RETURN jsonb_build_object('success', false, 'message', 'Tên đăng nhập này đã được sử dụng. Vui lòng chọn Tên đăng nhập khác.');
+        END IF;
+
+        -- 3. Check count of existing ADMIN roles
+        SELECT COUNT(*) FROM public.b_nhanvien 
+        WHERE (upper(trim("ROLE")) = 'ADMIN') 
+          AND user_id = p_user_id
+        INTO v_admin_count;
+
+        IF v_admin_count = 0 THEN
+          -- First account: set as Admin and active
+          v_role := 'ADMIN';
+          v_trang_thai := 'Hoạt động';
+          v_chuc_vu := 'Chủ sở hữu (Admin)';
+          v_bo_phan := 'Ban Giám Đốc';
+          v_write_access := true;
+          v_roles := ARRAY['ADMIN'];
+          v_permissions := ARRAY['DASHBOARD', 'PRODUCT', 'TRANSACTION', 'HISTORY', 'AUDIT', 'CATEGORY'];
+        ELSE
+          -- Subsequent accounts: set as standard employee and pending
+          v_role := 'NHAN_VIEN';
+          v_trang_thai := 'PENDING';
+          v_chuc_vu := 'Nhân viên chờ duyệt';
+          v_bo_phan := 'Bộ Phận Bán Hàng';
+          v_write_access := false;
+          v_roles := ARRAY['NHAN_VIEN'];
+          v_permissions := ARRAY['TRANSACTION'];
+        END IF;
+
+        v_current_date := to_char(current_timestamp, 'YYYY-MM-DD');
+
+        -- 4. Insert record
+        INSERT INTO public.b_nhanvien (
+          "MA_NV", "HO_TEN", "CHUC_VU", "BO_PHAN", "CHI_NHANH", 
+          "EMAIL", "ROLE", "WRITE_ACCESS", "TEN_DANG_NHAP", 
+          "MAT_KHAU", "TRANG_THAI", "YEU_CAU_RESET", "NGAY_DANG_KY", "user_id",
+          "ROLES", "PERMISSIONS"
+        ) VALUES (
+          p_ma_nv, p_ho_ten, v_chuc_vu, v_bo_phan, 'Kho Trung Tâm',
+          p_email, v_role, v_write_access, p_ten_dang_nhap,
+          p_mat_khau, v_trang_thai, false, v_current_date, p_user_id,
+          v_roles, v_permissions
+        );
+
+        RETURN jsonb_build_object(
+          'success', true, 
+          'message', 'Đăng ký thành công!', 
+          'role', v_role, 
+          'trang_thai', v_trang_thai
+        );
+      END;
+      $func$ LANGUAGE plpgsql SECURITY DEFINER;
   `;
 
   try {
@@ -634,17 +727,34 @@ export async function ensureUserOnboarded(userId: string): Promise<UserDataPaylo
         .limit(1);
 
       if (!existingStaff || existingStaff.length === 0) {
-        console.log('Tự động thêm tài khoản đăng nhập hiện tại làm Admin chính:', email);
+        // Kiểm tra xem đã có tài khoản ADMIN nào trong b_nhanvien thuộc user_id này chưa
+        const { data: adminCheck } = await supabase
+          .from('b_nhanvien')
+          .select('MA_NV')
+          .eq('ROLE', 'ADMIN')
+          .eq('user_id', userId)
+          .limit(1);
+
+        const hasAdmin = adminCheck && adminCheck.length > 0;
+        const assignedRole = hasAdmin ? 'NHAN_VIEN' : 'ADMIN';
+        const assignedStatus = hasAdmin ? 'PENDING' : 'Hoạt động';
+
+        console.log(`Tự động onboard tài khoản ${email}: gán vai trò ${assignedRole}, trạng thái ${assignedStatus}`);
+        
         await supabase.from('b_nhanvien').insert({
-          "MA_NV": "NV_ADMIN_" + Math.random().toString(36).substr(2, 4).toUpperCase(),
+          "MA_NV": "NV_" + (assignedRole === 'ADMIN' ? "ADMIN_" : "") + Math.random().toString(36).substr(2, 4).toUpperCase(),
           "HO_TEN": email.split('@')[0].toUpperCase(),
-          "CHUC_VU": "Chủ sở hữu (Admin)",
-          "BO_PHAN": "Ban Giám Đốc",
+          "CHUC_VU": assignedRole === 'ADMIN' ? "Chủ sở hữu (Admin)" : "Nhân viên chờ duyệt",
+          "BO_PHAN": assignedRole === 'ADMIN' ? "Ban Giám Đốc" : "Bộ Phận Bán Hàng",
           "CHI_NHANH": "Kho Trung Tâm",
           "EMAIL": email,
-          "ROLE": "ADMIN",
-          "PERMISSIONS": ["DASHBOARD", "PRODUCT", "TRANSACTION", "HISTORY", "AUDIT", "CATEGORY"],
-          "WRITE_ACCESS": true,
+          "ROLE": assignedRole,
+          "PERMISSIONS": assignedRole === 'ADMIN' 
+            ? ["DASHBOARD", "PRODUCT", "TRANSACTION", "HISTORY", "AUDIT", "CATEGORY"] 
+            : ["TRANSACTION"],
+          "WRITE_ACCESS": assignedRole === 'ADMIN',
+          "TRANG_THAI": assignedStatus,
+          "ROLES": [assignedRole],
           user_id: userId
         });
       }

@@ -80,6 +80,7 @@ import {
 // Import Supabase
 import { supabase } from './supabaseClient';
 import {
+  SHARED_USER_ID,
   ensureUserOnboarded,
   syncSanPham,
   syncSanPhams,
@@ -318,9 +319,6 @@ export default function App() {
     if (!currentUser) return false;
 
     // Admin mặc định có toàn quyền
-    const isOwner = currentUser.username.toLowerCase() === 'nguyenkienduc.digital@gmail.com' || currentUser.username.toLowerCase() === 'nguyennhanhoa.artist@gmail.com';
-    if (isOwner) return true;
-
     const userRoles = safeParseArray(currentUser.ROLES).length > 0 ? safeParseArray(currentUser.ROLES) : (currentUser.role ? [currentUser.role] : []);
     if (userRoles.includes('ADMIN')) return true;
 
@@ -477,10 +475,6 @@ export default function App() {
 
   const verifySession = async (): Promise<boolean> => {
     if (!currentUser) return true;
-
-    if (currentUser.username === 'nguyenkienduc.digital@gmail.com' || currentUser.username === 'admin') {
-      return true;
-    }
 
     if (isOfflineRef.current) {
       console.log("[Auth Guard] Máy đang ngoại tuyến, tạm bỏ qua xác thực phiên...");
@@ -838,20 +832,6 @@ export default function App() {
               setCurrentUser(u);
               localStorage.setItem('CURRENT_USER', JSON.stringify(u));
               return;
-            } else if (savedUser.username === 'nguyenkienduc.digital@gmail.com' || savedUser.username === 'admin') {
-              const u: User = {
-                username: 'nguyenkienduc.digital@gmail.com',
-                fullName: 'Nguyễn Kiến Đức',
-                role: 'ADMIN',
-                branch: 'Kho Trung Tâm',
-                writeAccess: true,
-                WRITE_ACCESS: true,
-                id: 'NV0001',
-                ROLES: ['ADMIN']
-              };
-              setCurrentUser(u);
-              localStorage.setItem('CURRENT_USER', JSON.stringify(u));
-              return;
             } else {
               console.error(`[Auth Guard] Không tìm thấy tài khoản ${savedUser.username} (ID: ${savedUser.id}) trong b_nhanvien từ Supabase! Tiến hành đăng xuất cưỡng chế.`);
               forceLogout();
@@ -981,33 +961,21 @@ export default function App() {
           syncAllDataFromSupabase(userId, email);
           setupRealtime(userId);
         } else {
-          console.log('Không phát hiện session hoạt động. Tiến hành tự động đăng nhập ngầm tài khoản quản trị để kết nối dữ liệu...');
-          const { data, error } = await supabase.auth.signInWithPassword({
-            email: 'nguyenkienduc.digital@gmail.com',
-            password: '123456'
-          });
-
-          if (!error && data?.session?.user) {
-            const userId = data.session.user.id;
-            const email = data.session.user.email || '';
-            currentUserId = userId;
-            console.log('Đăng nhập ngầm Admin thành công. Đang tải dữ liệu trực tuyến...');
-            syncAllDataFromSupabase(userId, email);
-            setupRealtime(userId);
-          } else {
-            console.warn('Đăng nhập ngầm Admin thất bại hoặc chưa có trên máy chủ, sử dụng fallback offline:', error?.message);
-            const savedUser = localStorage.getItem('CURRENT_USER');
-            if (savedUser) {
-              try {
-                const parsed = JSON.parse(savedUser);
-                if (parsed && parsed.id) {
-                  syncAllDataFromSupabase(parsed.id, parsed.username);
-                  setupRealtime(parsed.id);
-                }
-              } catch (e) {
-                console.warn("Lỗi đọc user cũ:", e);
+          console.log('Không phát hiện session hoạt động. Sử dụng cấu hình cục bộ hoặc dữ liệu chung...');
+          const savedUser = localStorage.getItem('CURRENT_USER');
+          if (savedUser) {
+            try {
+              const parsed = JSON.parse(savedUser);
+              if (parsed && parsed.id) {
+                syncAllDataFromSupabase(SHARED_USER_ID, parsed.username);
+                setupRealtime(SHARED_USER_ID);
               }
+            } catch (e) {
+              console.warn("Lỗi đọc user cũ:", e);
             }
+          } else {
+            syncAllDataFromSupabase(SHARED_USER_ID, '');
+            setupRealtime(SHARED_USER_ID);
           }
         }
       } catch (e) {
@@ -2797,27 +2765,14 @@ export default function App() {
       <Login 
         nhanViens={nhanViens}
         onLoginSuccess={(user) => {
-          // Khi đăng nhập, tìm kiếm NhanVien tương ứng để lấy writeAccess chính xác
-          const email = user.username;
-          const isOwner = email.toLowerCase() === 'nguyenkienduc.digital@gmail.com' || email.toLowerCase() === 'nguyennhanhoa.artist@gmail.com';
-          const staffMember = nhanViens.find(n => n.EMAIL.toLowerCase() === email.toLowerCase());
-          
-          const cleanUser = {
-            ...user,
-            role: isOwner ? ('ADMIN' as const) : (staffMember?.ROLE || user.role),
-            fullName: isOwner ? 'Nguyễn Nhân Hòa (Owner)' : (staffMember?.HO_TEN || user.fullName),
-            branch: isOwner ? 'Kho Trung Tâm' : (staffMember?.CHI_NHANH || user.branch),
-            writeAccess: isOwner ? true : (staffMember ? staffMember.WRITE_ACCESS : user.writeAccess),
-            WRITE_ACCESS: isOwner ? true : (staffMember ? staffMember.WRITE_ACCESS : user.writeAccess)
-          };
-          setCurrentUser(cleanUser);
-          localStorage.setItem('CURRENT_USER', JSON.stringify(cleanUser));
+          setCurrentUser(user);
+          localStorage.setItem('CURRENT_USER', JSON.stringify(user));
 
           // ĐỒNG BỘ DỮ LIỆU LẬP TỨC KHI ĐĂNG NHẬP THÀNH CÔNG!
-          syncAllDataFromSupabase(cleanUser.id || '00000000-0000-0000-0000-000000000000', cleanUser.username);
+          syncAllDataFromSupabase(user.id || '00000000-0000-0000-0000-000000000000', user.username);
           
           // Tự động chuyển hướng tab phù hợp
-          if (cleanUser.role === 'NHAN_VIEN') {
+          if (user.role === 'NHAN_VIEN') {
             setActiveTab('TRANSACTION_XUAT');
           } else {
             setActiveTab('DASHBOARD');

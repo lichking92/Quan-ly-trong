@@ -110,36 +110,108 @@ export default function Login({ onLoginSuccess, nhanViens = [] }: LoginProps) {
         }
       }
 
-      // 2. Tạo bản ghi nhân viên mới ở trạng thái Chờ duyệt
+      // 2. Tạo bản ghi nhân viên mới sử dụng RPC để tránh race condition và tự động gán ADMIN.
+      // Nếu RPC không khả dụng (ví dụ do database chưa tạo hàm), sử dụng cơ chế client-side fallback an toàn.
       const randomId = 'NV' + Math.floor(100000 + Math.random() * 900000);
-      const currentDate = new Date().toISOString().split('T')[0];
+      let registeredRole = 'NHAN_VIEN';
+      let registeredStatus = 'PENDING';
+      let rpcRes = null;
+      let rpcError = null;
 
-      const newStaffPayload = {
-        MA_NV: randomId,
-        HO_TEN: fullName,
-        CHUC_VU: 'Nhân viên chờ duyệt',
-        BO_PHAN: 'Bộ Phận Bán Hàng',
-        CHI_NHANH: 'Kho Trung Tâm',
-        EMAIL: email,
-        ROLE: 'NHAN_VIEN',
-        WRITE_ACCESS: false,
-        TEN_DANG_NHAP: usernameInput,
-        MAT_KHAU: passwordInput,
-        TRANG_THAI: 'PENDING',
-        YEU_CAU_RESET: false,
-        NGAY_DANG_KY: currentDate,
-        user_id: activeUid
-      };
+      try {
+        const { data, error } = await supabase
+          .rpc('register_nhanvien', {
+            p_ma_nv: randomId,
+            p_ho_ten: fullName,
+            p_email: email,
+            p_ten_dang_nhap: usernameInput,
+            p_mat_khau: passwordInput,
+            p_user_id: activeUid
+          });
+        rpcRes = data;
+        rpcError = error;
+      } catch (err) {
+        rpcError = err;
+      }
 
-      const { error: insertError } = await supabase
-        .from('b_nhanvien')
-        .insert(newStaffPayload);
+      if (rpcError) {
+        console.warn('Hàm RPC register_nhanvien không khả dụng, sử dụng cơ chế client-side fallback an toàn:', rpcError);
+        
+        // Cơ chế fallback client-side:
+        // Đếm xem đã có tài khoản ADMIN nào thuộc user_id này chưa
+        const { data: existingStaff, error: countError } = await supabase
+          .from('b_nhanvien')
+          .select('ROLE')
+          .eq('user_id', activeUid);
 
-      if (insertError) {
-        console.error('Lỗi khi ghi thông tin đăng ký:', insertError);
-        setErrorMsg('Lỗi khi ghi thông tin đăng ký lên hệ thống: ' + insertError.message);
+        if (countError) {
+          console.error('Lỗi khi đếm tài khoản để phân vai:', countError);
+          setErrorMsg('Lỗi khi đăng ký tài khoản: ' + countError.message);
+          setRegLoading(false);
+          return;
+        }
+
+        const hasAdmin = existingStaff && existingStaff.some(s => (s.ROLE || '').trim().toUpperCase() === 'ADMIN');
+        
+        if (!hasAdmin) {
+          registeredRole = 'ADMIN';
+          registeredStatus = 'Hoạt động';
+        } else {
+          registeredRole = 'NHAN_VIEN';
+          registeredStatus = 'PENDING';
+        }
+
+        const currentDate = new Date().toISOString().split('T')[0];
+        const assignedRoles = registeredRole === 'ADMIN' ? ['ADMIN'] : ['NHAN_VIEN'];
+        const assignedPermissions = registeredRole === 'ADMIN' 
+          ? ["DASHBOARD", "PRODUCT", "TRANSACTION", "HISTORY", "AUDIT", "CATEGORY"] 
+          : ["TRANSACTION"];
+
+        // Ghi trực tiếp bản ghi mới vào b_nhanvien
+        const { error: insertError } = await supabase
+          .from('b_nhanvien')
+          .insert({
+            "MA_NV": randomId,
+            "HO_TEN": fullName,
+            "CHUC_VU": registeredRole === 'ADMIN' ? "Chủ sở hữu (Admin)" : "Nhân viên chờ duyệt",
+            "BO_PHAN": registeredRole === 'ADMIN' ? "Ban Giám Đốc" : "Bộ Phận Bán Hàng",
+            "CHI_NHANH": "Kho Trung Tâm",
+            "EMAIL": email,
+            "ROLE": registeredRole,
+            "WRITE_ACCESS": registeredRole === 'ADMIN',
+            "TEN_DANG_NHAP": usernameInput,
+            "MAT_KHAU": passwordInput,
+            "TRANG_THAI": registeredStatus,
+            "YEU_CAU_RESET": false,
+            "NGAY_DANG_KY": currentDate,
+            "user_id": activeUid,
+            "ROLES": assignedRoles,
+            "PERMISSIONS": assignedPermissions
+          });
+
+        if (insertError) {
+          console.error('Lỗi khi ghi thông tin đăng ký trực tiếp:', insertError);
+          setErrorMsg('Lỗi khi ghi thông tin đăng ký lên hệ thống: ' + insertError.message);
+          setRegLoading(false);
+          return;
+        }
       } else {
-        setSuccessMsg(`Đăng ký thành công! Tài khoản "${usernameInput}" của bạn hiện đang ở trạng thái "Chờ duyệt". Vui lòng liên hệ Admin để phê duyệt và kích hoạt.`);
+        if (rpcRes && rpcRes.success === false) {
+          setErrorMsg(rpcRes.message);
+          setRegLoading(false);
+          return;
+        }
+        registeredRole = rpcRes?.role || 'NHAN_VIEN';
+        registeredStatus = rpcRes?.trang_thai || 'PENDING';
+      }
+      
+      let successMessage = `Đăng ký thành công! `;
+      if (registeredRole === 'ADMIN') {
+        successMessage += `Tài khoản của bạn đã được khởi tạo làm Quản trị viên (Admin) chính và được kích hoạt hoạt động tự động.`;
+      } else {
+        successMessage += `Tài khoản "${usernameInput}" của bạn hiện đang ở trạng thái "Chờ duyệt". Vui lòng liên hệ Admin để phê duyệt và kích hoạt.`;
+      }
+      setSuccessMsg(successMessage);
         
         // Gửi email thông báo đang chờ duyệt
         try {
@@ -179,7 +251,6 @@ export default function Login({ onLoginSuccess, nhanViens = [] }: LoginProps) {
         setRegUsername('');
         setRegPassword('');
         setRegRePassword('');
-      }
     } catch (err: any) {
       console.error('Lỗi khi xử lý đăng ký:', err);
       setErrorMsg('Đã xảy ra lỗi ngoài ý muốn: ' + (err.message || JSON.stringify(err)));
@@ -212,20 +283,7 @@ export default function Login({ onLoginSuccess, nhanViens = [] }: LoginProps) {
       console.warn('Lỗi kết nối ngầm:', e);
     }
 
-    // ĐĂNG NHẬP TRỰC TIẾP MASTER ADMIN (ĐẢM BẢO 100% THÀNH CÔNG VỚI TÀI KHOẢN CHỦ)
-    if ((lowerUser === 'admin' || lowerUser === 'nguyenkienduc.digital@gmail.com') && cleanPass === '123456') {
-      setLoading(false);
-      onLoginSuccess({
-        username: 'nguyenkienduc.digital@gmail.com',
-        fullName: 'Nguyễn Kiến Đức',
-        role: 'ADMIN',
-        branch: 'Kho Trung Tâm',
-        writeAccess: true,
-        WRITE_ACCESS: true,
-        id: 'NV0001'
-      });
-      return;
-    }
+    // ĐĂNG NHẬP THÔNG QUA BẢNG B_NHANVIEN (KHÔNG HARD-CODE ADMIN)
 
     // 1. Kiểm tra tài khoản trực tiếp từ bảng b_nhanvien trên Supabase Cloud (truy vấn toàn hệ thống)
     try {
