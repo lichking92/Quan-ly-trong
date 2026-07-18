@@ -23,6 +23,7 @@ import {
 import { motion, AnimatePresence } from 'motion/react';
 import { SanPham, NhapXuat, NhapXuatCT, KiemKho, ThuongHieu } from '../types';
 import { formatDop, generateSKUString, generateSphOptions } from '../data/mockData';
+import { normalizeChietXuat } from '../utils/chietXuatHelper';
 
 interface DiopterMatrixProps {
   sanPhams: SanPham[];
@@ -210,11 +211,25 @@ export default function DiopterMatrix({
   // Để tối ưu hiệu năng, chúng ta build một Map tra cứu nhanh dựa trên SPH và CYL
   const filteredProductsMap = useMemo(() => {
     const map = new Map<string, SanPham>();
+    const normalizedSelected = normalizeChietXuat(selectedChietXuat);
     
     sanPhams.forEach(p => {
       const matchBrand = p.THUONG_HIEU.trim().toLowerCase() === selectedBrand.trim().toLowerCase();
       const matchFeature = p.TINH_NANG.trim().toLowerCase() === selectedFeature.trim().toLowerCase();
-      const matchChietXuat = p.CHIET_XUAT.trim() === selectedChietXuat.trim();
+      const normalizedProductIdx = normalizeChietXuat(p.CHIET_XUAT);
+      const matchChietXuat = normalizedProductIdx === normalizedSelected;
+      
+      // Logging debug as requested to track down any misaligned values
+      if (matchBrand && matchFeature) {
+        console.log({
+          selectedIndex: selectedChietXuat,
+          normalizedSelectedIndex: normalizedSelected,
+          productIndex: p.CHIET_XUAT,
+          normalizedProductIndex: normalizedProductIdx,
+          matched: matchChietXuat,
+          sku: p.SKU
+        });
+      }
       
       if (matchBrand && matchFeature && matchChietXuat) {
         const key = `${p.CAN.toFixed(2)}_${p.LOAN.toFixed(2)}`;

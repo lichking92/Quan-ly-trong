@@ -58,6 +58,7 @@ import {
   ReferenceArea
 } from 'recharts';
 import { SanPham, NhapXuat, NhapXuatCT } from '../types';
+import { normalizeChietXuat, compareChietXuat } from '../utils/chietXuatHelper';
 import TemplateExportManager from './TemplateExportManager';
 import { monitor } from '../utils/debugMonitor';
 import { 
@@ -651,7 +652,7 @@ export default function Dashboard({
       
       const matchBrand = selectedBrandFilter === 'Tất cả' || d.THUONG_HIEU === selectedBrandFilter;
       const matchFeature = selectedFeatureFilter === 'Tất cả' || d.TINH_NANG === selectedFeatureFilter;
-      const matchChietXuat = selectedChietXuatFilter === 'Tất cả' || d.CHIET_XUAT === selectedChietXuatFilter;
+      const matchChietXuat = selectedChietXuatFilter === 'Tất cả' || compareChietXuat(d.CHIET_XUAT, selectedChietXuatFilter);
       
       return matchBrand && matchFeature && matchChietXuat;
     });

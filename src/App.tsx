@@ -76,6 +76,7 @@ import {
   getVietnamDateTimeString,
   cleanSKU
 } from './data/mockData';
+import { compareChietXuat } from './utils/chietXuatHelper';
 
 // Import Supabase
 import { supabase } from './supabaseClient';
@@ -1816,7 +1817,7 @@ export default function App() {
         isMatch = 
           p.THUONG_HIEU.trim().toLowerCase() === brand.trim().toLowerCase() &&
           p.TINH_NANG.trim().toLowerCase() === feature.trim().toLowerCase() &&
-          p.CHIET_XUAT.trim() === chietXuat.trim() &&
+          compareChietXuat(p.CHIET_XUAT, chietXuat) &&
           Math.abs(p.CAN - sph) < 0.001 &&
           Math.abs(p.LOAN - cyl) < 0.001 &&
           cleanSKU(p.SKU) === normSku;
@@ -1898,7 +1899,7 @@ export default function App() {
           return (
             p.THUONG_HIEU.trim().toLowerCase() === brand.trim().toLowerCase() &&
             p.TINH_NANG.trim().toLowerCase() === feature.trim().toLowerCase() &&
-            p.CHIET_XUAT.trim() === chietXuat.trim() &&
+            compareChietXuat(p.CHIET_XUAT, chietXuat) &&
             Math.abs(p.CAN - sph) < 0.001 &&
             Math.abs(p.LOAN - cyl) < 0.001 &&
             cleanSKU(p.SKU) === normSku
@@ -1951,7 +1952,7 @@ export default function App() {
           isMatch = 
             p.THUONG_HIEU.trim().toLowerCase() === brand.trim().toLowerCase() &&
             p.TINH_NANG.trim().toLowerCase() === feature.trim().toLowerCase() &&
-            p.CHIET_XUAT.trim() === chietXuat.trim() &&
+            compareChietXuat(p.CHIET_XUAT, chietXuat) &&
             Math.abs(p.CAN - sph) < 0.001 &&
             Math.abs(p.LOAN - cyl) < 0.001 &&
             cleanSKU(p.SKU) === normSku;
@@ -1995,7 +1996,7 @@ export default function App() {
               return (
                 p.THUONG_HIEU.trim().toLowerCase() === brand.trim().toLowerCase() &&
                 p.TINH_NANG.trim().toLowerCase() === feature.trim().toLowerCase() &&
-                p.CHIET_XUAT.trim() === chietXuat.trim() &&
+                compareChietXuat(p.CHIET_XUAT, chietXuat) &&
                 Math.abs(p.CAN - sph) < 0.001 &&
                 Math.abs(p.LOAN - cyl) < 0.001 &&
                 cleanSKU(p.SKU) === normSku

@@ -36,6 +36,7 @@ import {
 import { SanPham } from '../types';
 import { supabase } from '../supabaseClient';
 import { generateSKUString, formatDop, formatSKUForDisplay, cleanSKU, getVietnamDateString, getVietnamDateTimeString } from '../data/mockData';
+import { normalizeChietXuat, compareChietXuat } from '../utils/chietXuatHelper';
 import { resolveEffectiveUserId } from '../supabaseSync';
 
 const escapeRegExp = (str: string): string => {
@@ -448,17 +449,6 @@ export default function OrderParser({
 
     return profiles;
   }, [brandList, sanPhams]);
-
-  // Helper to normalize chiet xuat shorthand (e.g. 156 -> 1.56)
-  const normalizeChietXuat = (val: string): string => {
-    const cleaned = val.trim();
-    if (cleaned === '156') return '1.56';
-    if (cleaned === '160') return '1.60';
-    if (cleaned === '161') return '1.61';
-    if (cleaned === '167') return '1.67';
-    if (cleaned === '174') return '1.74';
-    return cleaned;
-  };
 
   // Preprocessor helpers for multi-line blocks with shared diopter lists
   const isDiopterToken = (t: string): boolean => {

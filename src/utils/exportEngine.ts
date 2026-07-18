@@ -6,6 +6,7 @@
 import { SanPham, NhapXuat, NhapXuatCT } from '../types';
 import { supabase, SUPABASE_STORAGE_BUCKET } from '../supabaseClient';
 import { getVietnamDateString } from '../data/mockData';
+import { compareChietXuat } from './chietXuatHelper';
 
 // Lazy loading helpers for ExcelJS and PDFDocument to minimize RAM/CPU and bundle overhead
 let cachedExcelJS: any = null;
@@ -253,7 +254,7 @@ export function calculateResolvedValues({
 
     const matchBrand = selectedBrandFilter === 'Tất cả' || d.THUONG_HIEU === selectedBrandFilter;
     const matchFeature = selectedFeatureFilter === 'Tất cả' || d.TINH_NANG === selectedFeatureFilter;
-    const matchChietXuat = selectedChietXuatFilter === 'Tất cả' || d.CHIET_XUAT === selectedChietXuatFilter;
+    const matchChietXuat = selectedChietXuatFilter === 'Tất cả' || compareChietXuat(d.CHIET_XUAT, selectedChietXuatFilter);
     const matchSph = salesDbSelectedSph === 'ALL' || d.SPH === salesDbSelectedSph;
     const matchCyl = salesDbSelectedCyl === 'ALL' || d.CYL === salesDbSelectedCyl;
 
@@ -263,7 +264,7 @@ export function calculateResolvedValues({
   const filteredProducts = sanPhams.filter(p => {
     const matchBrand = selectedBrandFilter === 'Tất cả' || p.THUONG_HIEU === selectedBrandFilter;
     const matchFeature = selectedFeatureFilter === 'Tất cả' || p.TINH_NANG === selectedFeatureFilter;
-    const matchChietXuat = selectedChietXuatFilter === 'Tất cả' || p.CHIET_XUAT === selectedChietXuatFilter;
+    const matchChietXuat = selectedChietXuatFilter === 'Tất cả' || compareChietXuat(p.CHIET_XUAT, selectedChietXuatFilter);
     const matchSph = salesDbSelectedSph === 'ALL' || p.CAN === salesDbSelectedSph;
     const matchCyl = salesDbSelectedCyl === 'ALL' || p.LOAN === salesDbSelectedCyl;
 

@@ -4,6 +4,7 @@
  */
 
 import { SanPham, NhapXuat, NhapXuatCT, KiemKho, ThuongHieu, ChiNhanh, NhanVien } from '../types';
+import { normalizeChietXuat } from '../utils/chietXuatHelper';
 
 /**
  * FILE: mockData.ts
@@ -31,9 +32,10 @@ export function generateSphOptions(
   diopterType: 'CẬN' | 'VIỄN' = 'CẬN'
 ): number[] {
   // 1. Tìm bản ghi thương hiệu khớp chính xác nhất
+  const normalizedCX = normalizeChietXuat(chietXuat);
   let matchedBrand = brandList.find(b => 
     b.THUONG_HIEU.trim().toLowerCase() === brandName.trim().toLowerCase() &&
-    b.CHIET_XUAT_MAC_DINH && b.CHIET_XUAT_MAC_DINH.split(',').map(s => s.trim()).includes(chietXuat)
+    b.CHIET_XUAT_MAC_DINH && b.CHIET_XUAT_MAC_DINH.split(',').map(s => normalizeChietXuat(s)).includes(normalizedCX)
   );
   
   if (!matchedBrand) {
@@ -104,7 +106,7 @@ export const generateSKUString = (
   cyl: number
 ): string => {
   const brandPart = (thuongHieu || '').toUpperCase().trim();
-  const chietPart = (chietXuat || '').trim();
+  const chietPart = normalizeChietXuat(chietXuat);
   const tinhPart = (tinhNang || '').trim();
   let sphPart = formatDop(sph);
   if (sphPart.startsWith('+')) {
@@ -155,6 +157,10 @@ export const cleanSKU = (sku: string | undefined | null): string => {
   cleaned = cleaned.replace(/(?:^|\s)\+(\d)/g, (match) => {
     return match.replace('+', '');
   });
+
+  // Chuẩn hóa 1.5 -> 1.50 và 1.6 -> 1.60 trên SKU
+  cleaned = cleaned.replace(/\b1\.5\b/g, '1.50').replace(/\b1\.6\b/g, '1.60');
+
   return cleaned;
 };
 
