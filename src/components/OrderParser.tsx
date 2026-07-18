@@ -498,8 +498,12 @@ export default function OrderParser({
 
   const isQuantitySpecifierLine = (line: string): { quantity: number; unit: string; raw: string } | null => {
     const norm = line.toLowerCase().trim();
-    const p1 = /(?:mỗi độ|moi do|mỗi|moi|each)\s+(\d+)\s*(m|c|cặp|cap|miếng|mieng|pcs|c|x|v)?/i;
-    const p2 = /(\d+)\s*(m|c|cặp|cap|miếng|mieng|pcs|c|x|v)?\s*(?:mỗi độ|moi do|mỗi|moi|each|\/độ|\/do|\/ độ|\/ do)/i;
+    
+    // Pattern 1: [Prefix: mỗi số / mỗi độ / mỗi đôi / mỗi / each] + [Quantity] + [Unit: cặp / đôi / miếng / m / c / pcs]
+    const p1 = /(?:mỗi\s+số|mỗi\s+độ|mỗi\s+đôi|moi\s+so|moi\s+do|moi\s+doi|mỗi|moi|each)\s+(\d+)\s*(cặp|cap|đôi|doi|miếng|mieng|m|c|pcs|x|v)?/i;
+    
+    // Pattern 2: [Quantity] + [Unit: cặp / đôi / miếng / m / c / pcs] + [Suffix: mỗi số / mỗi độ / mỗi đôi / mỗi / each / /độ / /số ...]
+    const p2 = /(\d+)\s*(cặp|cap|đôi|doi|miếng|mieng|m|c|pcs|x|v)?\s*(?:mỗi\s+số|mỗi\s+độ|mỗi\s+đôi|moi\s+so|moi\s+do|moi\s+doi|mỗi|moi|each|\/độ|\/do|\/đôi|\/số|\/do|\/so|\/doi|\/cặp|\/cap)/i;
     
     let match = norm.match(p1);
     if (!match) {
@@ -508,10 +512,11 @@ export default function OrderParser({
     
     if (match) {
       const qty = parseInt(match[1], 10);
-      const suffix = (match[2] || 'miếng').toUpperCase();
+      const suffix = (match[2] || 'miếng').toLowerCase();
       let finalQty = qty;
       let unit = 'miếng';
-      if (suffix === 'C' || suffix === 'CẶP' || suffix === 'CAP') {
+      
+      if (suffix === 'cặp' || suffix === 'cap' || suffix === 'đôi' || suffix === 'doi' || suffix === 'c') {
         finalQty = qty * 2;
       }
       return { quantity: finalQty, unit, raw: match[0] };
@@ -2075,7 +2080,7 @@ export default function OrderParser({
                 </div>
                 
                 <textarea
-                  className="w-full h-80 px-4 py-3 border border-slate-200 rounded-xl font-mono text-xs text-slate-800 focus:outline-hidden focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/50 transition-all leading-relaxed"
+                  className="w-full h-80 px-4 py-3 border border-slate-200 rounded-xl font-mono text-base md:text-xs text-slate-800 focus:outline-hidden focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/50 transition-all leading-relaxed"
                   placeholder="Nhập hoặc dán tin nhắn khách gửi tại đây...&#10;Ví dụ:&#10;HEN ASX 1.56&#10;-050 8M (Tự hiểu -0.50)&#10;-125 9M (Tự hiểu -1.25)&#10;-2,00-0,50 2M (Tự hiểu SPH -2.00, CYL -0.50)"
                   value={message}
                   onChange={(e) => setMessage(e.target.value)}

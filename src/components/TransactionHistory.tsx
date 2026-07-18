@@ -2155,61 +2155,63 @@ export default function TransactionHistory({
             <AnimatePresence>
               {showColumnChooser && (
                 <>
-                  <div className="fixed inset-0 bg-slate-900/40 md:bg-transparent z-30" onClick={() => setShowColumnChooser(false)} />
-                  <motion.div
-                    initial={{ opacity: 0, y: 5 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    exit={{ opacity: 0, y: 5 }}
-                    className="fixed bottom-4 left-4 right-4 md:absolute md:bottom-auto md:top-full md:right-0 md:left-auto md:mt-2 w-auto md:w-64 bg-white border border-slate-150 rounded-2xl md:rounded-xl shadow-2xl md:shadow-lg z-40 p-4 md:p-3 space-y-2 text-xs max-h-[85vh] md:max-h-none overflow-y-auto"
-                  >
-                    <h4 className="font-bold text-slate-700 border-b border-slate-100 pb-2 md:pb-1.5 mb-2 md:mb-1.5 uppercase tracking-wider text-[11px] md:text-[9px] flex justify-between items-center">
-                      <span>Cấu hình cột hiển thị</span>
-                      <span className="hidden md:inline text-[8px] text-slate-400 normal-case font-medium">Bấm ↑ ↓ để xếp lại</span>
-                      <button 
-                        onClick={() => setShowColumnChooser(false)}
-                        className="md:hidden p-1 hover:bg-slate-100 rounded-lg text-slate-400 hover:text-slate-600 font-bold"
-                      >
-                        ✕
-                      </button>
-                    </h4>
-                    <div className="space-y-1.5 max-h-72 overflow-y-auto">
-                      {columnOrder.map((colKey, index) => {
-                        const colDef = colDefinitions[colKey];
-                        if (!colDef) return null;
-                        return (
-                          <div key={colKey} className="flex items-center justify-between p-1.5 md:p-1 hover:bg-slate-50 rounded-lg gap-2 min-h-[40px] md:min-h-0">
-                            <label className="flex items-center gap-2.5 cursor-pointer font-semibold text-slate-600 hover:text-slate-800 grow truncate py-1 md:py-0 select-none">
-                              <input 
-                                type="checkbox" 
-                                checked={visibleColumns[colKey] !== false}
-                                onChange={() => toggleColumnVisibility(colKey)}
-                                className="rounded border-slate-300 text-blue-600 focus:ring-blue-500 w-4 h-4 md:w-3.5 md:h-3.5 cursor-pointer"
-                              />
-                              <span className="truncate text-xs md:text-xs">{colDef.label}</span>
-                            </label>
-                            <div className="flex items-center gap-1 md:gap-0.5 shrink-0">
-                              <button
-                                disabled={index === 0}
-                                onClick={() => handleMoveColumn(index, 'up')}
-                                className="p-2 md:p-1 hover:bg-slate-200 text-slate-500 hover:text-slate-800 disabled:opacity-30 rounded-lg md:rounded transition-all cursor-pointer min-w-[32px] md:min-w-0 flex items-center justify-center font-bold text-xs"
-                                title="Di chuyển lên trước"
-                              >
-                                ▲
-                              </button>
-                              <button
-                                disabled={index === columnOrder.length - 1}
-                                onClick={() => handleMoveColumn(index, 'down')}
-                                className="p-2 md:p-1 hover:bg-slate-200 text-slate-500 hover:text-slate-800 disabled:opacity-30 rounded-lg md:rounded transition-all cursor-pointer min-w-[32px] md:min-w-0 flex items-center justify-center font-bold text-xs"
-                                title="Di chuyển ra sau"
-                              >
-                                ▼
-                              </button>
+                  <div className="fixed inset-0 bg-slate-950/60 backdrop-blur-xs z-[100] md:fixed md:inset-0 md:bg-transparent md:backdrop-blur-none md:z-30" onClick={() => setShowColumnChooser(false)} />
+                  <div className="fixed inset-0 z-[101] flex items-center justify-center p-4 pointer-events-none md:absolute md:inset-auto md:top-full md:right-0 md:left-auto md:mt-2 md:w-64 md:pointer-events-auto md:z-40">
+                    <motion.div
+                      initial={{ opacity: 0, y: 15 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      exit={{ opacity: 0, y: 15 }}
+                      className="bg-white border border-slate-150 rounded-2xl md:rounded-xl shadow-2xl md:shadow-lg p-4 md:p-3 space-y-2 text-xs max-h-[80vh] md:max-h-none overflow-y-auto w-full max-w-sm md:w-64 pointer-events-auto"
+                    >
+                      <h4 className="font-bold text-slate-700 border-b border-slate-100 pb-2 md:pb-1.5 mb-2 md:mb-1.5 uppercase tracking-wider text-[11px] md:text-[9px] flex justify-between items-center">
+                        <span>Cấu hình cột hiển thị</span>
+                        <span className="hidden md:inline text-[8px] text-slate-400 normal-case font-medium">Bấm ↑ ↓ để xếp lại</span>
+                        <button 
+                          onClick={() => setShowColumnChooser(false)}
+                          className="md:hidden p-1 hover:bg-slate-100 rounded-lg text-slate-400 hover:text-slate-600 font-bold"
+                        >
+                          ✕
+                        </button>
+                      </h4>
+                      <div className="space-y-1.5 max-h-72 overflow-y-auto">
+                        {columnOrder.map((colKey, index) => {
+                          const colDef = colDefinitions[colKey];
+                          if (!colDef) return null;
+                          return (
+                            <div key={colKey} className="flex items-center justify-between p-1.5 md:p-1 hover:bg-slate-50 rounded-lg gap-2 min-h-[40px] md:min-h-0">
+                              <label className="flex items-center gap-2.5 cursor-pointer font-semibold text-slate-600 hover:text-slate-800 grow truncate py-1 md:py-0 select-none">
+                                <input 
+                                  type="checkbox" 
+                                  checked={visibleColumns[colKey] !== false}
+                                  onChange={() => toggleColumnVisibility(colKey)}
+                                  className="rounded border-slate-300 text-blue-600 focus:ring-blue-500 w-4 h-4 md:w-3.5 md:h-3.5 cursor-pointer"
+                                />
+                                <span className="truncate text-xs md:text-xs">{colDef.label}</span>
+                              </label>
+                              <div className="flex items-center gap-1 md:gap-0.5 shrink-0">
+                                <button
+                                  disabled={index === 0}
+                                  onClick={() => handleMoveColumn(index, 'up')}
+                                  className="p-2 md:p-1 hover:bg-slate-200 text-slate-500 hover:text-slate-800 disabled:opacity-30 rounded-lg md:rounded transition-all cursor-pointer min-w-[32px] md:min-w-0 flex items-center justify-center font-bold text-xs"
+                                  title="Di chuyển lên trước"
+                                >
+                                  ▲
+                                </button>
+                                <button
+                                  disabled={index === columnOrder.length - 1}
+                                  onClick={() => handleMoveColumn(index, 'down')}
+                                  className="p-2 md:p-1 hover:bg-slate-200 text-slate-500 hover:text-slate-800 disabled:opacity-30 rounded-lg md:rounded transition-all cursor-pointer min-w-[32px] md:min-w-0 flex items-center justify-center font-bold text-xs"
+                                  title="Di chuyển ra sau"
+                                >
+                                  ▼
+                                </button>
+                              </div>
                             </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  </motion.div>
+                          );
+                        })}
+                      </div>
+                    </motion.div>
+                  </div>
                 </>
               )}
             </AnimatePresence>
