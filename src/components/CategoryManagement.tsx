@@ -1878,7 +1878,7 @@ export default function CategoryManagement({
             </div>
             
             <div className="p-4 bg-amber-50/50 border-b border-slate-100 text-[11px] text-amber-800 leading-relaxed">
-              💡 <strong>Hệ thống email tự động:</strong> Quản Lý Kho sử dụng cơ chế ghi log email tập trung trực tiếp lên Supabase Cloud. Mọi thao tác Đăng ký tài khoản mới, Phê duyệt, Từ chối, Khóa tài khoản hoặc Khôi phục mật khẩu đều được tự động ghi nhận và đồng bộ trực quan tại đây để Admin theo dõi vết và hỗ trợ người dùng thuận tiện nhất.
+              💡 <strong>Hệ thống email tự động:</strong> Glass Stock Pro sử dụng cơ chế ghi log email tập trung trực tiếp lên Supabase Cloud. Mọi thao tác Đăng ký tài khoản mới, Phê duyệt, Từ chối, Khóa tài khoản hoặc Khôi phục mật khẩu đều được tự động ghi nhận và đồng bộ trực quan tại đây để Admin theo dõi vết và hỗ trợ người dùng thuận tiện nhất.
             </div>
 
             <div className="overflow-x-auto">

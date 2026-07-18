@@ -217,7 +217,7 @@ export default function Login({ onLoginSuccess, nhanViens = [] }: LoginProps) {
         try {
           const emailDate = new Date().toLocaleString('vi-VN');
           const mailContent = `Chào ${fullName},\n\n` +
-            `Chúc mừng bạn đã đăng ký tài khoản thành công trên hệ thống Quản Lý Kho!\n\n` +
+            `Chúc mừng bạn đã đăng ký tài khoản thành công trên hệ thống Glass Stock Pro!\n\n` +
             `Thông tin tài khoản đăng ký:\n` +
             `- Họ và tên: ${fullName}\n` +
             `- Email liên hệ: ${email}\n` +
@@ -226,7 +226,7 @@ export default function Login({ onLoginSuccess, nhanViens = [] }: LoginProps) {
             `- Trạng thái hiện tại: Chờ duyệt (Pending)\n\n` +
             `Tài khoản của bạn hiện đang chờ Admin phê duyệt và kích hoạt quyền sử dụng hệ thống. Bạn sẽ nhận được email thông báo ngay sau khi tài khoản được phê duyệt.\n\n` +
             `Đường dẫn truy cập ứng dụng: ${window.location.origin}\n\n` +
-            `Trân trọng,\nBan Quản Trị Quản Lý Kho`;
+            `Trân trọng,\nBan Quản Trị Glass Stock Pro`;
             
           await syncEmailLog({
             EMAIL: email,
@@ -467,7 +467,7 @@ export default function Login({ onLoginSuccess, nhanViens = [] }: LoginProps) {
             try {
               const emailDate = new Date().toLocaleString('vi-VN');
               const mailContent = `Chào ${staffMember.HO_TEN || targetUser},\n\n` +
-                `Hệ thống Quản Lý Kho đã nhận được yêu cầu khôi phục mật khẩu cho tài khoản của bạn.\n\n` +
+                `Hệ thống Glass Stock Pro đã nhận được yêu cầu khôi phục mật khẩu cho tài khoản của bạn.\n\n` +
                 `Thông tin yêu cầu:\n` +
                 `- Họ tên: ${staffMember.HO_TEN}\n` +
                 `- Tên đăng nhập: ${staffMember.TEN_DANG_NHAP || targetUser}\n` +
@@ -475,11 +475,11 @@ export default function Login({ onLoginSuccess, nhanViens = [] }: LoginProps) {
                 `- Thời gian yêu cầu: ${emailDate}\n` +
                 `- Trạng thái yêu cầu: Đang chờ Admin xử lý\n\n` +
                 `Yêu cầu của bạn đã được chuyển đến Quản trị viên hệ thống để tiến hành đặt lại mật khẩu. Vui lòng liên hệ trực tiếp với Admin để được cấp mật khẩu mới sớm nhất.\n\n` +
-                `Trân trọng,\nBan Quản Trị Quản Lý Kho`;
+                `Trân trọng,\nBan Quản Trị Glass Stock Pro`;
 
               await syncEmailLog({
                 EMAIL: staffMember.EMAIL || targetUser,
-                TIEU_DE: "Yêu cầu khôi phục mật khẩu tài khoản Quản Lý Kho",
+                TIEU_DE: "Yêu cầu khôi phục mật khẩu tài khoản Glass Stock",
                 NOI_DUNG: mailContent,
                 NGAY_GUI: emailDate,
                 TRANG_THAI: "Thành công",

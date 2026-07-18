@@ -2694,7 +2694,7 @@ export default function App() {
                 // Phê duyệt tài khoản
                 title = "Tài khoản của bạn đã được kích hoạt";
                 mailContent = `Chào ${staff.HO_TEN},\n\n` +
-                  `Chúng tôi vui mừng thông báo rằng yêu cầu đăng ký tài khoản của bạn trên hệ thống Quản lý Xuất Nhập Tồn Tròng Kính Quản Lý Kho đã được Admin phê duyệt kích hoạt thành công!\n\n` +
+                  `Chúng tôi vui mừng thông báo rằng yêu cầu đăng ký tài khoản của bạn trên hệ thống Quản lý Xuất Nhập Tồn Tròng Kính Glass Stock Pro đã được Admin phê duyệt kích hoạt thành công!\n\n` +
                   `Thông tin tài khoản hoạt động:\n` +
                   `- Họ và tên: ${staff.HO_TEN}\n` +
                   `- Tên đăng nhập: ${staff.TEN_DANG_NHAP || staff.EMAIL}\n` +
@@ -2705,32 +2705,32 @@ export default function App() {
                   `Bây giờ bạn có thể đăng nhập vào ứng dụng và sử dụng các tính năng được cấp quyền ngay lập tức.\n\n` +
                   `Đường dẫn đăng nhập hệ thống: ${window.location.origin}\n\n` +
                   `Chúc bạn có một trải nghiệm làm việc hiệu quả!\n\n` +
-                  `Trân trọng,\nBan Quản Trị Quản Lý Kho`;
+                  `Trân trọng,\nBan Quản Trị Glass Stock Pro`;
                 loaiEmail = "Phê duyệt";
               } else if (isPending && isRejected) {
                 // Từ chối tài khoản
                 title = "Yêu cầu đăng ký tài khoản bị từ chối";
                 mailContent = `Chào ${staff.HO_TEN},\n\n` +
-                  `Chúng tôi rất tiếc phải thông báo rằng yêu cầu đăng ký tài khoản của bạn trên hệ thống Quản Lý Kho đã bị từ chối bởi Quản trị viên hệ thống.\n\n` +
+                  `Chúng tôi rất tiếc phải thông báo rằng yêu cầu đăng ký tài khoản của bạn trên hệ thống Glass Stock Pro đã bị từ chối bởi Quản trị viên hệ thống.\n\n` +
                   `Thông tin tài khoản đăng ký:\n` +
                   `- Họ và tên: ${staff.HO_TEN}\n` +
                   `- Tên đăng nhập: ${staff.TEN_DANG_NHAP}\n` +
                   `- Email liên hệ: ${staff.EMAIL}\n` +
                   `- Trạng thái: Bị từ chối (Rejected)\n\n` +
                   `Nếu có bất kỳ thắc mắc nào hoặc muốn biết thêm lý do, vui lòng liên hệ trực tiếp với Quản lý hoặc Admin để được hỗ trợ giải đáp.\n\n` +
-                  `Trân trọng,\nBan Quản Trị Quản Lý Kho`;
+                  `Trân trọng,\nBan Quản Trị Glass Stock Pro`;
                 loaiEmail = "Từ chối";
               } else if (isBlocked) {
                 // Khóa tài khoản
                 title = "Tài khoản của bạn đã bị khóa";
                 mailContent = `Chào ${staff.HO_TEN},\n\n` +
-                  `Chúng tôi thông báo rằng tài khoản của bạn trên hệ thống Quản Lý Kho đã bị KHÓA (Blocked) bởi Ban Quản Trị.\n\n` +
+                  `Chúng tôi thông báo rằng tài khoản của bạn trên hệ thống Glass Stock Pro đã bị KHÓA (Blocked) bởi Ban Quản Trị.\n\n` +
                   `Thông tin chi tiết:\n` +
                   `- Họ và tên: ${staff.HO_TEN}\n` +
                   `- Tên đăng nhập: ${staff.TEN_DANG_NHAP || staff.EMAIL}\n` +
                   `- Trạng thái: Đã bị khóa (Blocked)\n\n` +
                   `Bạn sẽ không thể đăng nhập vào hệ thống kể từ thời điểm này. Nếu đây là một sự nhầm lẫn hoặc cần khôi phục tài khoản, vui lòng liên hệ trực tiếp với Admin hệ thống.\n\n` +
-                  `Trân trọng,\nBan Quản Trị Quản Lý Kho`;
+                  `Trân trọng,\nBan Quản Trị Glass Stock Pro`;
                 loaiEmail = "Khóa tài khoản";
               }
 
@@ -2868,7 +2868,7 @@ export default function App() {
           <span className={`font-sans font-bold text-xs uppercase tracking-wider ${
             themeMode === 'light' ? 'text-slate-900' : 'text-slate-100'
           }`}>
-            Quản Lý Kho
+            Glass Stock Pro
           </span>
           <span className={`h-2 w-2 rounded-full shrink-0 ${isOffline ? 'bg-red-500 animate-pulse' : 'bg-emerald-500 animate-pulse'}`} title={isOffline ? 'Ngoại tuyến' : 'Trực tuyến'} />
         </div>
@@ -2916,7 +2916,7 @@ export default function App() {
             </div>
             <div>
               <h1 className={`font-sans font-bold text-sm uppercase tracking-wider flex items-center gap-1.5 ${sidebarStyle.logoText}`}>
-                Quản Lý Kho
+                Glass Stock Pro
                 <span className="text-[8px] bg-blue-500/20 text-blue-300 font-mono py-0.5 px-1.5 rounded-full uppercase">v4.0</span>
               </h1>
               <p className={`text-[9px] font-mono ${sidebarStyle.subText}`}>Quản Lý Xuất Nhập Tồn Tròng Kính</p>
@@ -2925,7 +2925,7 @@ export default function App() {
 
           {/* Khi thu gọn, hiển thị Logo icon căn giữa */}
           {sidebarCollapsed && (
-            <div className="p-2 rounded-xl shadow-md text-white" style={{ backgroundColor: accentHex }} title="Quản Lý Kho v4.0">
+            <div className="p-2 rounded-xl shadow-md text-white" style={{ backgroundColor: accentHex }} title="Glass Stock Pro v4.0">
               <Boxes className="w-5 h-5" />
             </div>
           )}
@@ -3525,7 +3525,7 @@ export default function App() {
         {/* FOOTER CHUYÊN NGHIỆP */}
         <footer className="footer-theme border-t py-3 text-center text-[10px] shrink-0 font-medium shadow-[0_-1px_3px_rgba(0,0,0,0.02)]">
           <p className="flex items-center justify-center gap-1.5 text-desc-color">
-            <span>© 2026 Quản Lý Kho. Thiết kế & vận hành bởi Nguyễn Kiến Đức.</span>
+            <span>© 2026 Glass Stock Pro. Thiết kế & vận hành bởi Nguyễn Kiến Đức.</span>
             <span className="text-slate-300">|</span>
             <span className="font-mono text-blue-500" style={{ color: 'var(--accent-color)' }}>Cập nhật thời gian thực bằng Google Apps Script & Sheets</span>
           </p>
