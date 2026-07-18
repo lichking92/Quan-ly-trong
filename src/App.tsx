@@ -242,6 +242,12 @@ class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryState> {
   }
 }
 
+// Cooldown / throttle variables for pingSupabase to reduce quota usage and prevent spamming
+const PING_COOLDOWN = 45000; // 45 seconds cooldown
+let lastPingTime = 0;
+let lastPingResult = true;
+let activePingPromise: Promise<boolean> | null = null;
+
 export default function App() {
   monitor.trackRender('App');
   const ignoreRealtimeRef = useRef<boolean>(false);
@@ -396,53 +402,90 @@ export default function App() {
   };
 
   const pingSupabase = async (): Promise<boolean> => {
-    try {
-      const rawUrl = (import.meta as any).env.VITE_SUPABASE_URL || "https://fuyyregblrjugejetunj.supabase.co";
-      const cleanUrl = rawUrl.replace(/\/rest\/v1\/?$/, "").replace(/\/$/, "");
-      const anonKey = (import.meta as any).env.VITE_SUPABASE_ANON_KEY || "sb_publishable_G-1asuq_o55iGIuput1wHA__0wdrGAV";
+    const now = Date.now();
+    if (now - lastPingTime < PING_COOLDOWN) {
+      return lastPingResult;
+    }
+    if (activePingPromise) {
+      return activePingPromise;
+    }
 
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 4000); // 4 seconds timeout
-
+    activePingPromise = (async () => {
       try {
-        const response = await fetch(`${cleanUrl}/rest/v1/`, {
-          method: "GET",
-          signal: controller.signal,
-          headers: {
-            "apikey": anonKey,
-            "Cache-Control": "no-cache"
-          }
-        });
-        clearTimeout(timeoutId);
-        // Any HTTP response (even 4xx/5xx) indicates that we successfully reached the Supabase server
-        return true;
-      } catch (restErr) {
-        clearTimeout(timeoutId);
-        console.warn("[Ping] Thử endpoint /rest/v1/ không thành công, chuyển sang thử /auth/v1/health:", restErr);
-        
-        const backupController = new AbortController();
-        const backupTimeoutId = setTimeout(() => backupController.abort(), 3000);
-        
+        const rawUrl = (import.meta as any).env.VITE_SUPABASE_URL || "https://fuyyregblrjugejetunj.supabase.co";
+        const cleanUrl = rawUrl.replace(/\/rest\/v1\/?$/, "").replace(/\/$/, "");
+        const anonKey = (import.meta as any).env.VITE_SUPABASE_ANON_KEY || "sb_publishable_G-1asuq_o55iGIuput1wHA__0wdrGAV";
+
+        // Verification of URL and Key correctness
+        if (!cleanUrl || !cleanUrl.startsWith('http') || !anonKey) {
+          lastPingResult = false;
+          lastPingTime = Date.now();
+          return false;
+        }
+
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 4000); // 4 seconds timeout
+
         try {
-          const backupResponse = await fetch(`${cleanUrl}/auth/v1/health`, {
+          const response = await fetch(`${cleanUrl}/rest/v1/`, {
             method: "GET",
-            signal: backupController.signal,
+            signal: controller.signal,
             headers: {
+              "apikey": anonKey,
               "Cache-Control": "no-cache"
             }
           });
-          clearTimeout(backupTimeoutId);
-          return true; // Received response from backup endpoint = reachable
-        } catch (authErr) {
-          clearTimeout(backupTimeoutId);
-          console.warn("[Ping] Cả 2 endpoint của Supabase đều thất bại:", authErr);
-          return false;
+          clearTimeout(timeoutId);
+          lastPingResult = true;
+          lastPingTime = Date.now();
+          return true;
+        } catch (restErr) {
+          clearTimeout(timeoutId);
+          
+          const isDebug = typeof window !== 'undefined' && ((window as any).__DEBUG_MODE__ || localStorage.getItem('DEBUG_MODE') === 'true');
+          if (isDebug) {
+            console.warn("[Ping] Thử endpoint /rest/v1/ không thành công, chuyển sang thử /auth/v1/health:", restErr);
+          }
+          
+          const backupController = new AbortController();
+          const backupTimeoutId = setTimeout(() => backupController.abort(), 3000);
+          
+          try {
+            const backupResponse = await fetch(`${cleanUrl}/auth/v1/health`, {
+              method: "GET",
+              signal: backupController.signal,
+              headers: {
+                "Cache-Control": "no-cache"
+              }
+            });
+            clearTimeout(backupTimeoutId);
+            lastPingResult = true;
+            lastPingTime = Date.now();
+            return true; // Received response from backup endpoint = reachable
+          } catch (authErr) {
+            clearTimeout(backupTimeoutId);
+            if (isDebug) {
+              console.warn("[Ping] Cả 2 endpoint của Supabase đều thất bại:", authErr);
+            }
+            lastPingResult = false;
+            lastPingTime = Date.now();
+            return false;
+          }
         }
+      } catch (err) {
+        const isDebug = typeof window !== 'undefined' && ((window as any).__DEBUG_MODE__ || localStorage.getItem('DEBUG_MODE') === 'true');
+        if (isDebug) {
+          console.warn("Lỗi tổng quát trong pingSupabase:", err);
+        }
+        lastPingResult = false;
+        lastPingTime = Date.now();
+        return false;
+      } finally {
+        activePingPromise = null;
       }
-    } catch (err) {
-      console.warn("Lỗi tổng quát trong pingSupabase:", err);
-      return false;
-    }
+    })();
+
+    return activePingPromise;
   };
 
   const forceLogout = () => {
@@ -567,15 +610,19 @@ export default function App() {
     return false;
   };
 
-  // Định kỳ kiểm tra kết nối Supabase thực tế mỗi 10 giây
+  // Định kỳ kiểm tra kết nối Supabase thực tế mỗi 45 giây
   useEffect(() => {
+    const isDebug = typeof window !== 'undefined' && ((window as any).__DEBUG_MODE__ || localStorage.getItem('DEBUG_MODE') === 'true');
+
     const checkConnection = async () => {
       const isNetOffline = typeof window !== 'undefined' && window.navigator && !window.navigator.onLine;
       if (isNetOffline) {
         if (consecutiveFailuresRef.current < 5) {
           consecutiveFailuresRef.current = 5;
-          console.warn("[Health Check] Mất kết nối mạng thiết bị (navigator.onLine === false).");
-          console.warn("Health Check #5 failed => OFFLINE");
+          if (isDebug) {
+            console.warn("[Health Check] Mất kết nối mạng thiết bị (navigator.onLine === false).");
+            console.warn("Health Check #5 failed => OFFLINE");
+          }
           setIsOffline(true);
         }
         return;
@@ -584,16 +631,22 @@ export default function App() {
       const online = await pingSupabase();
       if (online) {
         if (consecutiveFailuresRef.current > 0 || isOfflineRef.current) {
-          console.log("[Health Check] Kết nối thành công! Đã xóa bộ đếm thất bại. => SYSTEM GOING ONLINE");
+          if (isDebug) {
+            console.log("[Health Check] Kết nối thành công! Đã xóa bộ đếm thất bại. => SYSTEM GOING ONLINE");
+          }
         }
         consecutiveFailuresRef.current = 0;
         setIsOffline(false);
       } else {
         consecutiveFailuresRef.current += 1;
-        console.warn(`Health Check #${consecutiveFailuresRef.current} failed`);
+        if (isDebug) {
+          console.warn(`Health Check #${consecutiveFailuresRef.current} failed`);
+        }
         if (consecutiveFailuresRef.current >= 5) {
           if (!isOfflineRef.current) {
-            console.error("=> OFFLINE (Lý do: Không thể truy cập Supabase Health Check sau 5 lần kiểm tra liên tiếp)");
+            if (isDebug) {
+              console.error("=> OFFLINE (Lý do: Không thể truy cập Supabase Health Check sau 5 lần kiểm tra liên tiếp)");
+            }
             setIsOffline(true);
           }
         }
@@ -603,23 +656,31 @@ export default function App() {
     // Chạy kiểm tra ngay khi mount
     checkConnection();
 
-    const interval = setInterval(checkConnection, 10000); // 10 giây một lần
+    const interval = setInterval(checkConnection, 45000); // 45 giây một lần
 
     const handleOnline = async () => {
-      console.log("[Network Event] Thiết bị báo Online trở lại. Đang thực hiện kiểm tra kết nối Supabase...");
+      if (isDebug) {
+        console.log("[Network Event] Thiết bị báo Online trở lại. Đang thực hiện kiểm tra kết nối Supabase...");
+      }
       const online = await pingSupabase();
       if (online) {
-        console.log("[Network Event] Kết nối Supabase thành công! Chuyển sang Trực tuyến.");
+        if (isDebug) {
+          console.log("[Network Event] Kết nối Supabase thành công! Chuyển sang Trực tuyến.");
+        }
         consecutiveFailuresRef.current = 0;
         setIsOffline(false);
       } else {
         consecutiveFailuresRef.current = 1;
-        console.warn("Health Check #1 failed (Sau Network Event Online)");
+        if (isDebug) {
+          console.warn("Health Check #1 failed (Sau Network Event Online)");
+        }
       }
     };
 
     const handleOffline = () => {
-      console.warn("[Network Event] Thiết bị báo Ngoại tuyến (Mất mạng hoàn toàn). Chuyển sang chế độ Ngoại tuyến ngay.");
+      if (isDebug) {
+        console.warn("[Network Event] Thiết bị báo Ngoại tuyến (Mất mạng hoàn toàn). Chuyển sang chế độ Ngoại tuyến ngay.");
+      }
       consecutiveFailuresRef.current = 5;
       setIsOffline(true);
     };
@@ -2633,7 +2694,7 @@ export default function App() {
                 // Phê duyệt tài khoản
                 title = "Tài khoản của bạn đã được kích hoạt";
                 mailContent = `Chào ${staff.HO_TEN},\n\n` +
-                  `Chúng tôi vui mừng thông báo rằng yêu cầu đăng ký tài khoản của bạn trên hệ thống Quản lý Xuất Nhập Tồn Tròng Kính Glass Stock Pro đã được Admin phê duyệt kích hoạt thành công!\n\n` +
+                  `Chúng tôi vui mừng thông báo rằng yêu cầu đăng ký tài khoản của bạn trên hệ thống Quản lý Xuất Nhập Tồn Tròng Kính Quản Lý Kho đã được Admin phê duyệt kích hoạt thành công!\n\n` +
                   `Thông tin tài khoản hoạt động:\n` +
                   `- Họ và tên: ${staff.HO_TEN}\n` +
                   `- Tên đăng nhập: ${staff.TEN_DANG_NHAP || staff.EMAIL}\n` +
@@ -2644,32 +2705,32 @@ export default function App() {
                   `Bây giờ bạn có thể đăng nhập vào ứng dụng và sử dụng các tính năng được cấp quyền ngay lập tức.\n\n` +
                   `Đường dẫn đăng nhập hệ thống: ${window.location.origin}\n\n` +
                   `Chúc bạn có một trải nghiệm làm việc hiệu quả!\n\n` +
-                  `Trân trọng,\nBan Quản Trị Glass Stock Pro`;
+                  `Trân trọng,\nBan Quản Trị Quản Lý Kho`;
                 loaiEmail = "Phê duyệt";
               } else if (isPending && isRejected) {
                 // Từ chối tài khoản
                 title = "Yêu cầu đăng ký tài khoản bị từ chối";
                 mailContent = `Chào ${staff.HO_TEN},\n\n` +
-                  `Chúng tôi rất tiếc phải thông báo rằng yêu cầu đăng ký tài khoản của bạn trên hệ thống Glass Stock Pro đã bị từ chối bởi Quản trị viên hệ thống.\n\n` +
+                  `Chúng tôi rất tiếc phải thông báo rằng yêu cầu đăng ký tài khoản của bạn trên hệ thống Quản Lý Kho đã bị từ chối bởi Quản trị viên hệ thống.\n\n` +
                   `Thông tin tài khoản đăng ký:\n` +
                   `- Họ và tên: ${staff.HO_TEN}\n` +
                   `- Tên đăng nhập: ${staff.TEN_DANG_NHAP}\n` +
                   `- Email liên hệ: ${staff.EMAIL}\n` +
                   `- Trạng thái: Bị từ chối (Rejected)\n\n` +
                   `Nếu có bất kỳ thắc mắc nào hoặc muốn biết thêm lý do, vui lòng liên hệ trực tiếp với Quản lý hoặc Admin để được hỗ trợ giải đáp.\n\n` +
-                  `Trân trọng,\nBan Quản Trị Glass Stock Pro`;
+                  `Trân trọng,\nBan Quản Trị Quản Lý Kho`;
                 loaiEmail = "Từ chối";
               } else if (isBlocked) {
                 // Khóa tài khoản
                 title = "Tài khoản của bạn đã bị khóa";
                 mailContent = `Chào ${staff.HO_TEN},\n\n` +
-                  `Chúng tôi thông báo rằng tài khoản của bạn trên hệ thống Glass Stock Pro đã bị KHÓA (Blocked) bởi Ban Quản Trị.\n\n` +
+                  `Chúng tôi thông báo rằng tài khoản của bạn trên hệ thống Quản Lý Kho đã bị KHÓA (Blocked) bởi Ban Quản Trị.\n\n` +
                   `Thông tin chi tiết:\n` +
                   `- Họ và tên: ${staff.HO_TEN}\n` +
                   `- Tên đăng nhập: ${staff.TEN_DANG_NHAP || staff.EMAIL}\n` +
                   `- Trạng thái: Đã bị khóa (Blocked)\n\n` +
                   `Bạn sẽ không thể đăng nhập vào hệ thống kể từ thời điểm này. Nếu đây là một sự nhầm lẫn hoặc cần khôi phục tài khoản, vui lòng liên hệ trực tiếp với Admin hệ thống.\n\n` +
-                  `Trân trọng,\nBan Quản Trị Glass Stock Pro`;
+                  `Trân trọng,\nBan Quản Trị Quản Lý Kho`;
                 loaiEmail = "Khóa tài khoản";
               }
 
@@ -2807,7 +2868,7 @@ export default function App() {
           <span className={`font-sans font-bold text-xs uppercase tracking-wider ${
             themeMode === 'light' ? 'text-slate-900' : 'text-slate-100'
           }`}>
-            Glass Stock Pro
+            Quản Lý Kho
           </span>
           <span className={`h-2 w-2 rounded-full shrink-0 ${isOffline ? 'bg-red-500 animate-pulse' : 'bg-emerald-500 animate-pulse'}`} title={isOffline ? 'Ngoại tuyến' : 'Trực tuyến'} />
         </div>
@@ -2855,7 +2916,7 @@ export default function App() {
             </div>
             <div>
               <h1 className={`font-sans font-bold text-sm uppercase tracking-wider flex items-center gap-1.5 ${sidebarStyle.logoText}`}>
-                Glass Stock Pro
+                Quản Lý Kho
                 <span className="text-[8px] bg-blue-500/20 text-blue-300 font-mono py-0.5 px-1.5 rounded-full uppercase">v4.0</span>
               </h1>
               <p className={`text-[9px] font-mono ${sidebarStyle.subText}`}>Quản Lý Xuất Nhập Tồn Tròng Kính</p>
@@ -2864,7 +2925,7 @@ export default function App() {
 
           {/* Khi thu gọn, hiển thị Logo icon căn giữa */}
           {sidebarCollapsed && (
-            <div className="p-2 rounded-xl shadow-md text-white" style={{ backgroundColor: accentHex }} title="Glass Stock Pro v4.0">
+            <div className="p-2 rounded-xl shadow-md text-white" style={{ backgroundColor: accentHex }} title="Quản Lý Kho v4.0">
               <Boxes className="w-5 h-5" />
             </div>
           )}
@@ -3464,7 +3525,7 @@ export default function App() {
         {/* FOOTER CHUYÊN NGHIỆP */}
         <footer className="footer-theme border-t py-3 text-center text-[10px] shrink-0 font-medium shadow-[0_-1px_3px_rgba(0,0,0,0.02)]">
           <p className="flex items-center justify-center gap-1.5 text-desc-color">
-            <span>© 2026 Glass Stock Pro. Thiết kế & vận hành bởi Nguyễn Kiến Đức.</span>
+            <span>© 2026 Quản Lý Kho. Thiết kế & vận hành bởi Nguyễn Kiến Đức.</span>
             <span className="text-slate-300">|</span>
             <span className="font-mono text-blue-500" style={{ color: 'var(--accent-color)' }}>Cập nhật thời gian thực bằng Google Apps Script & Sheets</span>
           </p>

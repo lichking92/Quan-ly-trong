@@ -37,13 +37,19 @@ export const syncTimeWithSupabase = async () => {
       // Ước lượng thời gian của server lúc phản hồi đến: serverTime + RTT / 2
       const adjustedServerTime = serverTime + Math.floor(rtt / 2);
       timeOffset = adjustedServerTime - endTime;
-      console.log(`[Time Sync] Đã đồng bộ thời gian thành công! Lệch thời gian (Offset): ${timeOffset}ms, RTT: ${rtt}ms`);
+      
+      const isDebug = typeof window !== 'undefined' && (window.__DEBUG_MODE__ || localStorage.getItem('DEBUG_MODE') === 'true');
+      if (isDebug) {
+        console.log(`[Time Sync] Đã đồng bộ thời gian thành công! Lệch thời gian (Offset): ${timeOffset}ms, RTT: ${rtt}ms`);
+      }
     }
   } catch (error) {
-    console.warn("[Time Sync] Cảnh báo khi đồng bộ thời gian với Supabase server, sử dụng fallback:", error);
-    // Nếu bị lỗi mạng hoặc chặn CORS, tự động thiết lập một offset nhỏ an toàn là +5000ms 
-    // phòng hờ trường hợp giờ máy client chạy chậm hơn server làm lỗi token.
-    timeOffset = 5000;
+    const isDebug = typeof window !== 'undefined' && (window.__DEBUG_MODE__ || localStorage.getItem('DEBUG_MODE') === 'true');
+    if (isDebug) {
+      console.warn("[Time Sync] Cảnh báo khi đồng bộ thời gian với Supabase server, sử dụng fallback:", error);
+    }
+    // Fallback im lặng dùng giờ local (timeOffset = 0)
+    timeOffset = 0;
   }
 };
 
