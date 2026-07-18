@@ -1,4 +1,4 @@
-import { supabase } from './supabaseClient';
+import { supabase, SUPABASE_STORAGE_BUCKET } from './supabaseClient';
 import { SanPham, NhapXuat, NhapXuatCT, KiemKho, ThuongHieu, ChiNhanh, NhanVien, EmailLog, Role, safeParseArray } from './types';
 
 export let isOfflineMode = false;
@@ -602,7 +602,7 @@ export async function tryCreateColumnsOnSupabase() {
 }
 
 /**
- * Đảm bảo Bucket lưu trữ 'user_luutru' đã tồn tại và được phân quyền công khai trên Supabase Storage
+ * Đảm bảo Bucket lưu trữ đã tồn tại và được phân quyền công khai trên Supabase Storage
  */
 export async function ensureStorageBucketExists() {
   if (isOfflineMode) return;
@@ -615,12 +615,12 @@ export async function ensureStorageBucketExists() {
   const sql = `
     DO $$
     BEGIN
-      -- Tạo bucket 'user_luutru' nếu chưa có trong table storage.buckets
+      -- Tạo bucket '${SUPABASE_STORAGE_BUCKET}' nếu chưa có trong table storage.buckets
       BEGIN
         INSERT INTO storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
         VALUES (
-          'user_luutru', 
-          'user_luutru', 
+          '${SUPABASE_STORAGE_BUCKET}', 
+          '${SUPABASE_STORAGE_BUCKET}', 
           true, 
           10485760, 
           '{"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "application/pdf"}'
@@ -632,36 +632,36 @@ export async function ensureStorageBucketExists() {
       -- Tạo các policy cho phép public truy cập và đăng tải
       BEGIN
         IF NOT EXISTS (
-          SELECT 1 FROM pg_policies WHERE tablename = 'objects' AND schemaname = 'storage' AND policyname = 'Allow public select'
+          SELECT 1 FROM pg_policies WHERE tablename = 'objects' AND schemaname = 'storage' AND policyname = 'Allow public select (${SUPABASE_STORAGE_BUCKET})'
         ) THEN
-          CREATE POLICY "Allow public select" ON storage.objects FOR SELECT USING (bucket_id = 'user_luutru');
+          CREATE POLICY "Allow public select (${SUPABASE_STORAGE_BUCKET})" ON storage.objects FOR SELECT USING (bucket_id = '${SUPABASE_STORAGE_BUCKET}');
         END IF;
       EXCEPTION WHEN others THEN NULL;
       END;
 
       BEGIN
         IF NOT EXISTS (
-          SELECT 1 FROM pg_policies WHERE tablename = 'objects' AND schemaname = 'storage' AND policyname = 'Allow public insert'
+          SELECT 1 FROM pg_policies WHERE tablename = 'objects' AND schemaname = 'storage' AND policyname = 'Allow public insert (${SUPABASE_STORAGE_BUCKET})'
         ) THEN
-          CREATE POLICY "Allow public insert" ON storage.objects FOR INSERT WITH CHECK (bucket_id = 'user_luutru');
+          CREATE POLICY "Allow public insert (${SUPABASE_STORAGE_BUCKET})" ON storage.objects FOR INSERT WITH CHECK (bucket_id = '${SUPABASE_STORAGE_BUCKET}');
         END IF;
       EXCEPTION WHEN others THEN NULL;
       END;
 
       BEGIN
         IF NOT EXISTS (
-          SELECT 1 FROM pg_policies WHERE tablename = 'objects' AND schemaname = 'storage' AND policyname = 'Allow public update'
+          SELECT 1 FROM pg_policies WHERE tablename = 'objects' AND schemaname = 'storage' AND policyname = 'Allow public update (${SUPABASE_STORAGE_BUCKET})'
         ) THEN
-          CREATE POLICY "Allow public update" ON storage.objects FOR UPDATE USING (bucket_id = 'user_luutru');
+          CREATE POLICY "Allow public update (${SUPABASE_STORAGE_BUCKET})" ON storage.objects FOR UPDATE USING (bucket_id = '${SUPABASE_STORAGE_BUCKET}');
         END IF;
       EXCEPTION WHEN others THEN NULL;
       END;
 
       BEGIN
         IF NOT EXISTS (
-          SELECT 1 FROM pg_policies WHERE tablename = 'objects' AND schemaname = 'storage' AND policyname = 'Allow public delete'
+          SELECT 1 FROM pg_policies WHERE tablename = 'objects' AND schemaname = 'storage' AND policyname = 'Allow public delete (${SUPABASE_STORAGE_BUCKET})'
         ) THEN
-          CREATE POLICY "Allow public delete" ON storage.objects FOR DELETE USING (bucket_id = 'user_luutru');
+          CREATE POLICY "Allow public delete (${SUPABASE_STORAGE_BUCKET})" ON storage.objects FOR DELETE USING (bucket_id = '${SUPABASE_STORAGE_BUCKET}');
         END IF;
       EXCEPTION WHEN others THEN NULL;
       END;
@@ -671,7 +671,7 @@ export async function ensureStorageBucketExists() {
   try {
     const { error: err1 } = await supabase.rpc('exec_sql', { sql });
     if (!err1) {
-      console.log("[Storage] Đã cấu hình khởi tạo và phân quyền cho bucket 'user_luutru' thành công via exec_sql.");
+      console.log(`[Storage] Đã cấu hình khởi tạo và phân quyền cho bucket '${SUPABASE_STORAGE_BUCKET}' thành công via exec_sql.`);
       return;
     }
   } catch (e) {}
@@ -679,18 +679,18 @@ export async function ensureStorageBucketExists() {
   try {
     const { error: err2 } = await supabase.rpc('run_sql', { sql_string: sql });
     if (!err2) {
-      console.log("[Storage] Đã cấu hình khởi tạo và phân quyền cho bucket 'user_luutru' thành công via run_sql.");
+      console.log(`[Storage] Đã cấu hình khởi tạo và phân quyền cho bucket '${SUPABASE_STORAGE_BUCKET}' thành công via run_sql.`);
       return;
     }
   } catch (e) {}
 
   try {
-    const { error: err3 } = await supabase.storage.createBucket('user_luutru', {
+    const { error: err3 } = await supabase.storage.createBucket(SUPABASE_STORAGE_BUCKET, {
       public: true,
       fileSizeLimit: 10485760 // 10MB
     });
     if (!err3) {
-      console.log("[Storage] Đã tạo hoặc xác nhận bucket 'user_luutru' thành công qua JS Storage API.");
+      console.log(`[Storage] Đã tạo hoặc xác nhận bucket '${SUPABASE_STORAGE_BUCKET}' thành công qua JS Storage API.`);
     }
   } catch (e) {}
 }
@@ -1899,22 +1899,22 @@ export async function syncExportTemplate(t: any, userId?: string) {
         }
         const blob = new Blob([bytes], { type: t.type === 'EXCEL' ? 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' : 'application/pdf' });
         
-        // Upload file lên Supabase Storage bucket 'user_luutru'
+        // Upload file lên Supabase Storage bucket
         let { data: uploadData, error: uploadError } = await supabase.storage
-          .from('user_luutru')
+          .from(SUPABASE_STORAGE_BUCKET)
           .upload(path, blob, {
             cacheControl: '3600',
             upsert: true
           });
           
         if (uploadError && (uploadError.message?.includes('Bucket not found') || (uploadError as any).error === 'Bucket not found')) {
-          console.log(`[Storage] Bucket 'user_luutru' chưa tồn tại. Đang tiến hành tự động khởi tạo bằng SQL...`);
+          console.log(`[Storage] Bucket '${SUPABASE_STORAGE_BUCKET}' chưa tồn tại. Đang tiến hành tự động khởi tạo bằng SQL...`);
           try {
             await ensureStorageBucketExists();
             
             console.log(`[Storage] Đã chạy lệnh khởi tạo bucket bằng SQL. Đang thử upload lại...`);
             const retryResult = await supabase.storage
-              .from('user_luutru')
+              .from(SUPABASE_STORAGE_BUCKET)
               .upload(path, blob, {
                 cacheControl: '3600',
                 upsert: true
@@ -1922,20 +1922,20 @@ export async function syncExportTemplate(t: any, userId?: string) {
             uploadData = retryResult.data;
             uploadError = retryResult.error;
           } catch (createEx) {
-            console.warn(`[Storage] Exception khi khởi tạo bucket 'user_luutru':`, createEx);
+            console.warn(`[Storage] Exception khi khởi tạo bucket '${SUPABASE_STORAGE_BUCKET}':`, createEx);
           }
         }
           
         if (uploadError) {
-          console.warn("Lỗi upload file mẫu lên Supabase Storage 'user_luutru':", uploadError.message);
+          console.warn(`Lỗi upload file mẫu lên Supabase Storage '${SUPABASE_STORAGE_BUCKET}':`, uploadError.message);
           console.log("[Storage] Tự động chuyển sang chế độ dự phòng: lưu trữ dữ liệu Base64 trực tiếp vào cơ sở dữ liệu.");
           // Fallback: Giữ nguyên fileDataValue là chuỗi Base64 để lưu vào database column
         } else {
-          console.log(`[Storage] Đã đồng bộ file lên bucket 'user_luutru' tại đường dẫn: ${path}`);
-          fileDataValue = `STORAGE_PATH:user_luutru/${path}`;
+          console.log(`[Storage] Đã đồng bộ file lên bucket '${SUPABASE_STORAGE_BUCKET}' tại đường dẫn: ${path}`);
+          fileDataValue = `STORAGE_PATH:${SUPABASE_STORAGE_BUCKET}/${path}`;
         }
       } catch (err) {
-        console.warn("Exception khi upload file lên Supabase Storage 'user_luutru':", err);
+        console.warn(`Exception khi upload file lên Supabase Storage '${SUPABASE_STORAGE_BUCKET}':`, err);
       }
     }
 

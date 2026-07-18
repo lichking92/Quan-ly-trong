@@ -6,11 +6,18 @@ import { createClient } from "@supabase/supabase-js";
 // Tự động làm sạch URL nếu người dùng vô tình dán thêm hậu tố "/rest/v1/".
 // =========================================================================
 
-const rawUrl = import.meta.env.VITE_SUPABASE_URL || "https://fuyyregblrjugejetunj.supabase.co";
-const cleanUrl = rawUrl.replace(/\/rest\/v1\/?$/, "").replace(/\/$/, "");
+const rawUrl = import.meta.env.VITE_SUPABASE_URL || "";
+const cleanUrl = rawUrl ? rawUrl.replace(/\/rest\/v1\/?$/, "").replace(/\/$/, "") : "";
 
 const SUPABASE_URL = cleanUrl;
-const SUPABASE_PUBLIC_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY || "sb_publishable_G-1asuq_o55iGIuput1wHA__0wdrGAV";
+const SUPABASE_PUBLIC_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY || "";
+export const SUPABASE_STORAGE_BUCKET = import.meta.env.VITE_STORAGE_BUCKET || "user_luutru";
+
+if (!SUPABASE_URL || !SUPABASE_PUBLIC_KEY) {
+  console.error(
+    "⚠️ [Supabase Config Alert] Thiếu biến môi trường VITE_SUPABASE_URL hoặc VITE_SUPABASE_ANON_KEY. Vui lòng cấu hình đầy đủ trong file .env hoặc Settings."
+  );
+}
 
 // -------------------------------------------------------------------------
 // ĐỒNG BỘ THỜI GIAN ĐỂ FIX LỖI "JWT issued at future" (CLOCK SKEW CORRECTION)

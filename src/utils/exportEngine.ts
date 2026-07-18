@@ -4,7 +4,7 @@
  */
 
 import { SanPham, NhapXuat, NhapXuatCT } from '../types';
-import { supabase } from '../supabaseClient';
+import { supabase, SUPABASE_STORAGE_BUCKET } from '../supabaseClient';
 import { getVietnamDateString } from '../data/mockData';
 
 // Lazy loading helpers for ExcelJS and PDFDocument to minimize RAM/CPU and bundle overhead
@@ -47,14 +47,18 @@ export async function fetchTemplateFileData(templateId: string): Promise<string>
       
       // If the file resides in the Supabase Storage Bucket, fetch it
       if (fileData.startsWith('STORAGE_PATH:')) {
-        const pathSuffix = fileData.substring('STORAGE_PATH:user_luutru/'.length);
-        console.log(`[Storage] Phát hiện file mẫu lưu trữ tại Storage. Tiến hành tải từ bucket 'user_luutru' tại đường dẫn: ${pathSuffix}`);
+        let pathSuffix = fileData.substring('STORAGE_PATH:'.length);
+        const slashIdx = pathSuffix.indexOf('/');
+        if (slashIdx !== -1) {
+          pathSuffix = pathSuffix.substring(slashIdx + 1);
+        }
+        console.log(`[Storage] Phát hiện file mẫu lưu trữ tại Storage. Tiến hành tải từ bucket '${SUPABASE_STORAGE_BUCKET}' tại đường dẫn: ${pathSuffix}`);
         const { data: blob, error: dlError } = await supabase.storage
-          .from('user_luutru')
+          .from(SUPABASE_STORAGE_BUCKET)
           .download(pathSuffix);
           
         if (dlError) {
-          console.warn(`Lỗi tải file mẫu từ Storage 'user_luutru':`, dlError.message);
+          console.warn(`Lỗi tải file mẫu từ Storage '${SUPABASE_STORAGE_BUCKET}':`, dlError.message);
         } else if (blob) {
           const arrBuf = await blob.arrayBuffer();
           fileData = arrayBufferToBase64(arrBuf);

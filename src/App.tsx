@@ -412,9 +412,9 @@ export default function App() {
 
     activePingPromise = (async () => {
       try {
-        const rawUrl = (import.meta as any).env.VITE_SUPABASE_URL || "https://fuyyregblrjugejetunj.supabase.co";
-        const cleanUrl = rawUrl.replace(/\/rest\/v1\/?$/, "").replace(/\/$/, "");
-        const anonKey = (import.meta as any).env.VITE_SUPABASE_ANON_KEY || "sb_publishable_G-1asuq_o55iGIuput1wHA__0wdrGAV";
+        const rawUrl = (import.meta as any).env.VITE_SUPABASE_URL || "";
+        const cleanUrl = rawUrl ? rawUrl.replace(/\/rest\/v1\/?$/, "").replace(/\/$/, "") : "";
+        const anonKey = (import.meta as any).env.VITE_SUPABASE_ANON_KEY || "";
 
         // Verification of URL and Key correctness
         if (!cleanUrl || !cleanUrl.startsWith('http') || !anonKey) {

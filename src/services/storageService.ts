@@ -1,8 +1,8 @@
-import { supabase } from '../supabaseClient';
+import { supabase, SUPABASE_STORAGE_BUCKET } from '../supabaseClient';
 import { ensureStorageBucketExists } from '../supabaseSync';
 
 /**
- * Tải file mẫu lên Supabase Storage bucket 'user_luutru'
+ * Tải file mẫu lên Supabase Storage bucket
  * @param file Đối tượng File, Blob hoặc ArrayBuffer cần tải lên
  * @param path Đường dẫn lưu trữ (ví dụ: 'user_id/template_id' hoặc tên file)
  * @param mimeType Định dạng của file (ví dụ: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet)
@@ -23,7 +23,7 @@ export async function uploadTemplate(
     }
 
     const { data, error } = await supabase.storage
-      .from('user_luutru')
+      .from(SUPABASE_STORAGE_BUCKET)
       .upload(path, body, {
         cacheControl: '3600',
         upsert: true
@@ -33,30 +33,36 @@ export async function uploadTemplate(
       throw error;
     }
 
-    console.log(`[Storage Service] Upload thành công file lên bucket 'user_luutru' tại đường dẫn: ${path}`);
+    console.log(`[Storage Service] Upload thành công file lên bucket '${SUPABASE_STORAGE_BUCKET}' tại đường dẫn: ${path}`);
     return { data, error: null };
   } catch (error: any) {
-    console.warn('[Storage Service] Lỗi khi upload template lên user_luutru:', error);
+    console.warn(`[Storage Service] Lỗi khi upload template lên ${SUPABASE_STORAGE_BUCKET}:`, error);
     return { data: null, error };
   }
 }
 
 /**
- * Lấy URL công khai để tải về hoặc xem trực tuyến file mẫu từ bucket 'user_luutru'
- * @param path Đường dẫn của file trong bucket hoặc dạng 'STORAGE_PATH:user_luutru/path'
+ * Lấy URL công khai để tải về hoặc xem trực tuyến file mẫu từ bucket
+ * @param path Đường dẫn của file trong bucket hoặc dạng 'STORAGE_PATH:bucket_name/path'
  */
 export function getTemplateUrl(path: string): string {
   if (!path) return '';
   
-  // Nếu path chứa định dạng STORAGE_PATH:user_luutru/...
+  // Nếu path chứa định dạng STORAGE_PATH:bucket_name/...
   let cleanPath = path;
   if (path.startsWith('STORAGE_PATH:')) {
-    cleanPath = path.substring('STORAGE_PATH:user_luutru/'.length);
+    const withoutPrefix = path.substring('STORAGE_PATH:'.length);
+    const slashIdx = withoutPrefix.indexOf('/');
+    if (slashIdx !== -1) {
+      cleanPath = withoutPrefix.substring(slashIdx + 1);
+    } else {
+      cleanPath = withoutPrefix;
+    }
   }
 
-  // Trả về public URL từ Supabase Storage cho bucket 'user_luutru'
+  // Trả về public URL từ Supabase Storage cho bucket
   const { data } = supabase.storage
-    .from('user_luutru')
+    .from(SUPABASE_STORAGE_BUCKET)
     .getPublicUrl(cleanPath);
 
   return data?.publicUrl || '';
