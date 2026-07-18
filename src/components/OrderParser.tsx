@@ -791,9 +791,11 @@ export default function OrderParser({
         let resolvedChiet = foundChiet;
         let resolvedFeat = foundFeat;
 
-        // Try to resolve/deduce missing fields from the newly matched Brand's Profile
-        if (foundBrand) {
-          const profile = brandProfiles[foundBrand.toUpperCase()];
+        const activeBrandToResolve = foundBrand || activeFallbackBrand || '';
+
+        // Try to resolve/deduce missing fields from the newly matched Brand's Profile or Fallback Brand
+        if (activeBrandToResolve) {
+          const profile = brandProfiles[activeBrandToResolve.toUpperCase()];
           if (profile) {
             // Auto-deduce chiết suất if the brand has only one unique chiết suất
             if (!resolvedChiet) {
@@ -808,7 +810,7 @@ export default function OrderParser({
           // Secondary fallback: check in sanPhams for any sample product of this brand
           if (!resolvedChiet || !resolvedFeat) {
             const matchedProdSample = sanPhams.find(p => 
-              (p.THUONG_HIEU || '').toUpperCase().trim() === foundBrand.toUpperCase().trim()
+              (p.THUONG_HIEU || '').toUpperCase().trim() === activeBrandToResolve.toUpperCase().trim()
             );
             if (matchedProdSample) {
               if (!resolvedChiet) resolvedChiet = matchedProdSample.CHIET_XUAT || '';
@@ -817,7 +819,7 @@ export default function OrderParser({
           }
         }
 
-        currentBrand = foundBrand;
+        currentBrand = activeBrandToResolve;
         currentChietXuat = resolvedChiet;
         currentFeature = resolvedFeat;
 
