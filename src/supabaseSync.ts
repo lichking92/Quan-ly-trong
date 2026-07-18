@@ -3,6 +3,7 @@ import { SanPham, NhapXuat, NhapXuatCT, KiemKho, ThuongHieu, ChiNhanh, NhanVien,
 
 export let isOfflineMode = false;
 export let hasCreatedColumns = false;
+export const memoryCache: Record<string, any[]> = {};
 
 export function setOfflineMode(value: boolean) {
   isOfflineMode = value;
@@ -803,15 +804,7 @@ export async function ensureUserOnboarded(userId: string): Promise<UserDataPaylo
 
     if (!rolesErr && (!dbRoles || dbRoles.length === 0)) {
       console.log('Bảng b_role trống trên Supabase, tiến hành seed các vai trò...');
-      const localRolesStr = localStorage.getItem('B_ROLE');
-      let rolesToSeed = [];
-      if (localRolesStr) {
-        try {
-          rolesToSeed = JSON.parse(localRolesStr);
-        } catch {
-          // bỏ qua
-        }
-      }
+      let rolesToSeed = memoryCache['B_ROLE'] || [];
       if (!rolesToSeed || rolesToSeed.length === 0) {
         rolesToSeed = [
           {
@@ -858,13 +851,7 @@ export async function fetchAllRows(tableName: string, userId: string): Promise<a
   const cacheKey = tableName.toUpperCase(); // e.g. B_SANPHAM, B_NHAPXUAT
 
   if (isOfflineMode) {
-    const cached = localStorage.getItem(cacheKey);
-    if (cached) {
-      try {
-        return JSON.parse(cached);
-      } catch {}
-    }
-    return [];
+    return memoryCache[cacheKey] || [];
   }
 
   let allData: any[] = [];
@@ -877,19 +864,14 @@ export async function fetchAllRows(tableName: string, userId: string): Promise<a
       const { data, error } = await supabase
         .from(tableName)
         .select('*')
-        .eq('user_id', userId)
+        .in('user_id', [userId, '00000000-0000-0000-0000-000000000000'])
         .range(from, from + pageSize - 1);
 
       if (error) {
         logDbError(`Lỗi fetchAllRows từ ${tableName}:`, error);
         if (isNetworkError(error)) {
-          console.warn(`[Database] Đang sử dụng dữ liệu Cache từ localStorage cho bảng ${tableName} do lỗi mạng.`);
-          const cached = localStorage.getItem(cacheKey);
-          if (cached) {
-            try {
-              return JSON.parse(cached);
-            } catch {}
-          }
+          console.warn(`[Database] Đang sử dụng dữ liệu Cache từ Memory Cache cho bảng ${tableName} do lỗi mạng.`);
+          return memoryCache[cacheKey] || [];
         }
         break;
       }
@@ -907,17 +889,14 @@ export async function fetchAllRows(tableName: string, userId: string): Promise<a
     } catch (err) {
       logDbError(`Lỗi ngoại lệ fetchAllRows từ ${tableName}:`, err);
       if (isNetworkError(err)) {
-        console.warn(`[Database] Đang sử dụng dữ liệu Cache từ localStorage cho bảng ${tableName} do ngoại lệ lỗi mạng.`);
-        const cached = localStorage.getItem(cacheKey);
-        if (cached) {
-          try {
-            return JSON.parse(cached);
-          } catch {}
-        }
+        console.warn(`[Database] Đang sử dụng dữ liệu Cache từ Memory Cache cho bảng ${tableName} do ngoại lệ lỗi mạng.`);
+        return memoryCache[cacheKey] || [];
       }
       break;
     }
   }
+
+  memoryCache[cacheKey] = allData;
   return allData;
 }
 
@@ -928,12 +907,7 @@ export async function fetchAllUserData(userId: string): Promise<UserDataPayload>
   userId = await resolveEffectiveUserId();
 
   const getCached = (key: string): any[] => {
-    try {
-      const cached = localStorage.getItem(key);
-      return cached ? JSON.parse(cached) : [];
-    } catch {
-      return [];
-    }
+    return memoryCache[key] || [];
   };
 
   if (isOfflineMode) {
@@ -964,11 +938,11 @@ export async function fetchAllUserData(userId: string): Promise<UserDataPayload>
       fetchAllRows('b_sanpham', userId),
       fetchAllRows('b_nhapxuat', userId),
       fetchAllRows('b_nhapxuatct', userId),
-      supabase.from('b_kiemkho').select('*').eq('user_id', userId),
-      supabase.from('b_thuonghieu').select('*').eq('user_id', userId),
-      supabase.from('b_chinhanh').select('*').eq('user_id', userId),
-      supabase.from('b_nhanvien').select('*').eq('user_id', userId),
-      supabase.from('b_role').select('*').eq('user_id', userId).then(
+      supabase.from('b_kiemkho').select('*').in('user_id', [userId, '00000000-0000-0000-0000-000000000000']),
+      supabase.from('b_thuonghieu').select('*').in('user_id', [userId, '00000000-0000-0000-0000-000000000000']),
+      supabase.from('b_chinhanh').select('*').in('user_id', [userId, '00000000-0000-0000-0000-000000000000']),
+      supabase.from('b_nhanvien').select('*').in('user_id', [userId, '00000000-0000-0000-0000-000000000000']),
+      supabase.from('b_role').select('*').in('user_id', [userId, '00000000-0000-0000-0000-000000000000']).then(
         r => r,
         err => ({ data: null, error: err })
       )
@@ -1118,11 +1092,30 @@ export async function fetchAllUserData(userId: string): Promise<UserDataPayload>
     ROLES: safeParseArray(item.ROLES)
   }));
 
-  const roles: Role[] = (resRoles?.data || []).map((item: any) => ({
+  // Deduplicate roles by ROLE_CODE, prioritizing user-specific ones
+  const roleMap: Record<string, any> = {};
+  (resRoles?.data || []).forEach((item: any) => {
+    const code = (item.ROLE_CODE || '').trim().toUpperCase();
+    const isGlobal = item.user_id === '00000000-0000-0000-0000-000000000000';
+    if (!roleMap[code] || !isGlobal) {
+      roleMap[code] = item;
+    }
+  });
+  const roles: Role[] = Object.values(roleMap).map((item: any) => ({
     ROLE_CODE: item.ROLE_CODE,
     TEN_ROLE: item.TEN_ROLE,
     PERMISSIONS: safeParseArray(item.PERMISSIONS)
   }));
+
+  // Cache in-memory
+  memoryCache['B_SANPHAM'] = sanPhams;
+  memoryCache['B_NHAPXUAT'] = nhapXuats;
+  memoryCache['B_NHAPXUATCT'] = nhapXuatCTs;
+  memoryCache['B_KIEMKHO'] = kiemKhos;
+  memoryCache['B_THUONGHIEU'] = thuongHieus;
+  memoryCache['B_CHINHANH'] = chiNhanhs;
+  memoryCache['B_NHANVIEN'] = nhanViens;
+  memoryCache['B_ROLE'] = roles;
 
   return {
     sanPhams,
@@ -1822,18 +1815,17 @@ export async function syncEmailLog(log: EmailLog, userId: string) {
     user_id: userId
   };
 
-  // 1. Lưu vào localStorage trước để đảm bảo dữ liệu không bị mất
+  // 1. Lưu vào memoryCache trước để đảm bảo dữ liệu không bị mất
   try {
-    const saved = localStorage.getItem('B_EMAILLOG');
-    const logs: EmailLog[] = saved ? JSON.parse(saved) : [];
+    const logs: EmailLog[] = memoryCache['B_EMAILLOG'] || [];
     
     // Tránh trùng lặp
     if (!logs.some(l => l.id === localLog.id || (l.EMAIL === localLog.EMAIL && l.TIEU_DE === localLog.TIEU_DE && l.NGAY_GUI === localLog.NGAY_GUI))) {
-      logs.unshift(localLog);
-      localStorage.setItem('B_EMAILLOG', JSON.stringify(logs.slice(0, 300))); // Lưu tối đa 300 dòng nhật ký
+      const nextLogs = [localLog, ...logs];
+      memoryCache['B_EMAILLOG'] = nextLogs.slice(0, 300); // Lưu tối đa 300 dòng nhật ký
     }
   } catch (err) {
-    console.warn("Lỗi lưu email log vào localStorage:", err);
+    console.warn("Lỗi lưu email log vào memoryCache:", err);
   }
   
   console.log(`[EMAIL SENDING] Gửi email đến: ${log.EMAIL} | Tiêu đề: ${log.TIEU_DE}`);
@@ -1856,7 +1848,7 @@ export async function syncEmailLog(log: EmailLog, userId: string) {
                              res.error.message?.includes('b_emaillog') || 
                              res.error.message?.includes('schema cache');
       if (isMissingTable) {
-        console.log(`[EMAIL LOG] Bảng b_emaillog gặp lỗi trên Supabase khi gửi email (Chi tiết: ${res.error.message}, Code: ${res.error.code}). Sử dụng LocalStorage làm fallback.`);
+        console.log(`[EMAIL LOG] Bảng b_emaillog gặp lỗi trên Supabase khi gửi email (Chi tiết: ${res.error.message}, Code: ${res.error.code}). Sử dụng MemoryCache làm fallback.`);
       } else {
         console.warn("Lỗi syncEmailLog lên Supabase (sử dụng lưu trữ cục bộ fallback):", res.error.message);
       }
@@ -1875,15 +1867,7 @@ export async function fetchEmailLogs(userId: string): Promise<EmailLog[]> {
   userId = await resolveEffectiveUserId();
 
   // Đọc danh sách cục bộ dự phòng trước
-  let localLogs: EmailLog[] = [];
-  try {
-    const saved = localStorage.getItem('B_EMAILLOG');
-    if (saved) {
-      localLogs = JSON.parse(saved);
-    }
-  } catch (err) {
-    console.warn("Lỗi đọc email logs từ localStorage:", err);
-  }
+  let localLogs: EmailLog[] = memoryCache['B_EMAILLOG'] || [];
   
   try {
     const { data, error } = await supabase
@@ -1899,7 +1883,7 @@ export async function fetchEmailLogs(userId: string): Promise<EmailLog[]> {
                              error.message?.includes('b_emaillog') || 
                              error.message?.includes('schema cache');
       if (isMissingTable) {
-        console.log(`[EMAIL LOG] Bảng b_emaillog gặp lỗi hoặc chưa sẵn sàng trên Supabase (Chi tiết: ${error.message}, Code: ${error.code}). Hệ thống tự động kích hoạt chế độ lưu trữ cục bộ LocalStorage.`);
+        console.log(`[EMAIL LOG] Bảng b_emaillog gặp lỗi hoặc chưa sẵn sàng trên Supabase (Chi tiết: ${error.message}, Code: ${error.code}). Hệ thống tự động kích hoạt chế độ lưu trữ cục bộ MemoryCache.`);
       } else {
         console.warn("Lỗi fetchEmailLogs từ Supabase:", error.message);
       }
@@ -1908,11 +1892,7 @@ export async function fetchEmailLogs(userId: string): Promise<EmailLog[]> {
     
     // Nếu có dữ liệu từ Supabase, cập nhật ngược lại cache cục bộ để đảm bảo đồng nhất
     if (data) {
-      try {
-        localStorage.setItem('B_EMAILLOG', JSON.stringify(data));
-      } catch (err) {
-        console.warn("Lỗi lưu cache email logs:", err);
-      }
+      memoryCache['B_EMAILLOG'] = data;
       return data;
     }
   } catch (err: any) {

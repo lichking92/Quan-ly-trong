@@ -176,7 +176,7 @@ const isUserActive = (statusStr: string | null | undefined): boolean => {
 
 const resolvePermissions = (
   roleStr: string | null | undefined,
-  employeeDirectPermissions: any,
+  employeeDirectPermissions: any, // Ignored: b_nhanvien.PERMISSIONS is NOT used for checking permissions anymore.
   dbRoles: any[]
 ): { permissions: string[], roleName: string } => {
   const upperRole = (roleStr || '').trim().toUpperCase();
@@ -187,47 +187,19 @@ const resolvePermissions = (
   let rolePermissions: string[] = [];
   let roleName = '';
   
-  const parsePermissions = (perms: any): string[] => {
-    if (Array.isArray(perms)) return perms;
-    if (typeof perms === 'string') {
-      try {
-        return JSON.parse(perms || '[]');
-      } catch {
-        return perms.split(',').map((p: string) => p.trim()).filter(Boolean);
-      }
-    }
-    return [];
-  };
-
   if (matchedRole) {
-    rolePermissions = parsePermissions(matchedRole.PERMISSIONS);
+    rolePermissions = safeParseArray(matchedRole.PERMISSIONS);
     roleName = matchedRole.TEN_ROLE || '';
   } else {
-    // Fallback: map 'KHO' to 'MANAGER' and 'NHAN_VIEN' to 'STAFF' for backward compatibility
-    let mappedRoleCode = upperRole;
-    if (upperRole === 'KHO' || upperRole === 'MANAGER') mappedRoleCode = 'MANAGER';
-    if (upperRole === 'NHAN_VIEN' || upperRole === 'STAFF' || upperRole === 'USER') mappedRoleCode = 'STAFF';
-    
-    // Check if we have the mapped code in b_role first
-    matchedRole = dbRoles.find(r => (r.ROLE_CODE || '').trim().toUpperCase() === mappedRoleCode);
-    if (matchedRole) {
-      rolePermissions = parsePermissions(matchedRole.PERMISSIONS);
-      roleName = matchedRole.TEN_ROLE || '';
-    } else {
-      // Fallback to DEFAULT_ROLES
-      const fallback = DEFAULT_ROLES.find(r => r.ROLE_CODE === mappedRoleCode) || 
-                       DEFAULT_ROLES.find(r => r.ROLE_CODE === upperRole);
-      if (fallback) {
-        rolePermissions = fallback.PERMISSIONS;
-        roleName = fallback.TEN_ROLE;
-      }
+    // Fallback directly to DEFAULT_ROLES
+    const fallback = DEFAULT_ROLES.find(r => r.ROLE_CODE === upperRole);
+    if (fallback) {
+      rolePermissions = fallback.PERMISSIONS;
+      roleName = fallback.TEN_ROLE;
     }
   }
   
-  // Parse direct permissions from b_nhanvien if any
-  const directPerms = parsePermissions(employeeDirectPermissions);
-  const combined = Array.from(new Set([...rolePermissions, ...directPerms]));
-  return { permissions: combined, roleName: roleName || upperRole };
+  return { permissions: rolePermissions, roleName: roleName || upperRole };
 };
 
 const deduplicateProducts = (products: SanPham[]): SanPham[] => {
@@ -317,46 +289,15 @@ export default function App() {
   const lastSyncTimeRef = useRef<number>(0);
   const realtimeDebounceTimerRef = useRef<any>(null);
 
-  // --- 1. KHỞI TẠO STATE CƠ SỞ DỮ LIỆU ĐỒNG BỘ LOCALSTORAGE ---
-  const [sanPhams, setSanPhams] = useState<SanPham[]>(() => {
-    const saved = localStorage.getItem('B_SANPHAM');
-    return saved ? deduplicateProducts(JSON.parse(saved)) : [];
-  });
-
-  const [nhapXuats, setNhapXuats] = useState<NhapXuat[]>(() => {
-    const saved = localStorage.getItem('B_NHAPXUAT');
-    return saved ? JSON.parse(saved) : [];
-  });
-
-  const [nhapXuatCTs, setNhapXuatCTs] = useState<NhapXuatCT[]>(() => {
-    const saved = localStorage.getItem('B_NHAPXUATCT');
-    return saved ? JSON.parse(saved) : [];
-  });
-
-  const [kiemKhos, setKiemKhos] = useState<KiemKho[]>(() => {
-    const saved = localStorage.getItem('B_KIEMKHO');
-    return saved ? JSON.parse(saved) : [];
-  });
-
-  const [thuongHieus, setThuongHieus] = useState<ThuongHieu[]>(() => {
-    const saved = localStorage.getItem('B_THUONGHIEU');
-    return saved ? JSON.parse(saved) : [];
-  });
-
-  const [chiNhanhs, setChiNhanhs] = useState<ChiNhanh[]>(() => {
-    const saved = localStorage.getItem('B_CHINHANH');
-    return saved ? JSON.parse(saved) : [];
-  });
-
-  const [nhanViens, setNhanViens] = useState<NhanVien[]>(() => {
-    const saved = localStorage.getItem('B_NHANVIEN');
-    return saved ? JSON.parse(saved) : [];
-  });
-
-  const [emailLogs, setEmailLogs] = useState<EmailLog[]>(() => {
-    const saved = localStorage.getItem('B_EMAILLOG');
-    return saved ? JSON.parse(saved) : [];
-  });
+  // --- 1. KHỞI TẠO STATE CƠ SỞ DỮ LIỆU ĐỒNG BỘ ---
+  const [sanPhams, setSanPhams] = useState<SanPham[]>([]);
+  const [nhapXuats, setNhapXuats] = useState<NhapXuat[]>([]);
+  const [nhapXuatCTs, setNhapXuatCTs] = useState<NhapXuatCT[]>([]);
+  const [kiemKhos, setKiemKhos] = useState<KiemKho[]>([]);
+  const [thuongHieus, setThuongHieus] = useState<ThuongHieu[]>([]);
+  const [chiNhanhs, setChiNhanhs] = useState<ChiNhanh[]>([]);
+  const [nhanViens, setNhanViens] = useState<NhanVien[]>([]);
+  const [emailLogs, setEmailLogs] = useState<EmailLog[]>([]);
 
   const [loadingDb, setLoadingDb] = useState<boolean>(false);
 
@@ -367,21 +308,69 @@ export default function App() {
   });
 
   // --- 2B. QUẢN LÝ VAI TRÒ & QUYỀN HẠN (RBAC) ---
-  const [roles, setRoles] = useState<Role[]>(() => {
-    const saved = localStorage.getItem('B_ROLE');
-    if (saved) {
-      try {
-        return JSON.parse(saved);
-      } catch {
-        return DEFAULT_ROLES;
-      }
-    }
-    return DEFAULT_ROLES;
-  });
+  const [roles, setRoles] = useState<Role[]>(DEFAULT_ROLES);
 
+  // Declarative effect: Automatically re-evaluate and update currentUser's permissions and role info when roles or nhanViens change
   useEffect(() => {
-    localStorage.setItem('B_ROLE', JSON.stringify(roles));
-  }, [roles]);
+    if (!currentUser) return;
+    
+    // Find latest staff info for current user
+    const latestStaff = nhanViens.find(n => 
+      (n.MA_NV || '').trim().toLowerCase() === (currentUser.id || '').trim().toLowerCase() ||
+      (n.TEN_DANG_NHAP || '').trim().toLowerCase() === (currentUser.username || '').trim().toLowerCase() ||
+      (n.EMAIL || '').trim().toLowerCase() === (currentUser.username || '').trim().toLowerCase()
+    );
+
+    const activeRole = latestStaff ? latestStaff.ROLE : currentUser.role;
+    
+    const { permissions: combinedPermissions, roleName } = resolvePermissions(
+      activeRole || currentUser.role,
+      latestStaff ? latestStaff.PERMISSIONS : undefined,
+      roles
+    );
+
+    const hasWritePermission = combinedPermissions.some(p => p.includes('.create') || p.includes('.edit') || p.includes('.delete'));
+    const resolvedWriteAccess = latestStaff ? (latestStaff.WRITE_ACCESS !== false || hasWritePermission) : (currentUser.writeAccess !== false || hasWritePermission);
+
+    // Deep compare permissions and properties to avoid infinite loops
+    const hasChanged = 
+      JSON.stringify(currentUser.permissions) !== JSON.stringify(combinedPermissions) ||
+      currentUser.roleName !== roleName ||
+      currentUser.writeAccess !== resolvedWriteAccess ||
+      (latestStaff && (
+        currentUser.TRANG_THAI !== latestStaff.TRANG_THAI ||
+        currentUser.role !== latestStaff.ROLE
+      ));
+
+    if (hasChanged) {
+      console.log("[RBAC Sync] Phát hiện thay đổi vai trò hoặc quyền hạn. Tiến hành cập nhật currentUser...");
+      
+      // If user status changed to inactive, force logout
+      if (latestStaff) {
+        const isActive = isUserActive(latestStaff.TRANG_THAI);
+        if (!isActive) {
+          console.warn("[RBAC Sync] Tài khoản đã bị khóa hoặc không hoạt động. Đang đăng xuất...");
+          forceLogout();
+          return;
+        }
+      }
+
+      const updatedUser: User = {
+        ...currentUser,
+        role: activeRole || currentUser.role,
+        ROLE: activeRole || currentUser.role,
+        roleName: roleName,
+        writeAccess: resolvedWriteAccess,
+        WRITE_ACCESS: resolvedWriteAccess,
+        permissions: combinedPermissions,
+        TRANG_THAI: latestStaff ? latestStaff.TRANG_THAI : currentUser.TRANG_THAI,
+        ROLES: latestStaff ? (latestStaff.ROLES || [latestStaff.ROLE]) : currentUser.ROLES
+      };
+
+      setCurrentUser(updatedUser);
+      localStorage.setItem('CURRENT_USER', JSON.stringify(updatedUser));
+    }
+  }, [roles, nhanViens]);
 
   const hasPermission = useCallback((permissionCode: string): boolean => {
     if (!currentUser) return false;
@@ -422,6 +411,7 @@ export default function App() {
   });
   const isOfflineRef = useRef<boolean>(isOffline);
   const wasOfflineRef = useRef<boolean>(isOffline);
+  const setupRealtimeRef = useRef<((userId: string) => void) | null>(null);
   const consecutiveFailuresRef = useRef<number>(0);
 
   const setIsOffline = (val: boolean) => {
@@ -617,6 +607,9 @@ export default function App() {
         roles
       );
 
+      const hasWritePermission = combinedPermissions.some(p => p.includes('.create') || p.includes('.edit') || p.includes('.delete'));
+      const finalWriteAccess = staffMember.WRITE_ACCESS !== false || hasWritePermission;
+
       const updatedUser: User = {
         username: staffMember.TEN_DANG_NHAP || staffMember.EMAIL || staffMember.HO_TEN,
         fullName: staffMember.HO_TEN,
@@ -625,8 +618,8 @@ export default function App() {
         roleName: roleName,
         active: isActive,
         branch: staffMember.CHI_NHANH || 'Kho Trung Tâm',
-        writeAccess: staffMember.WRITE_ACCESS !== false,
-        WRITE_ACCESS: staffMember.WRITE_ACCESS !== false,
+        writeAccess: finalWriteAccess,
+        WRITE_ACCESS: finalWriteAccess,
         id: staffMember.MA_NV,
         email: staffMember.EMAIL,
         ROLES: staffMember.ROLES || [staffMember.ROLE],
@@ -793,7 +786,8 @@ export default function App() {
     setIsSyncing(true);
     setOfflineMode(false);
     try {
-      await syncAllDataFromSupabase(currentUser.id, currentUser.username);
+      const ownerId = localStorage.getItem('DB_OWNER_USER_ID') || SHARED_USER_ID;
+      await syncAllDataFromSupabase(ownerId, currentUser.username);
       setSuccessToast({ 
         message: "Đồng bộ dữ liệu trực tuyến thành công!", 
         type: "success", 
@@ -871,23 +865,12 @@ export default function App() {
       setNhanViens(payload.nhanViens);
       if (payload.roles && payload.roles.length > 0) {
         setRoles(payload.roles);
-        localStorage.setItem('B_ROLE', JSON.stringify(payload.roles));
       }
-
-      // Lưu trữ đồng bộ tức thì vào LocalStorage để đảm bảo tính sẵn sàng
-      localStorage.setItem('B_SANPHAM', JSON.stringify(uniqueProducts));
-      localStorage.setItem('B_NHAPXUAT', JSON.stringify(mergedNhapXuats));
-      localStorage.setItem('B_NHAPXUATCT', JSON.stringify(mergedNhapXuatCTs));
-      localStorage.setItem('B_KIEMKHO', JSON.stringify(payload.kiemKhos));
-      localStorage.setItem('B_THUONGHIEU', JSON.stringify(payload.thuongHieus));
-      localStorage.setItem('B_CHINHANH', JSON.stringify(payload.chiNhanhs));
-      localStorage.setItem('B_NHANVIEN', JSON.stringify(payload.nhanViens));
 
       // Tải và đồng bộ Nhật ký email gửi đi
       try {
         const logs = await fetchEmailLogs(userId);
         setEmailLogs(logs);
-        localStorage.setItem('B_EMAILLOG', JSON.stringify(logs));
       } catch (mailErr) {
         console.warn("Lỗi tải lịch sử email log từ Supabase:", mailErr);
       }
@@ -920,6 +903,9 @@ export default function App() {
                 payload.roles || roles || []
               );
 
+              const hasWritePermission = combinedPermissions.some(p => p.includes('.create') || p.includes('.edit') || p.includes('.delete'));
+              const finalWriteAccess = latestStaff.WRITE_ACCESS !== false || hasWritePermission;
+
               const u: User = {
                 username: latestStaff.TEN_DANG_NHAP || latestStaff.EMAIL || latestStaff.HO_TEN,
                 fullName: latestStaff.HO_TEN,
@@ -927,8 +913,8 @@ export default function App() {
                 ROLE: latestStaff.ROLE || 'NHAN_VIEN',
                 roleName: roleName,
                 branch: latestStaff.CHI_NHANH || 'Kho Trung Tâm',
-                writeAccess: latestStaff.WRITE_ACCESS !== false,
-                WRITE_ACCESS: latestStaff.WRITE_ACCESS !== false,
+                writeAccess: finalWriteAccess,
+                WRITE_ACCESS: finalWriteAccess,
                 id: latestStaff.MA_NV,
                 email: latestStaff.EMAIL,
                 ROLES: latestStaff.ROLES || [latestStaff.ROLE],
@@ -967,7 +953,8 @@ export default function App() {
     if (!isOffline && wasOfflineRef.current) {
       console.log("Phát hiện có kết nối trở lại! Tự động đồng bộ mới nhất từ Supabase Cloud...");
       if (currentUser && currentUser.id) {
-        syncAllDataFromSupabase(currentUser.id, currentUser.username);
+        const ownerId = localStorage.getItem('DB_OWNER_USER_ID') || SHARED_USER_ID;
+        syncAllDataFromSupabase(ownerId, currentUser.username);
       }
     }
     wasOfflineRef.current = isOffline;
@@ -993,11 +980,7 @@ export default function App() {
           if (eventType === 'DELETE') {
             const skuToDelete = oldRow?.SKU;
             if (skuToDelete) {
-              setSanPhams(prev => {
-                const next = prev.filter(p => p.SKU !== skuToDelete);
-                localStorage.setItem('B_SANPHAM', JSON.stringify(next));
-                return next;
-              });
+              setSanPhams(prev => prev.filter(p => p.SKU !== skuToDelete));
             }
           } else if (newRow) {
             // INSERT or UPDATE
@@ -1025,9 +1008,7 @@ export default function App() {
               } else {
                 next = [mappedItem, ...prev];
               }
-              next = deduplicateProducts(next);
-              localStorage.setItem('B_SANPHAM', JSON.stringify(next));
-              return next;
+              return deduplicateProducts(next);
             });
           }
           break;
@@ -1037,11 +1018,7 @@ export default function App() {
           if (eventType === 'DELETE') {
             const hoaDonToDelete = oldRow?.HOA_DON;
             if (hoaDonToDelete) {
-              setNhapXuats(prev => {
-                const next = prev.filter(nx => nx.HOA_DON !== hoaDonToDelete);
-                localStorage.setItem('B_NHAPXUAT', JSON.stringify(next));
-                return next;
-              });
+              setNhapXuats(prev => prev.filter(nx => nx.HOA_DON !== hoaDonToDelete));
             }
           } else if (newRow) {
             // INSERT or UPDATE
@@ -1061,15 +1038,13 @@ export default function App() {
             };
             setNhapXuats(prev => {
               const index = prev.findIndex(nx => nx.HOA_DON === mappedItem.HOA_DON);
-              let next;
               if (index !== -1) {
-                next = [...prev];
+                const next = [...prev];
                 next[index] = mappedItem;
+                return next;
               } else {
-                next = [mappedItem, ...prev];
+                return [mappedItem, ...prev];
               }
-              localStorage.setItem('B_NHAPXUAT', JSON.stringify(next));
-              return next;
             });
           }
           break;
@@ -1079,11 +1054,7 @@ export default function App() {
           if (eventType === 'DELETE') {
             const idToDelete = oldRow?.id !== undefined ? oldRow.id : oldRow?.ID;
             if (idToDelete !== undefined) {
-              setNhapXuatCTs(prev => {
-                const next = prev.filter(d => d.ID !== idToDelete);
-                localStorage.setItem('B_NHAPXUATCT', JSON.stringify(next));
-                return next;
-              });
+              setNhapXuatCTs(prev => prev.filter(d => d.ID !== idToDelete));
             }
           } else if (newRow) {
             // INSERT or UPDATE
@@ -1106,15 +1077,13 @@ export default function App() {
             };
             setNhapXuatCTs(prev => {
               const index = prev.findIndex(d => d.ID === mappedItem.ID);
-              let next;
               if (index !== -1) {
-                next = [...prev];
+                const next = [...prev];
                 next[index] = mappedItem;
+                return next;
               } else {
-                next = [mappedItem, ...prev];
+                return [mappedItem, ...prev];
               }
-              localStorage.setItem('B_NHAPXUATCT', JSON.stringify(next));
-              return next;
             });
           }
           break;
@@ -1123,11 +1092,7 @@ export default function App() {
         case 'b_kiemkho': {
           if (eventType === 'DELETE') {
             const keyMap = (oldRow?.MA_PHIEU || '') + '_' + (oldRow?.SKU || '');
-            setKiemKhos(prev => {
-              const next = prev.filter(kk => ((kk.MA_PHIEU || '') + '_' + (kk.SKU || '')) !== keyMap);
-              localStorage.setItem('B_KIEMKHO', JSON.stringify(next));
-              return next;
-            });
+            setKiemKhos(prev => prev.filter(kk => ((kk.MA_PHIEU || '') + '_' + (kk.SKU || '')) !== keyMap));
           } else if (newRow) {
             // INSERT or UPDATE
             const mappedItem: KiemKho = {
@@ -1143,15 +1108,13 @@ export default function App() {
             setKiemKhos(prev => {
               const keyMap = (mappedItem.MA_PHIEU || '') + '_' + (mappedItem.SKU || '');
               const index = prev.findIndex(kk => ((kk.MA_PHIEU || '') + '_' + (kk.SKU || '')) === keyMap);
-              let next;
               if (index !== -1) {
-                next = [...prev];
+                const next = [...prev];
                 next[index] = mappedItem;
+                return next;
               } else {
-                next = [mappedItem, ...prev];
+                return [mappedItem, ...prev];
               }
-              localStorage.setItem('B_KIEMKHO', JSON.stringify(next));
-              return next;
             });
           }
           break;
@@ -1161,11 +1124,7 @@ export default function App() {
           if (eventType === 'DELETE') {
             const brandToDelete = oldRow?.THUONG_HIEU;
             if (brandToDelete) {
-              setThuongHieus(prev => {
-                const next = prev.filter(th => th.THUONG_HIEU !== brandToDelete);
-                localStorage.setItem('B_THUONGHIEU', JSON.stringify(next));
-                return next;
-              });
+              setThuongHieus(prev => prev.filter(th => th.THUONG_HIEU !== brandToDelete));
             }
           } else if (newRow) {
             // INSERT or UPDATE
@@ -1182,15 +1141,13 @@ export default function App() {
             };
             setThuongHieus(prev => {
               const index = prev.findIndex(th => th.THUONG_HIEU === mappedItem.THUONG_HIEU);
-              let next;
               if (index !== -1) {
-                next = [...prev];
+                const next = [...prev];
                 next[index] = mappedItem;
+                return next;
               } else {
-                next = [mappedItem, ...prev];
+                return [mappedItem, ...prev];
               }
-              localStorage.setItem('B_THUONGHIEU', JSON.stringify(next));
-              return next;
             });
           }
           break;
@@ -1200,11 +1157,7 @@ export default function App() {
           if (eventType === 'DELETE') {
             const branchToDelete = oldRow?.CHI_NHANH;
             if (branchToDelete) {
-              setChiNhanhs(prev => {
-                const next = prev.filter(cn => cn.CHI_NHANH !== branchToDelete);
-                localStorage.setItem('B_CHINHANH', JSON.stringify(next));
-                return next;
-              });
+              setChiNhanhs(prev => prev.filter(cn => cn.CHI_NHANH !== branchToDelete));
             }
           } else if (newRow) {
             // INSERT or UPDATE
@@ -1215,15 +1168,13 @@ export default function App() {
             };
             setChiNhanhs(prev => {
               const index = prev.findIndex(cn => cn.CHI_NHANH === mappedItem.CHI_NHANH);
-              let next;
               if (index !== -1) {
-                next = [...prev];
+                const next = [...prev];
                 next[index] = mappedItem;
+                return next;
               } else {
-                next = [mappedItem, ...prev];
+                return [mappedItem, ...prev];
               }
-              localStorage.setItem('B_CHINHANH', JSON.stringify(next));
-              return next;
             });
           }
           break;
@@ -1233,11 +1184,7 @@ export default function App() {
           if (eventType === 'DELETE') {
             const staffToDelete = oldRow?.MA_NV;
             if (staffToDelete) {
-              setNhanViens(prev => {
-                const next = prev.filter(nv => nv.MA_NV !== staffToDelete);
-                localStorage.setItem('B_NHANVIEN', JSON.stringify(next));
-                return next;
-              });
+              setNhanViens(prev => prev.filter(nv => nv.MA_NV !== staffToDelete));
             }
           } else if (newRow) {
             // INSERT or UPDATE
@@ -1260,15 +1207,13 @@ export default function App() {
             };
             setNhanViens(prev => {
               const index = prev.findIndex(nv => nv.MA_NV === mappedItem.MA_NV);
-              let next;
               if (index !== -1) {
-                next = [...prev];
+                const next = [...prev];
                 next[index] = mappedItem;
+                return next;
               } else {
-                next = [mappedItem, ...prev];
+                return [mappedItem, ...prev];
               }
-              localStorage.setItem('B_NHANVIEN', JSON.stringify(next));
-              return next;
             });
 
             // Cập nhật thông tin CURRENT_USER nếu khớp tài khoản đang đăng nhập
@@ -1287,11 +1232,14 @@ export default function App() {
                     if (!isActive) {
                       handleLogout();
                     } else {
-                      const { permissions: combinedPermissions, roleName } = resolvePermissions(
+                       const { permissions: combinedPermissions, roleName } = resolvePermissions(
                         mappedItem.ROLE,
                         mappedItem.PERMISSIONS,
                         roles
                       );
+
+                      const hasWritePermission = combinedPermissions.some(p => p.includes('.create') || p.includes('.edit') || p.includes('.delete'));
+                      const finalWriteAccess = mappedItem.WRITE_ACCESS !== false || hasWritePermission;
 
                       const u: User = {
                         username: mappedItem.TEN_DANG_NHAP || mappedItem.EMAIL || mappedItem.HO_TEN,
@@ -1300,8 +1248,8 @@ export default function App() {
                         ROLE: mappedItem.ROLE || 'NHAN_VIEN',
                         roleName: roleName,
                         branch: mappedItem.CHI_NHANH || 'Kho Trung Tâm',
-                        writeAccess: mappedItem.WRITE_ACCESS !== false,
-                        WRITE_ACCESS: mappedItem.WRITE_ACCESS !== false,
+                        writeAccess: finalWriteAccess,
+                        WRITE_ACCESS: finalWriteAccess,
                         id: mappedItem.MA_NV,
                         email: mappedItem.EMAIL,
                         ROLES: mappedItem.ROLES || [mappedItem.ROLE],
@@ -1323,11 +1271,7 @@ export default function App() {
           if (eventType === 'DELETE') {
             const idToDelete = oldRow?.id;
             if (idToDelete) {
-              setEmailLogs(prev => {
-                const next = prev.filter(el => el.id !== idToDelete);
-                localStorage.setItem('B_EMAILLOG', JSON.stringify(next));
-                return next;
-              });
+              setEmailLogs(prev => prev.filter(el => el.id !== idToDelete));
             }
           } else if (newRow) {
             // INSERT or UPDATE
@@ -1342,15 +1286,13 @@ export default function App() {
             };
             setEmailLogs(prev => {
               const index = prev.findIndex(el => el.id === mappedItem.id);
-              let next;
               if (index !== -1) {
-                next = [...prev];
+                const next = [...prev];
                 next[index] = mappedItem;
+                return next;
               } else {
-                next = [mappedItem, ...prev];
+                return [mappedItem, ...prev];
               }
-              localStorage.setItem('B_EMAILLOG', JSON.stringify(next));
-              return next;
             });
           }
           break;
@@ -1360,11 +1302,7 @@ export default function App() {
           if (eventType === 'DELETE') {
             const roleToDelete = oldRow?.ROLE_CODE;
             if (roleToDelete) {
-              setRoles(prev => {
-                const next = prev.filter(r => r.ROLE_CODE !== roleToDelete);
-                localStorage.setItem('B_ROLE', JSON.stringify(next));
-                return next;
-              });
+              setRoles(prev => prev.filter(r => r.ROLE_CODE !== roleToDelete));
             }
           } else if (newRow) {
             // INSERT or UPDATE
@@ -1375,15 +1313,13 @@ export default function App() {
             };
             setRoles(prev => {
               const index = prev.findIndex(r => r.ROLE_CODE === mappedItem.ROLE_CODE);
-              let next;
               if (index !== -1) {
-                next = [...prev];
+                const next = [...prev];
                 next[index] = mappedItem;
+                return next;
               } else {
-                next = [mappedItem, ...prev];
+                return [mappedItem, ...prev];
               }
-              localStorage.setItem('B_ROLE', JSON.stringify(next));
-              return next;
             });
           }
           break;
@@ -1393,6 +1329,7 @@ export default function App() {
 
     // Hàm thiết lập kênh Realtime lắng nghe mọi thay đổi trên Supabase
     const setupRealtime = (userId: string) => {
+      setupRealtimeRef.current = setupRealtime;
       if (realtimeChannel) {
         console.log('Đang hủy và gỡ bỏ kênh Realtime cũ...');
         supabase.removeChannel(realtimeChannel);
@@ -1454,15 +1391,17 @@ export default function App() {
             try {
               const parsed = JSON.parse(savedUser);
               if (parsed && parsed.id) {
-                syncAllDataFromSupabase(SHARED_USER_ID, parsed.username);
-                setupRealtime(SHARED_USER_ID);
+                const ownerId = localStorage.getItem('DB_OWNER_USER_ID') || SHARED_USER_ID;
+                syncAllDataFromSupabase(ownerId, parsed.username);
+                setupRealtime(ownerId);
               }
             } catch (e) {
               console.warn("Lỗi đọc user cũ:", e);
             }
           } else {
-            syncAllDataFromSupabase(SHARED_USER_ID, '');
-            setupRealtime(SHARED_USER_ID);
+            const ownerId = localStorage.getItem('DB_OWNER_USER_ID') || SHARED_USER_ID;
+            syncAllDataFromSupabase(ownerId, '');
+            setupRealtime(ownerId);
           }
         }
       } catch (e) {
@@ -1678,34 +1617,7 @@ export default function App() {
     setMobileMenuOpen(false);
   };
 
-  // Lưu trữ dữ liệu vào localStorage tự động mỗi khi có bất kỳ thay đổi nào để đảm bảo tính thời gian thực
-  useEffect(() => {
-    localStorage.setItem('B_SANPHAM', JSON.stringify(sanPhams));
-  }, [sanPhams]);
 
-  useEffect(() => {
-    localStorage.setItem('B_NHAPXUAT', JSON.stringify(nhapXuats));
-  }, [nhapXuats]);
-
-  useEffect(() => {
-    localStorage.setItem('B_NHAPXUATCT', JSON.stringify(nhapXuatCTs));
-  }, [nhapXuatCTs]);
-
-  useEffect(() => {
-    localStorage.setItem('B_KIEMKHO', JSON.stringify(kiemKhos));
-  }, [kiemKhos]);
-
-  useEffect(() => {
-    localStorage.setItem('B_THUONGHIEU', JSON.stringify(thuongHieus));
-  }, [thuongHieus]);
-
-  useEffect(() => {
-    localStorage.setItem('B_CHINHANH', JSON.stringify(chiNhanhs));
-  }, [chiNhanhs]);
-
-  useEffect(() => {
-    localStorage.setItem('B_NHANVIEN', JSON.stringify(nhanViens));
-  }, [nhanViens]);
 
   // --- 4. CẢNH BÁO SẢN PHẨM SẮP HẾT HÀNG (DƯỚI TỒN TỐI THIỂU) ---
   const lowStockAlerts = useMemo(() => {
@@ -1723,15 +1635,36 @@ export default function App() {
 
   // Trợ lý lấy User ID bảo mật chống clock-skew (F5 & JWT issued at future)
   const getUserId = async (): Promise<string | null> => {
-    if (currentUser?.id) return currentUser.id;
+    const ownerId = localStorage.getItem('DB_OWNER_USER_ID');
+    if (ownerId && ownerId !== SHARED_USER_ID) return ownerId;
+
     const { data: { session } } = await supabase.auth.getSession();
-    if (session?.user?.id) return session.user.id;
+    if (session?.user?.id) {
+      localStorage.setItem('DB_OWNER_USER_ID', session.user.id);
+      return session.user.id;
+    }
     try {
       const { data: { user } } = await supabase.auth.getUser();
-      return user?.id || null;
-    } catch {
-      return null;
+      if (user?.id) {
+        localStorage.setItem('DB_OWNER_USER_ID', user.id);
+        return user.id;
+      }
+    } catch {}
+
+    // Dự phòng: Tìm từ danh sách nhân viên để lấy user_id của Store Owner tương ứng
+    if (currentUser) {
+      const latestStaff = nhanViens.find(n => 
+        (n.MA_NV || '').trim().toLowerCase() === (currentUser.id || '').trim().toLowerCase() ||
+        (n.TEN_DANG_NHAP || '').trim().toLowerCase() === (currentUser.username || '').trim().toLowerCase() ||
+        (n.EMAIL || '').trim().toLowerCase() === (currentUser.username || '').trim().toLowerCase()
+      );
+      if (latestStaff && latestStaff.user_id) {
+        localStorage.setItem('DB_OWNER_USER_ID', latestStaff.user_id);
+        return latestStaff.user_id;
+      }
     }
+
+    return SHARED_USER_ID;
   };
 
   const reloadRoles = async () => {
@@ -1741,16 +1674,26 @@ export default function App() {
       const { data, error } = await supabase
         .from('b_role')
         .select('*')
-        .eq('user_id', uId);
+        .in('user_id', [uId, '00000000-0000-0000-0000-000000000000']);
       if (error) throw error;
       if (data) {
-        const parsedRoles = data.map((item: any) => ({
+        // Deduplicate roles by ROLE_CODE, prioritizing user-specific ones
+        const roleMap: Record<string, any> = {};
+        data.forEach((item: any) => {
+          const code = (item.ROLE_CODE || '').trim().toUpperCase();
+          const isGlobal = item.user_id === '00000000-0000-0000-0000-000000000000';
+          if (!roleMap[code] || !isGlobal) {
+            roleMap[code] = item;
+          }
+        });
+        const deduplicatedData = Object.values(roleMap);
+
+        const parsedRoles = deduplicatedData.map((item: any) => ({
           ROLE_CODE: item.ROLE_CODE,
           TEN_ROLE: item.TEN_ROLE,
           PERMISSIONS: safeParseArray(item.PERMISSIONS)
         }));
         setRoles(parsedRoles);
-        localStorage.setItem('B_ROLE', JSON.stringify(parsedRoles));
         console.log("Đã tải lại danh sách vai trò từ Supabase thành công:", parsedRoles);
       }
     } catch (err) {
@@ -3174,7 +3117,6 @@ export default function App() {
                   // Load lại danh sách logs email sau khi gửi thành công
                   const latestLogs = await fetchEmailLogs(uId);
                   setEmailLogs(latestLogs);
-                  localStorage.setItem('B_EMAILLOG', JSON.stringify(latestLogs));
                 } catch (logErr) {
                   console.warn("Lỗi ghi nhận log email khi phê duyệt:", logErr);
                 }
@@ -3244,6 +3186,9 @@ export default function App() {
         roles
       );
 
+      const hasWritePermission = combinedPermissions.some(p => p.includes('.create') || p.includes('.edit') || p.includes('.delete'));
+      const finalWriteAccess = found.WRITE_ACCESS !== false || hasWritePermission;
+
       const switchedUser: User = {
         username: found.TEN_DANG_NHAP || found.EMAIL || found.HO_TEN,
         fullName: found.HO_TEN,
@@ -3252,8 +3197,8 @@ export default function App() {
         roleName: roleName,
         active: isActive,
         branch: found.CHI_NHANH || 'Kho Trung Tâm',
-        writeAccess: found.WRITE_ACCESS !== false,
-        WRITE_ACCESS: found.WRITE_ACCESS !== false,
+        writeAccess: finalWriteAccess,
+        WRITE_ACCESS: finalWriteAccess,
         id: found.MA_NV,
         email: found.EMAIL,
         ROLES: found.ROLES || [found.ROLE],
@@ -3290,7 +3235,9 @@ export default function App() {
             localStorage.setItem('CURRENT_USER', JSON.stringify(user));
 
             // ĐỒNG BỘ DỮ LIỆU LẬP TỨC KHI ĐĂNG NHẬP THÀNH CÔNG!
-            syncAllDataFromSupabase(user.id || '00000000-0000-0000-0000-000000000000', user.username);
+            const ownerId = localStorage.getItem('DB_OWNER_USER_ID') || SHARED_USER_ID;
+            syncAllDataFromSupabase(ownerId, user.username);
+            setupRealtimeRef.current?.(ownerId);
             
             // Tự động chuyển hướng tab phù hợp dựa trên quyền dashboard.view
             if (user.permissions && user.permissions.includes('dashboard.view')) {

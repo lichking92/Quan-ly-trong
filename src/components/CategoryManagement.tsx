@@ -82,6 +82,45 @@ const PERMISSION_MAP: Record<string, string> = {
   'role.delete': 'Xóa vai trò'
 };
 
+const DEFAULT_ROLES = [
+  {
+    ROLE_CODE: 'ADMIN',
+    TEN_ROLE: 'Quản trị viên (Admin)',
+    PERMISSIONS: [
+      'dashboard.view',
+      'product.view', 'product.create', 'product.edit', 'product.delete',
+      'import.view', 'import.create', 'import.edit', 'import.delete',
+      'export.view', 'export.create', 'export.edit', 'export.delete',
+      'inventory.view', 'inventory.edit',
+      'report.view',
+      'user.view', 'user.create', 'user.edit', 'user.delete',
+      'role.view', 'role.create', 'role.edit', 'role.delete'
+    ]
+  },
+  {
+    ROLE_CODE: 'MANAGER',
+    TEN_ROLE: 'Quản lý nghiệp vụ (Manager)',
+    PERMISSIONS: [
+      'dashboard.view',
+      'product.view', 'product.create', 'product.edit',
+      'import.view', 'import.create', 'import.edit',
+      'export.view', 'export.create', 'export.edit',
+      'inventory.view', 'inventory.edit',
+      'report.view'
+    ]
+  },
+  {
+    ROLE_CODE: 'STAFF',
+    TEN_ROLE: 'Nhân viên bán hàng (Staff)',
+    PERMISSIONS: [
+      'product.view',
+      'export.view', 'export.create',
+      'import.view',
+      'inventory.view'
+    ]
+  }
+];
+
 export default function CategoryManagement({
   thuongHieus,
   chiNhanhs,
@@ -241,14 +280,13 @@ export default function CategoryManagement({
 
   // Form Nhân viên
   const [newStaffName, setNewStaffName] = useState<string>('');
-  const [newStaffRole, setNewStaffRole] = useState<UserRole>('NHAN_VIEN');
+  const [newStaffRole, setNewStaffRole] = useState<string>('STAFF');
   const [newStaffEmail, setNewStaffEmail] = useState<string>('');
   const [newStaffBranch, setNewStaffBranch] = useState<string>('Kho Trung Tâm');
   const [newStaffChucVu, setNewStaffChucVu] = useState<string>('Nhân viên bán kính');
   const [newStaffUsername, setNewStaffUsername] = useState<string>('');
   const [newStaffPassword, setNewStaffPassword] = useState<string>('');
   const [newStaffStatus, setNewStaffStatus] = useState<string>('ACTIVE');
-  const [newStaffRoles, setNewStaffRoles] = useState<string[]>([]);
 
   // States cho RBAC Role Management
   const [editingRole, setEditingRole] = useState<Role | null>(null);
@@ -519,26 +557,36 @@ export default function CategoryManagement({
     // Tự sinh email ẩn để đảm bảo tính đồng bộ và không lỗi schema DB cũ
     const generatedEmail = `${newStaffUsername.trim().toLowerCase()}@glassstock.com`;
 
-    const derivedRole = newStaffRoles.includes('ADMIN') ? 'ADMIN' : newStaffRoles.includes('MANAGER') ? 'KHO' : 'NHAN_VIEN';
-    const normalizedRole = derivedRole === 'ADMIN' ? 'admin' : derivedRole === 'KHO' ? 'manager' : 'user';
+    const primaryRole = newStaffRole || 'STAFF';
+    const isPrimaryAdmin = primaryRole === 'ADMIN';
+    const isPrimaryKho = primaryRole === 'KHO' || primaryRole === 'MANAGER';
+    const boPhan = isPrimaryAdmin ? 'Ban Giám Đốc' : isPrimaryKho ? 'Bộ Phận Kho' : 'Bộ Phận Bán Hàng';
+
+    const matched = roles.find(r => (r.ROLE_CODE || '').trim().toUpperCase() === primaryRole.toUpperCase());
+    let perms: string[] = [];
+    if (matched) {
+      perms = safeParseArray(matched.PERMISSIONS);
+    }
+    const hasWritePermission = primaryRole === 'ADMIN' || perms.some(p => p.includes('.create') || p.includes('.edit') || p.includes('.delete'));
+
     const isActive = newStaffStatus === 'ACTIVE' || newStaffStatus === 'HOẠT ĐỘNG' || newStaffStatus === 'KÍCH HOẠT';
 
     const staffRecord: NhanVien = {
       MA_NV: `NV${String(nhanViens.length + 1).padStart(4, '0')}`,
       HO_TEN: newStaffName.trim(),
       CHUC_VU: newStaffChucVu,
-      BO_PHAN: derivedRole === 'ADMIN' ? 'Ban Giám Đốc' : derivedRole === 'KHO' ? 'Bộ Phận Kho' : 'Bộ Phận Bán Hàng',
+      BO_PHAN: boPhan,
       CHI_NHANH: newStaffBranch,
       EMAIL: generatedEmail,
-      ROLE: derivedRole,
-      role: normalizedRole,
+      ROLE: primaryRole,
+      role: primaryRole.toLowerCase(),
       active: isActive,
-      WRITE_ACCESS: derivedRole === 'ADMIN' || derivedRole === 'KHO',
+      WRITE_ACCESS: hasWritePermission,
       TEN_DANG_NHAP: newStaffUsername.trim(),
       MAT_KHAU: newStaffPassword.trim(),
       TRANG_THAI: newStaffStatus,
       YEU_CAU_RESET: false,
-      ROLES: newStaffRoles.length > 0 ? newStaffRoles : ['STAFF']
+      ROLES: [primaryRole]
     };
 
     onAddNhanVien(staffRecord);
@@ -548,7 +596,7 @@ export default function CategoryManagement({
     setNewStaffPassword('');
     setNewStaffChucVu('Nhân viên bán kính');
     setNewStaffStatus('ACTIVE');
-    setNewStaffRoles([]);
+    setNewStaffRole('STAFF');
     setTimeout(() => setSuccessMsg(''), 3000);
   };
 
@@ -559,10 +607,8 @@ export default function CategoryManagement({
     setNewStaffPassword(staff.MAT_KHAU || '');
     setNewStaffBranch(staff.CHI_NHANH);
     setNewStaffChucVu(staff.CHUC_VU);
-    setNewStaffRole(staff.ROLE);
+    setNewStaffRole(staff.ROLE || 'STAFF');
     setNewStaffStatus(staff.TRANG_THAI || 'ACTIVE');
-    const parsedRoles = safeParseArray(staff.ROLES);
-    setNewStaffRoles(parsedRoles.length > 0 ? parsedRoles : [staff.ROLE === 'ADMIN' ? 'ADMIN' : staff.ROLE === 'KHO' ? 'MANAGER' : 'STAFF']);
   };
 
   const handleSaveEditStaff = (e: React.FormEvent) => {
@@ -576,26 +622,36 @@ export default function CategoryManagement({
       return;
     }
 
-    const derivedRole = newStaffRoles.includes('ADMIN') ? 'ADMIN' : newStaffRoles.includes('MANAGER') ? 'KHO' : 'NHAN_VIEN';
-    const normalizedRole = derivedRole === 'ADMIN' ? 'admin' : derivedRole === 'KHO' ? 'manager' : 'user';
+    const primaryRole = newStaffRole || 'STAFF';
+    const isPrimaryAdmin = primaryRole === 'ADMIN';
+    const isPrimaryKho = primaryRole === 'KHO' || primaryRole === 'MANAGER';
+    const boPhan = isPrimaryAdmin ? 'Ban Giám Đốc' : isPrimaryKho ? 'Bộ Phận Kho' : 'Bộ Phận Bán Hàng';
+
+    const matched = roles.find(r => (r.ROLE_CODE || '').trim().toUpperCase() === primaryRole.toUpperCase());
+    let perms: string[] = [];
+    if (matched) {
+      perms = safeParseArray(matched.PERMISSIONS);
+    }
+    const hasWritePermission = primaryRole === 'ADMIN' || perms.some(p => p.includes('.create') || p.includes('.edit') || p.includes('.delete'));
+
     const isActive = newStaffStatus === 'ACTIVE' || newStaffStatus === 'HOẠT ĐỘNG' || newStaffStatus === 'KÍCH HOẠT';
 
     const updatedStaff: NhanVien = {
       MA_NV: editingStaff.staff.MA_NV,
       HO_TEN: newStaffName.trim(),
       CHUC_VU: newStaffChucVu,
-      BO_PHAN: derivedRole === 'ADMIN' ? 'Ban Giám Đốc' : derivedRole === 'KHO' ? 'Bộ Phận Kho' : 'Bộ Phận Bán Hàng',
+      BO_PHAN: boPhan,
       CHI_NHANH: newStaffBranch,
       EMAIL: editingStaff.staff.EMAIL, // Giữ nguyên Email cũ làm khóa duy nhất cho các logic đồng bộ cũ
-      ROLE: derivedRole,
-      role: normalizedRole,
+      ROLE: primaryRole,
+      role: primaryRole.toLowerCase(),
       active: isActive,
-      WRITE_ACCESS: derivedRole === 'ADMIN' || derivedRole === 'KHO',
+      WRITE_ACCESS: hasWritePermission,
       TEN_DANG_NHAP: newStaffUsername.trim(),
       MAT_KHAU: newStaffPassword.trim(),
       TRANG_THAI: newStaffStatus,
       YEU_CAU_RESET: false, // Tự động tắt yêu cầu reset khi Admin đổi/lưu lại mật khẩu mới!
-      ROLES: newStaffRoles.length > 0 ? newStaffRoles : ['STAFF']
+      ROLES: [primaryRole]
     };
 
     onUpdateNhanVien(editingStaff.oldEmail, updatedStaff);
@@ -606,7 +662,7 @@ export default function CategoryManagement({
     setNewStaffPassword('');
     setNewStaffChucVu('Nhân viên bán kính');
     setNewStaffStatus('ACTIVE');
-    setNewStaffRoles([]);
+    setNewStaffRole('STAFF');
     setTimeout(() => setSuccessMsg(''), 3000);
   };
 
@@ -617,7 +673,7 @@ export default function CategoryManagement({
     setNewStaffPassword('');
     setNewStaffChucVu('Nhân viên bán kính');
     setNewStaffStatus('ACTIVE');
-    setNewStaffRoles([]);
+    setNewStaffRole('STAFF');
   };
 
   const handleDeleteStaffItem = (email: string) => {
@@ -1372,23 +1428,18 @@ export default function CategoryManagement({
 
                   {roles && roles.length > 0 && (
                     <div className="space-y-1.5 border-t border-slate-100 pt-2">
-                      <label className="text-[10px] uppercase font-bold text-slate-400 block mb-1">Vai trò RBAC được gán</label>
+                      <label className="text-[10px] uppercase font-bold text-slate-400 block mb-1">Vai trò hệ thống (ROLE)</label>
                       <div className="flex flex-wrap gap-2.5 p-2 bg-slate-50 rounded-lg border border-slate-100">
                         {roles.map(r => {
-                          const isChecked = newStaffRoles.includes(r.ROLE_CODE);
+                          const isChecked = newStaffRole === r.ROLE_CODE;
                           return (
                             <label key={r.ROLE_CODE} className="inline-flex items-center gap-1.5 text-[11px] font-bold text-slate-600 cursor-pointer select-none">
                               <input
-                                type="checkbox"
+                                type="radio"
+                                name="new_staff_role"
                                 checked={isChecked}
-                                onChange={(e) => {
-                                  if (e.target.checked) {
-                                    setNewStaffRoles(prev => [...prev, r.ROLE_CODE]);
-                                  } else {
-                                    setNewStaffRoles(prev => prev.filter(code => code !== r.ROLE_CODE));
-                                  }
-                                }}
-                                className="rounded text-red-600 focus:ring-red-500 w-3.5 h-3.5 border-slate-200"
+                                onChange={() => setNewStaffRole(r.ROLE_CODE)}
+                                className="text-red-600 focus:ring-red-500 w-3.5 h-3.5 border-slate-200"
                               />
                               <span>{r.TEN_ROLE}</span>
                             </label>
@@ -1568,9 +1619,14 @@ export default function CategoryManagement({
                                 );
                               });
                             }
+                            const r = roles.find(item => item.ROLE_CODE === n.ROLE) || DEFAULT_ROLES.find(item => item.ROLE_CODE === n.ROLE);
+                            const label = r ? r.TEN_ROLE : n.ROLE;
+                            let badgeColor = 'bg-slate-50 text-slate-500 border-slate-200';
+                            if (n.ROLE === 'ADMIN') badgeColor = 'bg-rose-50 text-rose-700 border-rose-100';
+                            if (n.ROLE === 'MANAGER' || n.ROLE === 'KHO') badgeColor = 'bg-emerald-50 text-emerald-700 border-emerald-100';
                             return (
-                              <span className="inline-flex items-center gap-1 font-sans font-bold text-[10px] py-1 px-3 rounded-full border bg-slate-50 text-slate-500 border-slate-200">
-                                <Shield className="w-3 h-3 text-slate-400" /> {n.ROLE === 'ADMIN' ? 'Quản trị viên (Admin)' : n.ROLE === 'KHO' ? 'Thủ kho' : 'Bán hàng'}
+                              <span className={`inline-flex items-center gap-1 font-sans font-bold text-[10px] py-1 px-3 rounded-full border ${badgeColor}`}>
+                                <Shield className="w-3 h-3 text-slate-400" /> {label}
                               </span>
                             );
                           })()}
@@ -2375,23 +2431,18 @@ export default function CategoryManagement({
 
                 {roles && roles.length > 0 && (
                   <div className="space-y-1.5 border-t border-slate-100 pt-2">
-                    <label className="text-[10px] uppercase font-bold text-slate-400 block mb-1">Vai trò RBAC được gán</label>
+                    <label className="text-[10px] uppercase font-bold text-slate-400 block mb-1">Vai trò hệ thống (ROLE)</label>
                     <div className="flex flex-wrap gap-2.5 p-2 bg-slate-50 rounded-lg border border-slate-100">
                       {roles.map(r => {
-                        const isChecked = newStaffRoles.includes(r.ROLE_CODE);
+                        const isChecked = newStaffRole === r.ROLE_CODE;
                         return (
                           <label key={r.ROLE_CODE} className="inline-flex items-center gap-1.5 text-[11px] font-bold text-slate-600 cursor-pointer select-none">
                             <input
-                              type="checkbox"
+                              type="radio"
+                              name="edit_staff_role"
                               checked={isChecked}
-                              onChange={(e) => {
-                                if (e.target.checked) {
-                                  setNewStaffRoles(prev => [...prev, r.ROLE_CODE]);
-                                } else {
-                                  setNewStaffRoles(prev => prev.filter(code => code !== r.ROLE_CODE));
-                                }
-                              }}
-                              className="rounded text-red-600 focus:ring-red-500 w-3.5 h-3.5 border-slate-200"
+                              onChange={() => setNewStaffRole(r.ROLE_CODE)}
+                              className="text-red-600 focus:ring-red-500 w-3.5 h-3.5 border-slate-200"
                             />
                             <span>{r.TEN_ROLE}</span>
                           </label>

@@ -6,9 +6,9 @@
 import React, { useState } from 'react';
 import { Shield, Key, User as UserIcon, AlertCircle, Eye, EyeOff, Boxes, CheckCircle2, HelpCircle, X, Mail, UserPlus, ArrowLeft } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { User, NhanVien } from '../types';
+import { User, NhanVien, safeParseArray } from '../types';
 import { supabase } from '../supabaseClient';
-import { resolveEffectiveUserId, syncEmailLog } from '../supabaseSync';
+import { resolveEffectiveUserId, syncEmailLog, memoryCache } from '../supabaseSync';
 
 interface LoginProps {
   onLoginSuccess: (user: User) => void;
@@ -61,7 +61,7 @@ const isUserActive = (statusStr: string | null | undefined): boolean => {
 
 const resolvePermissions = (
   roleStr: string | null | undefined,
-  employeeDirectPermissions: any,
+  employeeDirectPermissions: any, // Ignored: b_nhanvien.PERMISSIONS is NOT used for checking permissions anymore.
   dbRoles: any[]
 ): { permissions: string[], roleName: string } => {
   const upperRole = (roleStr || '').trim().toUpperCase();
@@ -72,47 +72,19 @@ const resolvePermissions = (
   let rolePermissions: string[] = [];
   let roleName = '';
   
-  const parsePermissions = (perms: any): string[] => {
-    if (Array.isArray(perms)) return perms;
-    if (typeof perms === 'string') {
-      try {
-        return JSON.parse(perms || '[]');
-      } catch {
-        return perms.split(',').map((p: string) => p.trim()).filter(Boolean);
-      }
-    }
-    return [];
-  };
-
   if (matchedRole) {
-    rolePermissions = parsePermissions(matchedRole.PERMISSIONS);
+    rolePermissions = safeParseArray(matchedRole.PERMISSIONS);
     roleName = matchedRole.TEN_ROLE || '';
   } else {
-    // Fallback: map 'KHO' to 'MANAGER' and 'NHAN_VIEN' to 'STAFF' for backward compatibility
-    let mappedRoleCode = upperRole;
-    if (upperRole === 'KHO' || upperRole === 'MANAGER') mappedRoleCode = 'MANAGER';
-    if (upperRole === 'NHAN_VIEN' || upperRole === 'STAFF' || upperRole === 'USER') mappedRoleCode = 'STAFF';
-    
-    // Check if we have the mapped code in b_role first
-    matchedRole = dbRoles.find(r => (r.ROLE_CODE || '').trim().toUpperCase() === mappedRoleCode);
-    if (matchedRole) {
-      rolePermissions = parsePermissions(matchedRole.PERMISSIONS);
-      roleName = matchedRole.TEN_ROLE || '';
-    } else {
-      // Fallback to DEFAULT_ROLES
-      const fallback = DEFAULT_ROLES.find(r => r.ROLE_CODE === mappedRoleCode) || 
-                       DEFAULT_ROLES.find(r => r.ROLE_CODE === upperRole);
-      if (fallback) {
-        rolePermissions = fallback.PERMISSIONS;
-        roleName = fallback.TEN_ROLE;
-      }
+    // Fallback directly to DEFAULT_ROLES
+    const fallback = DEFAULT_ROLES.find(r => r.ROLE_CODE === upperRole);
+    if (fallback) {
+      rolePermissions = fallback.PERMISSIONS;
+      roleName = fallback.TEN_ROLE;
     }
   }
   
-  // Parse direct permissions from b_nhanvien if any
-  const directPerms = parsePermissions(employeeDirectPermissions);
-  const combined = Array.from(new Set([...rolePermissions, ...directPerms]));
-  return { permissions: combined, roleName: roleName || upperRole };
+  return { permissions: rolePermissions, roleName: roleName || upperRole };
 };
 
 export default function Login({ onLoginSuccess, nhanViens = [] }: LoginProps) {
@@ -180,18 +152,18 @@ export default function Login({ onLoginSuccess, nhanViens = [] }: LoginProps) {
     try {
       const activeUid = await resolveEffectiveUserId();
       
-      // 1. Kiểm tra xem Email hoặc Tên đăng nhập đã tồn tại trong bảng b_nhanvien chưa
+      const lowerEmail = email.toLowerCase();
+      const lowerUsername = usernameInput.toLowerCase();
+
+      // 1. Kiểm tra xem Email hoặc Tên đăng nhập đã tồn tại trong bảng b_nhanvien chưa (toàn hệ thống)
       const { data: dbNhanViens, error: checkError } = await supabase
         .from('b_nhanvien')
         .select('EMAIL, TEN_DANG_NHAP')
-        .eq('user_id', activeUid);
+        .or(`EMAIL.ilike.${lowerEmail},TEN_DANG_NHAP.ilike.${lowerUsername}`);
 
       if (checkError) {
         console.error('Lỗi khi kiểm tra nhân viên tồn tại:', checkError);
       }
-
-      const lowerEmail = email.toLowerCase();
-      const lowerUsername = usernameInput.toLowerCase();
 
       if (dbNhanViens && dbNhanViens.length > 0) {
         const isEmailExist = dbNhanViens.some(n => (n.EMAIL || '').trim().toLowerCase() === lowerEmail);
@@ -387,16 +359,15 @@ export default function Login({ onLoginSuccess, nhanViens = [] }: LoginProps) {
 
     // 1. Kiểm tra tài khoản trực tiếp từ bảng b_nhanvien trên Supabase Cloud (truy vấn toàn hệ thống)
     try {
-      const activeUid = await resolveEffectiveUserId();
+      // Truy vấn không giới hạn activeUid để có thể tìm thấy nhân viên của bất kỳ store owner nào
       const { data: dbNhanViens, error: dbError } = await supabase
         .from('b_nhanvien')
         .select('*')
-        .eq('user_id', activeUid);
+        .or(`TEN_DANG_NHAP.ilike.${lowerUser},EMAIL.ilike.${lowerUser},MA_NV.ilike.${lowerUser}`);
 
-      const { data: dbRoles } = await supabase
-        .from('b_role')
-        .select('*')
-        .eq('user_id', activeUid);
+      if (dbError) {
+        console.error('Lỗi khi truy vấn b_nhanvien:', dbError);
+      }
 
       if (dbNhanViens && dbNhanViens.length > 0) {
         const staffMember = dbNhanViens.find(n => {
@@ -421,12 +392,36 @@ export default function Login({ onLoginSuccess, nhanViens = [] }: LoginProps) {
           if (matchedPassword === cleanPass) {
             setLoading(false);
 
+            // Ghi nhận ngay owner_user_id của Admin/Store Owner đã tạo nhân viên này vào localStorage
+            const ownerId = staffMember.user_id || '00000000-0000-0000-0000-000000000000';
+            localStorage.setItem('DB_OWNER_USER_ID', ownerId);
+
+            // Tải danh sách vai trò tương ứng với owner_user_id này
+            const { data: dbRoles } = await supabase
+              .from('b_role')
+              .select('*')
+              .in('user_id', [ownerId, '00000000-0000-0000-0000-000000000000']);
+
+            // Deduplicate roles by ROLE_CODE, prioritizing user-specific ones
+            const roleMap: Record<string, any> = {};
+            (dbRoles || []).forEach((item: any) => {
+              const code = (item.ROLE_CODE || '').trim().toUpperCase();
+              const isGlobal = item.user_id === '00000000-0000-0000-0000-000000000000';
+              if (!roleMap[code] || !isGlobal) {
+                roleMap[code] = item;
+              }
+            });
+            const deduplicatedRoles = Object.values(roleMap);
+
             // Phân giải quyền hạn dựa theo b_nhanvien.ROLE và b_role
             const { permissions: combinedPermissions, roleName } = resolvePermissions(
               staffMember.ROLE,
               staffMember.PERMISSIONS,
-              dbRoles || []
+              deduplicatedRoles
             );
+
+            const hasWritePermission = combinedPermissions.some(p => p.includes('.create') || p.includes('.edit') || p.includes('.delete'));
+            const finalWriteAccess = staffMember.WRITE_ACCESS !== false || hasWritePermission;
 
             onLoginSuccess({
               username: staffMember.TEN_DANG_NHAP || staffMember.EMAIL || staffMember.HO_TEN,
@@ -436,8 +431,8 @@ export default function Login({ onLoginSuccess, nhanViens = [] }: LoginProps) {
               roleName: roleName,
               active: isActive,
               branch: staffMember.CHI_NHANH || 'Kho Trung Tâm',
-              writeAccess: staffMember.WRITE_ACCESS !== false,
-              WRITE_ACCESS: staffMember.WRITE_ACCESS !== false,
+              writeAccess: finalWriteAccess,
+              WRITE_ACCESS: finalWriteAccess,
               id: staffMember.MA_NV,
               email: staffMember.EMAIL,
               ROLES: staffMember.ROLES || [staffMember.ROLE],
@@ -456,14 +451,12 @@ export default function Login({ onLoginSuccess, nhanViens = [] }: LoginProps) {
       console.error('Lỗi khi đối chiếu thông tin nhân viên trực tuyến:', err);
     }
 
-    // 2. Dự phòng ngoại tuyến: Kiểm tra trong localStorage hoặc các prop truyền vào
+    // 2. Dự phòng ngoại tuyến: Kiểm tra trong memoryCache hoặc các prop truyền vào
     try {
-      const savedNhanViens = localStorage.getItem('B_NHANVIEN');
-      const localNhanVien: NhanVien[] = savedNhanViens ? JSON.parse(savedNhanViens) : [];
+      const localNhanVien: NhanVien[] = memoryCache['B_NHANVIEN'] || [];
       const allNhanViens = [...nhanViens, ...localNhanVien];
 
-      const savedB_ROLE = localStorage.getItem('B_ROLE');
-      const localRoles: any[] = savedB_ROLE ? JSON.parse(savedB_ROLE) : [];
+      const localRoles: any[] = memoryCache['B_ROLE'] || [];
 
       const staffMember = allNhanViens.find(n => {
         const storedUser = (n.TEN_DANG_NHAP || '').trim().toLowerCase();
@@ -493,6 +486,9 @@ export default function Login({ onLoginSuccess, nhanViens = [] }: LoginProps) {
             localRoles
           );
 
+          const hasWritePermission = combinedPermissions.some(p => p.includes('.create') || p.includes('.edit') || p.includes('.delete'));
+          const finalWriteAccess = staffMember.WRITE_ACCESS !== false || hasWritePermission;
+
           onLoginSuccess({
             username: staffMember.TEN_DANG_NHAP || staffMember.EMAIL || staffMember.HO_TEN,
             fullName: staffMember.HO_TEN,
@@ -501,8 +497,8 @@ export default function Login({ onLoginSuccess, nhanViens = [] }: LoginProps) {
             roleName: roleName,
             active: isActive,
             branch: staffMember.CHI_NHANH || 'Kho Trung Tâm',
-            writeAccess: staffMember.WRITE_ACCESS !== false,
-            WRITE_ACCESS: staffMember.WRITE_ACCESS !== false,
+            writeAccess: finalWriteAccess,
+            WRITE_ACCESS: finalWriteAccess,
             id: staffMember.MA_NV,
             email: staffMember.EMAIL,
             ROLES: staffMember.ROLES || [staffMember.ROLE],
