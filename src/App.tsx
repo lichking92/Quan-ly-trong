@@ -412,9 +412,9 @@ export default function App() {
 
     activePingPromise = (async () => {
       try {
-        const rawUrl = (import.meta as any).env.VITE_SUPABASE_URL || "";
+        const rawUrl = (((import.meta as any).env.VITE_SUPABASE_URL || "") as string).trim().replace(/^['"]|['"]$/g, "");
         const cleanUrl = rawUrl ? rawUrl.replace(/\/rest\/v1\/?$/, "").replace(/\/$/, "") : "";
-        const anonKey = (import.meta as any).env.VITE_SUPABASE_ANON_KEY || "";
+        const anonKey = (((import.meta as any).env.VITE_SUPABASE_ANON_KEY || "") as string).trim().replace(/^['"]|['"]$/g, "");
 
         // Verification of URL and Key correctness
         if (!cleanUrl || !cleanUrl.startsWith('http') || !anonKey) {
@@ -432,6 +432,7 @@ export default function App() {
             signal: controller.signal,
             headers: {
               "apikey": anonKey,
+              "Authorization": `Bearer ${anonKey}`,
               "Cache-Control": "no-cache"
             }
           });
