@@ -680,7 +680,7 @@ export async function exportReportByTemplate({
       if (resolvedValues[name] !== undefined) {
         try {
           const textField = form.getTextField(name);
-          textField.setText(String(resolvedValues[name]));
+          textField.setText(removeVietnameseTones(String(resolvedValues[name])));
         } catch (e) {
           // ignore if not text field
         }
@@ -703,7 +703,7 @@ export async function exportReportByTemplate({
             `${idx + 1}. ${item.SKU} | ${item.TEN_SP || (item as any).TEN_SAN_PHAM} | SL: ${item.SO_LUONG} | Loại: ${item.LOAI}`
           ).join('\n');
         }
-        detailField.setText(detailsText);
+        detailField.setText(removeVietnameseTones(detailsText));
       } catch (e) {}
     }
 
@@ -1631,7 +1631,7 @@ export function groupAndAggregateData({
       initial['_uniqueSkus'] = new Set<string>();
 
       // Các trường text bổ sung khác để hiển thị
-      const fallbackFields = ['TEN_SP', 'TEN_SAN_PHAM', 'DVT', 'THUONG_HIEU', 'CHIET_XUAT', 'CHIET_SUAT', 'TINH_NANG', 'LOAI', 'NGAY', 'HOA_DON', 'CHI_NHANH', 'MA_PHIEU'];
+      const fallbackFields = ['SKU', 'TEN_SP', 'TEN_SAN_PHAM', 'DVT', 'THUONG_HIEU', 'CHIET_XUAT', 'CHIET_SUAT', 'TINH_NANG', 'LOAI', 'NGAY', 'HOA_DON', 'CHI_NHANH', 'MA_PHIEU'];
       fallbackFields.forEach(f => {
         if (initial[f] === undefined) {
           initial[f] = item[f];
@@ -1710,6 +1710,7 @@ export function groupAndAggregateData({
 
 export async function exportReportWithFilters({
   template,
+  exportFormat,
   startDate,
   endDate,
   selectedBranch,
@@ -1725,6 +1726,7 @@ export async function exportReportWithFilters({
   onDownload
 }: {
   template: Template;
+  exportFormat?: 'EXCEL' | 'PDF';
   startDate: string;
   endDate: string;
   selectedBranch: string;
@@ -1771,6 +1773,23 @@ export async function exportReportWithFilters({
     nhapXuatCTs
   });
 
+  // 2b. Clone or extract groupByFields so we can modify it safely without mutating the original template object
+  let activeGroupByFields = template.groupByFields ? [...template.groupByFields] : [];
+  const hasSkuInColumns = !template.columnMappings || template.columnMappings.length === 0 || template.columnMappings.some(m => {
+    const cleanExcelCol = m.excelColumn.trim().toUpperCase();
+    const cleanDataField = (m.dataField || '').trim().toUpperCase();
+    const cleanLabel = m.label.toUpperCase();
+    return cleanExcelCol === 'SKU' || cleanDataField === 'SKU' || cleanLabel.includes('SKU');
+  });
+
+  if (hasSkuInColumns && activeGroupByFields.length > 0 && !activeGroupByFields.some(f => f.toUpperCase() === 'SKU')) {
+    activeGroupByFields.push('SKU');
+    console.log("[Auto GroupBy] Tự động thêm 'SKU' vào groupByFields vì cột SKU được cấu hình xuất.");
+    if (onTriggerToast) {
+      onTriggerToast("Đã tự động thêm Mã SKU vào tiêu chuẩn gom nhóm để xuất đúng chi tiết SKU.", "warning");
+    }
+  }
+
   // DEBUG LOGS BEFORE EXPORT
   console.log("================= DEBUG EXPORT ENGINE =================");
   console.log("1. MAPPED COLUMNS (Danh sách cột đã cấu hình):");
@@ -1783,8 +1802,8 @@ export async function exportReportWithFilters({
   }
 
   console.log("2. GROUP BY FIELDS (Danh sách trường Gom nhóm):");
-  if (template.groupByFields && template.groupByFields.length > 0) {
-    template.groupByFields.forEach((f, idx) => {
+  if (activeGroupByFields && activeGroupByFields.length > 0) {
+    activeGroupByFields.forEach((f, idx) => {
       console.log(`   - Trường ${idx + 1}: "${f}"`);
     });
   } else {
@@ -1798,9 +1817,9 @@ export async function exportReportWithFilters({
   });
 
   const exportColCount = template.columnMappings ? template.columnMappings.length : 0;
-  const hasGroupBy = template.groupByFields && template.groupByFields.length > 0;
+  const hasGroupBy = activeGroupByFields && activeGroupByFields.length > 0;
   const sampleGroupCount = hasGroupBy 
-    ? groupAndAggregateData({ data: previewData, groupByFields: template.groupByFields || [] }).length
+    ? groupAndAggregateData({ data: previewData, groupByFields: activeGroupByFields }).length
     : previewData.length;
 
   console.log("4. EXPORT METADATA COUNTS (Số lượng cột và dòng xuất):");
@@ -1808,6 +1827,21 @@ export async function exportReportWithFilters({
   console.log(`   - Số lượng Dòng gốc: ${previewData.length}`);
   console.log(`   - Số lượng Dòng xuất ra (sau gom nhóm): ${sampleGroupCount}`);
   console.log("======================================================");
+
+  // BÁO CÁO KIỂM TRA DỮ LIỆU XUẤT (YÊU CẦU 4 - LOG SKU TỪNG DÒNG)
+  console.log("=====================================================================");
+  console.log("=== BÁO CÁO KIỂM TRA DỮ LIỆU XUẤT ===");
+  console.log(`- Tổng số dòng dữ liệu sau filter (Dòng gốc): ${previewData.length}`);
+  console.log(`- Tổng số dòng sau Group By: ${sampleGroupCount}`);
+  console.log("- Danh sách giá trị SKU của từng dòng:");
+  const loggedRows = hasGroupBy
+    ? groupAndAggregateData({ data: previewData, groupByFields: activeGroupByFields })
+    : previewData;
+  loggedRows.forEach((r, idx) => {
+    const skuVal = r.SKU ?? r.sku ?? r.Sku ?? 'N/A';
+    console.log(`SKU: ${skuVal}`);
+  });
+  console.log("=====================================================================");
 
   // 3. Rebuild static values object
   const previewStaticValues: Record<string, any> = {
@@ -1923,7 +1957,9 @@ export async function exportReportWithFilters({
     });
   }
 
-  if (template.type === 'EXCEL') {
+  const targetFormat = exportFormat || template.type;
+
+  if (targetFormat === 'EXCEL') {
     const workbook = new ExcelJS.Workbook();
     await workbook.xlsx.load(arrayBuffer);
 
@@ -2029,9 +2065,9 @@ export async function exportReportWithFilters({
       
       if (cleanPlaceholder === 'DETAILS' || cleanPlaceholder === 'REPORT_ROWS') {
         dataField = '(TABLE_DATA)';
-        const hasGroupBy = template.groupByFields && template.groupByFields.length > 0;
+        const hasGroupBy = activeGroupByFields && activeGroupByFields.length > 0;
         const count = hasGroupBy 
-          ? groupAndAggregateData({ data: previewData, groupByFields: template.groupByFields || [] }).length
+          ? groupAndAggregateData({ data: previewData, groupByFields: activeGroupByFields }).length
           : previewData.length;
         actualValue = `[Danh sách bảng: ${count} dòng]`;
       }
@@ -2200,11 +2236,11 @@ export async function exportReportWithFilters({
             nhapXuatCTs
           });
         } else if (sample.placeholder === 'REPORT_ROWS' || sample.placeholder === 'DETAILS') {
-          const hasGroupBy = template.groupByFields && template.groupByFields.length > 0;
+          const hasGroupBy = activeGroupByFields && activeGroupByFields.length > 0;
           if (hasGroupBy) {
             rowData = groupAndAggregateData({
               data: previewData,
-              groupByFields: template.groupByFields || []
+              groupByFields: activeGroupByFields
             });
           } else {
             rowData = previewData;
@@ -2264,6 +2300,15 @@ export async function exportReportWithFilters({
                     cellVal = record[m.dataField];
                   } else if (record[m.excelColumn] !== undefined) {
                     cellVal = record[m.excelColumn];
+                  } else {
+                    // Thử tìm khớp không phân biệt chữ hoa chữ thường
+                    const foundKey = Object.keys(record).find(k => k.toUpperCase() === cleanDataField || k.toUpperCase() === cleanExcelCol);
+                    if (foundKey) {
+                      cellVal = record[foundKey];
+                    } else if (cleanDataField.includes('SKU') || cleanExcelCol.includes('SKU')) {
+                      // Fallback lấy giá trị SKU
+                      cellVal = record.SKU ?? record.sku ?? record.Sku;
+                    }
                   }
                 }
 
@@ -2446,9 +2491,315 @@ export async function exportReportWithFilters({
   } else {
     // === XỬ LÝ FILE PDF - lazy loaded ===
     const PDFDocument = await getPDFDocument();
-    const pdfDoc = await PDFDocument.load(arrayBuffer);
-    const form = pdfDoc.getForm();
-    const fields = form.getFields();
+
+    if (template.type === 'EXCEL') {
+      // === KẾT XUẤT PDF ĐỘNG TỪ CẤU HÌNH MẪU EXCEL (ĐỒNG BỘ 1 CẤU HÌNH CHUNG) ===
+      const pdfDoc = await PDFDocument.create();
+      const rgb = (await import('pdf-lib')).rgb;
+      const StandardFonts = (await import('pdf-lib')).StandardFonts;
+
+      const helveticaFont = await pdfDoc.embedFont(StandardFonts.Helvetica);
+      const helveticaBold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
+
+      const page = pdfDoc.addPage([595.275, 841.89]); // A4 Size
+      const { width, height } = page.getSize();
+
+      let y = height - 50;
+
+      // Draw Title
+      page.drawText(removeVietnameseTones(template.name || 'Bao Cao'), {
+        x: 40,
+        y,
+        size: 15,
+        font: helveticaBold,
+        color: rgb(0.1, 0.2, 0.4)
+      });
+      y -= 22;
+
+      // Draw Sub-header / Filters info
+      page.drawText(`Ky loc: ${startDate} - ${endDate}`, {
+        x: 40,
+        y,
+        size: 9,
+        font: helveticaFont,
+        color: rgb(0.4, 0.4, 0.4)
+      });
+
+      page.drawText(`Chi nhanh: ${removeVietnameseTones(selectedBranch || 'Tat ca')}`, {
+        x: 230,
+        y,
+        size: 9,
+        font: helveticaFont,
+        color: rgb(0.4, 0.4, 0.4)
+      });
+
+      const nowStr = new Date().toLocaleDateString('vi-VN') + ' ' + new Date().toLocaleTimeString('vi-VN', { hour12: false });
+      page.drawText(`Ngay lap: ${removeVietnameseTones(nowStr)}`, {
+        x: 410,
+        y,
+        size: 9,
+        font: helveticaFont,
+        color: rgb(0.4, 0.4, 0.4)
+      });
+      y -= 12;
+
+      // Thin separator line
+      page.drawLine({
+        start: { x: 40, y },
+        end: { x: width - 40, y },
+        thickness: 1,
+        color: rgb(0.85, 0.85, 0.85)
+      });
+      y -= 25;
+
+      // Key indicators box (Summary cards) for Dashboard context
+      if (source === 'DASHBOARD' || template.id.includes('dashboard')) {
+        page.drawRectangle({
+          x: 40,
+          y: y - 75,
+          width: width - 80,
+          height: 70,
+          color: rgb(0.96, 0.97, 0.99),
+          borderColor: rgb(0.88, 0.9, 0.93),
+          borderWidth: 1
+        });
+
+        // Left Col
+        page.drawText(`TONG TON KHO HE THONG: ${previewStaticValues.TONG_TON || 0}`, {
+          x: 55,
+          y: y - 22,
+          size: 9,
+          font: helveticaBold,
+          color: rgb(0.15, 0.2, 0.3)
+        });
+        page.drawText(`TONG LUONG XUAT: ${previewStaticValues.TONG_XUAT || 0}`, {
+          x: 55,
+          y: y - 40,
+          size: 9,
+          font: helveticaBold,
+          color: rgb(0.15, 0.2, 0.3)
+        });
+        page.drawText(`CHI NHANH BAN CHAY: ${removeVietnameseTones(previewStaticValues.TOP_CHI_NHANH || 'None')}`, {
+          x: 55,
+          y: y - 58,
+          size: 8,
+          font: helveticaFont,
+          color: rgb(0.3, 0.35, 0.4)
+        });
+
+        // Right Col
+        page.drawText(`THUONG HIEU BAN CHAY: ${removeVietnameseTones(previewStaticValues.THUONG_HIEU_BAN_CHAY || 'None')}`, {
+          x: 300,
+          y: y - 22,
+          size: 8,
+          font: helveticaFont,
+          color: rgb(0.3, 0.35, 0.4)
+        });
+        page.drawText(`TINH NANG BAN CHAY: ${removeVietnameseTones(previewStaticValues.TINH_NANG_BAN_CHAY || 'None')}`, {
+          x: 300,
+          y: y - 40,
+          size: 8,
+          font: helveticaFont,
+          color: rgb(0.3, 0.35, 0.4)
+        });
+        page.drawText(`CHIET SUAT BAN CHAY: ${removeVietnameseTones(previewStaticValues.CHIET_SUAT_BAN_CHAY || 'None')}`, {
+          x: 300,
+          y: y - 58,
+          size: 8,
+          font: helveticaFont,
+          color: rgb(0.3, 0.35, 0.4)
+        });
+
+        y -= 90;
+      }
+
+      // Prepare dynamic rows
+      const hasGroupBy = activeGroupByFields && activeGroupByFields.length > 0;
+      let rowData: any[] = [];
+      if (hasGroupBy) {
+        rowData = groupAndAggregateData({
+          data: previewData,
+          groupByFields: activeGroupByFields
+        });
+      } else {
+        rowData = previewData;
+      }
+
+      // Columns to render
+      const columnsToRender = template.columnMappings && template.columnMappings.length > 0
+        ? template.columnMappings
+        : [
+            { excelColumn: 'STT', dataField: 'STT', label: 'STT' },
+            { excelColumn: 'SKU', dataField: 'SKU', label: 'Ma SKU' },
+            { excelColumn: 'TEN_SP', dataField: 'TEN_SP', label: 'Ten san pham' },
+            { excelColumn: 'SO_LUONG', dataField: 'SO_LUONG', label: 'So luong' }
+          ];
+
+      // Auto-calculated column widths
+      const totalWidth = width - 80; // 515
+      const colWidths = columnsToRender.map(m => {
+        const label = (m.label || '').toUpperCase();
+        const field = (m.dataField || '').toUpperCase();
+        if (label.includes('STT') || field === 'STT') return 40;
+        if (label.includes('DVT') || field === 'DVT') return 45;
+        if (label.includes('SL') || label.includes('SO LUONG') || label.includes('SỐ LƯỢNG') || field.includes('SO_LUONG') || field.includes('XUAT') || field.includes('NHAP')) return 65;
+        if (label.includes('SKU') || field === 'SKU') return 110;
+        if (label.includes('CHIẾT SUẤT') || label.includes('CHIET XUAT') || field.includes('CHIET')) return 75;
+        if (label.includes('TÍNH NĂNG') || label.includes('TINH NANG') || field.includes('TINH')) return 75;
+        return 0; // dynamic
+      });
+      const assignedWidth = colWidths.reduce((sum, w) => sum + w, 0);
+      const dynamicCount = colWidths.filter(w => w === 0).length;
+      const remainingWidth = Math.max(100, totalWidth - assignedWidth);
+      const defaultW = dynamicCount > 0 ? remainingWidth / dynamicCount : 80;
+      const finalColWidths = colWidths.map(w => w === 0 ? defaultW : w);
+
+      // Simple truncation helper
+      const truncateText = (txt: string, maxW: number, font: any, size: number) => {
+        const charLimit = Math.floor(maxW / (size * 0.55));
+        if (txt.length > charLimit) {
+          return txt.substring(0, Math.max(3, charLimit - 3)) + '...';
+        }
+        return txt;
+      };
+
+      // Draw Row helper
+      const drawRow = (p: any, rowCells: string[], bgCol: any, textCol: any, fontToUse: any, fontSize: number, heightRow: number, currentY: number) => {
+        p.drawRectangle({
+          x: 40,
+          y: currentY - heightRow,
+          width: totalWidth,
+          height: heightRow,
+          color: bgCol
+        });
+
+        let curX = 40;
+        rowCells.forEach((cellText, idxCol) => {
+          const colW = finalColWidths[idxCol];
+
+          p.drawRectangle({
+            x: curX,
+            y: currentY - heightRow,
+            width: colW,
+            height: heightRow,
+            borderColor: rgb(0.85, 0.85, 0.85),
+            borderWidth: 0.5
+          });
+
+          const cleanVal = removeVietnameseTones(cellText);
+          const truncated = truncateText(cleanVal, colW - 8, fontToUse, fontSize);
+
+          p.drawText(truncated, {
+            x: curX + 5,
+            y: currentY - heightRow + (heightRow - fontSize) / 2 + 1,
+            size: fontSize,
+            font: fontToUse,
+            color: textCol
+          });
+
+          curX += colW;
+        });
+      };
+
+      const headerRowHeight = 24;
+      const rowHeight = 20;
+
+      const drawTableHeader = (p: any, currentY: number) => {
+        const headers = columnsToRender.map(m => m.label);
+        drawRow(
+          p,
+          headers,
+          rgb(0.09, 0.18, 0.36),
+          rgb(1, 1, 1),
+          helveticaBold,
+          9,
+          headerRowHeight,
+          currentY
+        );
+      };
+
+      drawTableHeader(page, y);
+      y -= headerRowHeight;
+
+      let currentPage = page;
+      let pageIndex = 1;
+
+      rowData.forEach((record, rIdx) => {
+        if (y - rowHeight < 60) {
+          currentPage.drawText(`Trang ${pageIndex}`, {
+            x: width / 2 - 20,
+            y: 30,
+            size: 8,
+            font: helveticaFont,
+            color: rgb(0.5, 0.5, 0.5)
+          });
+
+          currentPage = pdfDoc.addPage([595.275, 841.89]);
+          pageIndex++;
+          y = height - 50;
+
+          drawTableHeader(currentPage, y);
+          y -= headerRowHeight;
+        }
+
+        const rowValues = columnsToRender.map(m => {
+          let cellVal: any = '';
+          const cleanExcelCol = m.excelColumn.trim().toUpperCase();
+          const cleanDataField = (m.dataField || '').trim().toUpperCase();
+
+          if (cleanExcelCol === 'STT' || cleanDataField === 'STT') {
+            cellVal = rIdx + 1;
+          } else {
+            if (m.dataField && record[m.dataField] !== undefined) {
+              cellVal = record[m.dataField];
+            } else if (record[m.excelColumn] !== undefined) {
+              cellVal = record[m.excelColumn];
+            } else {
+              // Thử tìm khớp không phân biệt chữ hoa chữ thường
+              const foundKey = Object.keys(record).find(k => k.toUpperCase() === cleanDataField || k.toUpperCase() === cleanExcelCol);
+              if (foundKey) {
+                cellVal = record[foundKey];
+              } else if (cleanDataField.includes('SKU') || cleanExcelCol.includes('SKU')) {
+                // Fallback lấy giá trị SKU
+                cellVal = record.SKU ?? record.sku ?? record.Sku;
+              }
+            }
+          }
+          return cellVal !== null && cellVal !== undefined ? String(cellVal) : '';
+        });
+
+        const isEven = rIdx % 2 === 0;
+        const rowBg = isEven ? rgb(1, 1, 1) : rgb(0.97, 0.98, 0.99);
+
+        drawRow(
+          currentPage,
+          rowValues,
+          rowBg,
+          rgb(0.2, 0.2, 0.2),
+          helveticaFont,
+          8,
+          rowHeight,
+          y
+        );
+
+        y -= rowHeight;
+      });
+
+      currentPage.drawText(`Trang ${pageIndex}`, {
+        x: width / 2 - 20,
+        y: 30,
+        size: 8,
+        font: helveticaFont,
+        color: rgb(0.5, 0.5, 0.5)
+      });
+
+      const pdfBytes = await pdfDoc.save();
+      const blob = new Blob([pdfBytes], { type: 'application/pdf' });
+      onDownload(blob, `Bao_Cao_${template.name}_${new Date().toISOString().substring(0, 10)}.pdf`);
+    } else {
+      const pdfDoc = await PDFDocument.load(arrayBuffer);
+      const form = pdfDoc.getForm();
+      const fields = form.getFields();
 
     const foundPlaceholders = fields.map(f => f.getName());
 
@@ -2511,9 +2862,9 @@ export async function exportReportWithFilters({
       
       if (placeholder === 'DETAILS' || placeholder === 'REPORT_ROWS') {
         dataField = '(TABLE_DATA)';
-        const hasGroupBy = template.groupByFields && template.groupByFields.length > 0;
+        const hasGroupBy = activeGroupByFields && activeGroupByFields.length > 0;
         const count = hasGroupBy 
-          ? groupAndAggregateData({ data: previewData, groupByFields: template.groupByFields || [] }).length
+          ? groupAndAggregateData({ data: previewData, groupByFields: activeGroupByFields }).length
           : previewData.length;
         mappedValue = `[Danh sách bảng: ${count} dòng]`;
       }
@@ -2571,7 +2922,7 @@ export async function exportReportWithFilters({
 
         try {
           const textField = form.getTextField(name);
-          textField.setText(textTable);
+          textField.setText(removeVietnameseTones(textTable));
           isFilled = true;
           console.log(`[PDF Write] Ghi giá trị PIVOT vào field ${name}: ${textTable.substring(0, 50)}...`);
         } catch (e) {}
@@ -2581,25 +2932,36 @@ export async function exportReportWithFilters({
         try {
           const detailField = form.getTextField(name);
           let detailsText = '';
-          const hasGroupBy = template.groupByFields && template.groupByFields.length > 0;
+          const hasGroupBy = activeGroupByFields && activeGroupByFields.length > 0;
           const finalRows = hasGroupBy 
-            ? groupAndAggregateData({ data: previewData, groupByFields: template.groupByFields || [] })
+            ? groupAndAggregateData({ data: previewData, groupByFields: activeGroupByFields })
             : previewData;
 
           finalRows.forEach((item, idx) => {
             if (template.columnMappings && template.columnMappings.length > 0) {
               const mappedCols = template.columnMappings.map(m => {
                 let val = '';
+                const cleanDataField = (m.dataField || '').trim().toUpperCase();
+                const cleanExcelCol = m.excelColumn.trim().toUpperCase();
+
                 if (m.dataField && item[m.dataField] !== undefined) {
                   val = item[m.dataField];
                 } else if (item[m.excelColumn] !== undefined) {
                   val = item[m.excelColumn];
+                } else {
+                  // Thử khớp không phân biệt chữ hoa thường
+                  const foundKey = Object.keys(item).find(k => k.toUpperCase() === cleanDataField || k.toUpperCase() === cleanExcelCol);
+                  if (foundKey) {
+                    val = item[foundKey];
+                  } else if (cleanDataField.includes('SKU') || cleanExcelCol.includes('SKU')) {
+                    val = item.SKU ?? item.sku ?? item.Sku;
+                  }
                 }
                 return `${m.label}: ${val ?? ''}`;
               });
               detailsText += `${idx + 1}. ${mappedCols.join(' | ')}\n`;
             } else if (hasGroupBy) {
-              const groupDescParts = (template.groupByFields || []).map(f => {
+              const groupDescParts = (activeGroupByFields || []).map(f => {
                 let label = f === 'CHIET_XUAT' || f === 'CHIET_SUAT' ? 'Chiết suất' : f === 'THUONG_HIEU' ? 'Thương hiệu' : f === 'TINH_NANG' ? 'Tính năng' : f;
                 let val = item[f];
                 if (f === 'CHIET_XUAT' || f === 'CHIET_SUAT') val = item.CHIET_SUAT || item.CHIET_XUAT;
@@ -2612,7 +2974,7 @@ export async function exportReportWithFilters({
               detailsText += `${idx + 1}. SKU: ${item.SKU} | Tên: ${item.TEN_SP || item.TEN_SAN_PHAM || ''} | SL: ${item.SO_LUONG ?? 0} | Loại: ${item.LOAI || ''}\n`;
             }
           });
-          detailField.setText(detailsText);
+          detailField.setText(removeVietnameseTones(detailsText));
           isFilled = true;
           console.log(`[PDF Write] Ghi giá trị DETAILS vào field ${name}: [${finalRows.length} dòng]`);
         } catch (e) {}
@@ -2621,30 +2983,58 @@ export async function exportReportWithFilters({
       if (!isFilled && previewStaticValues[name] !== undefined) {
         try {
           const textField = form.getTextField(name);
-          textField.setText(String(previewStaticValues[name] ?? ''));
+          textField.setText(removeVietnameseTones(String(previewStaticValues[name] ?? '')));
           isFilled = true;
           console.log(`[PDF Write] Ghi giá trị STATIC vào field ${name}: ${previewStaticValues[name]}`);
         } catch (e) {}
       }
       
       if (!isFilled && mapping && mapping.dataField) {
+        const cleanDataField = mapping.dataField.trim().toUpperCase();
+        let val: any = undefined;
         if (activeRecord[mapping.dataField] !== undefined) {
+          val = activeRecord[mapping.dataField];
+        } else {
+          const foundKey = Object.keys(activeRecord).find(k => k.toUpperCase() === cleanDataField);
+          if (foundKey) {
+            val = activeRecord[foundKey];
+          } else if (cleanDataField.includes('SKU')) {
+            val = (activeRecord as any).SKU ?? (activeRecord as any).sku ?? (activeRecord as any).Sku;
+          }
+        }
+
+        if (val !== undefined) {
           try {
             const textField = form.getTextField(name);
-            textField.setText(String(activeRecord[mapping.dataField] ?? ''));
+            textField.setText(removeVietnameseTones(String(val ?? '')));
             isFilled = true;
-            console.log(`[PDF Write] Ghi giá trị MAPPED vào field ${name}: ${activeRecord[mapping.dataField]}`);
+            console.log(`[PDF Write] Ghi giá trị MAPPED vào field ${name}: ${val}`);
           } catch (e) {}
         }
       }
       
-      if (!isFilled && activeRecord[name] !== undefined) {
-        try {
-          const textField = form.getTextField(name);
-          textField.setText(String(activeRecord[name] ?? ''));
-          isFilled = true;
-          console.log(`[PDF Write] Ghi giá trị DIRECT vào field ${name}: ${activeRecord[name]}`);
-        } catch (e) {}
+      if (!isFilled) {
+        const cleanName = name.trim().toUpperCase();
+        let val: any = undefined;
+        if (activeRecord[name] !== undefined) {
+          val = activeRecord[name];
+        } else {
+          const foundKey = Object.keys(activeRecord).find(k => k.toUpperCase() === cleanName);
+          if (foundKey) {
+            val = activeRecord[foundKey];
+          } else if (cleanName.includes('SKU')) {
+            val = (activeRecord as any).SKU ?? (activeRecord as any).sku ?? (activeRecord as any).Sku;
+          }
+        }
+
+        if (val !== undefined) {
+          try {
+            const textField = form.getTextField(name);
+            textField.setText(removeVietnameseTones(String(val ?? '')));
+            isFilled = true;
+            console.log(`[PDF Write] Ghi giá trị DIRECT vào field ${name}: ${val}`);
+          } catch (e) {}
+        }
       }
       
       if (!isFilled) {
@@ -2673,6 +3063,7 @@ export async function exportReportWithFilters({
     const pdfBytes = await pdfDoc.save();
     const blob = new Blob([pdfBytes], { type: 'application/pdf' });
     onDownload(blob, `Bao_Cao_${template.name}_${new Date().toISOString().substring(0, 10)}.pdf`);
+    }
   }
 }
 
@@ -2686,5 +3077,26 @@ function excelColumnToNumber(column: string): number {
     }
   }
   return num;
+}
+
+export function removeVietnameseTones(str: string): string {
+  if (!str) return '';
+  str = str.replace(/à|á|ạ|ả|ã|â|ầ|ấ|ậ|ẩ|ẫ|ă|ằ|ắ|ặ|ẳ|ẵ/g, "a");
+  str = str.replace(/è|é|ẹ|ẻ|ẽ|ê|ề|ế|ệ|ể|ễ/g, "e");
+  str = str.replace(/ì|í|ị|ỉ|ĩ/g, "i");
+  str = str.replace(/ò|ó|ọ|ỏ|õ|ô|ồ|ố|ộ|ổ|ỗ|ơ|ờ|ớ|ợ|ở|ỡ/g, "o");
+  str = str.replace(/ù|ú|ụ|ủ|ũ|ư|ừ|ứ|ự|ử|ữ/g, "u");
+  str = str.replace(/ỳ|ý|ỵ|ỷ|ỹ/g, "y");
+  str = str.replace(/đ/g, "d");
+  str = str.replace(/À|Á|Ạ|Ả|Ã|Â|Ầ|Ấ|Ậ|Ẩ|Ẫ|Ă|Ằ|Ắ|Ặ|Ẳ|Ẵ/g, "A");
+  str = str.replace(/È|É|Ẹ|Ẻ|Ẽ|Ê|Ề|Ế|Ệ|Ể|Ễ/g, "E");
+  str = str.replace(/Ì|Í|Ị|Ỉ|Ĩ/g, "I");
+  str = str.replace(/Ò|Ó|Ọ|Ỏ|Õ|Ô|Ồ|Ố|Ộ|Ổ|Ỗ|Ơ|Ờ|Ớ|Ợ|Ở|Ỡ/g, "O");
+  str = str.replace(/Ù|Ú|Ụ|Ủ|Ũ|Ư|Ừ|Ứ|Ự|Ử|Ữ/g, "U");
+  str = str.replace(/Ỳ|Ý|Ỵ|Ỷ|Ỹ/g, "Y");
+  str = str.replace(/Đ/g, "D");
+  // Some system might use combined accents
+  str = str.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+  return str;
 }
 

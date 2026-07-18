@@ -775,7 +775,10 @@ export default function Dashboard({
 
   // --- 11. XỬ LÝ XUẤT FILE BÁO CÁO (EXCEL/PDF) ---
   const handleExportData = (type: 'EXCEL' | 'PDF') => {
-    const templatesOfType = exportTemplates.filter(t => t.type === type);
+    // Cho phép xuất PDF sử dụng cấu hình mẫu Excel (Đồng bộ cấu hình "User cấu hình 1 lần")
+    const templatesOfType = type === 'PDF' 
+      ? exportTemplates 
+      : exportTemplates.filter(t => t.type === 'EXCEL');
     
     if (templatesOfType.length === 0) {
       if (onTriggerToast) {
@@ -835,6 +838,7 @@ export default function Dashboard({
 
       await exportReportWithFilters({
         template: customizedTemplate,
+        exportFormat: exportModalType,
         startDate,
         endDate,
         selectedBranch,
@@ -2776,11 +2780,10 @@ export default function Dashboard({
                         }}
                         className="w-full bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 font-bold text-slate-700 text-xs focus:outline-none cursor-pointer"
                       >
-                        {exportTemplates
-                          .filter(t => t.type === exportModalType)
+                        {(exportModalType === 'PDF' ? exportTemplates : exportTemplates.filter(t => t.type === 'EXCEL'))
                           .map(t => (
                             <option key={t.id} value={t.id}>
-                              {t.name} {t.isDefault ? '(Mặc định)' : ''}
+                              {t.name} {t.isDefault ? '(Mặc định)' : ''} {t.type !== exportModalType ? `(${t.type})` : ''}
                             </option>
                           ))}
                       </select>
