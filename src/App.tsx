@@ -668,7 +668,7 @@ export default function App() {
     // Chạy kiểm tra ngay khi mount
     checkConnection();
 
-    const interval = setInterval(checkConnection, 45000); // 45 giây một lần
+    const interval = setInterval(checkConnection, 300000); // 5 phút
 
     const handleOnline = async () => {
       if (isDebug) {
@@ -707,7 +707,7 @@ export default function App() {
     };
   }, []);
 
-  // Định kỳ mỗi 2 phút xác thực lại User với Supabase
+  // Định kỳ mỗi 10 phút xác thực lại User với Supabase
   useEffect(() => {
     if (!currentUser || !currentUser.id) return;
 
@@ -717,7 +717,7 @@ export default function App() {
     const checkActiveUserInterval = setInterval(async () => {
       console.log("[Auth Guard] Đang kiểm tra phiên đăng nhập của người dùng định kỳ...");
       await verifySession();
-    }, 120000); // 2 phút
+    }, 600000); // 10 phút
 
     return () => clearInterval(checkActiveUserInterval);
   }, [currentUser]);

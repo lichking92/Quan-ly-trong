@@ -161,6 +161,73 @@ export function getLevelRanges(maxVal: number) {
   return ranges;
 }
 
+// --- AN TOÀN CHO BIỂU ĐỒ RECHARTS (TRÁNH WARNING WIDTH/HEIGHT = 0 VÀ RENDER ẨN) ---
+interface SafeResponsiveContainerProps {
+  children: React.ReactElement;
+  height: number | string;
+  minHeight?: number;
+}
+
+function SafeResponsiveContainer({ children, height, minHeight }: SafeResponsiveContainerProps) {
+  const containerRef = React.useRef<HTMLDivElement>(null);
+  const [shouldRender, setShouldRender] = React.useState<boolean>(false);
+
+  React.useEffect(() => {
+    let active = true;
+    const checkSize = () => {
+      if (!active) return;
+      if (containerRef.current) {
+        const { clientWidth } = containerRef.current;
+        // Chỉ render khi container thực sự hiển thị và có chiều rộng > 0
+        if (clientWidth > 0) {
+          setShouldRender(true);
+        } else {
+          setShouldRender(false);
+        }
+      }
+    };
+
+    // Chạy kiểm tra kích thước lần đầu tiên
+    checkSize();
+
+    // Sử dụng ResizeObserver để lắng nghe thay đổi kích thước và ẩn hiện
+    let observer: ResizeObserver | null = null;
+    if (typeof window !== 'undefined' && 'ResizeObserver' in window && containerRef.current) {
+      observer = new ResizeObserver(() => {
+        requestAnimationFrame(() => {
+          checkSize();
+        });
+      });
+      observer.observe(containerRef.current);
+    }
+
+    return () => {
+      active = false;
+      if (observer) {
+        observer.disconnect();
+      }
+    };
+  }, []);
+
+  return (
+    <div 
+      ref={containerRef} 
+      className="w-full relative" 
+      style={{ height: height, minHeight: minHeight }}
+    >
+      {shouldRender ? (
+        <ResponsiveContainer width="100%" height="100%">
+          {children}
+        </ResponsiveContainer>
+      ) : (
+        <div className="h-full w-full flex items-center justify-center text-xs text-slate-400 font-mono italic bg-slate-50/20 rounded-xl" style={{ minHeight: minHeight }}>
+          Đang tải đồ thị...
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function Dashboard({ 
   sanPhams, 
   nhapXuats, 
@@ -1704,250 +1771,258 @@ export default function Dashboard({
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         
         {/* Biểu đồ 1: Biến Động Nhập Xuất Theo Ngày (Line hoặc Stacked Bar) */}
-        <div className={`bento-card !p-5 ${fullscreenChart === 'dailyTx' ? 'fixed inset-4 z-50 bg-white/95 backdrop-blur-md shadow-2xl flex flex-col justify-between' : ''}`}>
-          <h3 className="font-sans font-bold text-slate-850 text-xs uppercase border-b border-slate-50 pb-2 mb-4 flex justify-between items-center">
-            <div className="flex items-center gap-2">
-              <span>Biến Động Nhập Xuất Theo Ngày</span>
-              {dailyTxZoom && (
-                <span className="text-[9px] font-mono px-1.5 py-0.5 bg-blue-50 text-blue-600 rounded">
-                  Đã thu phóng
-                </span>
-              )}
-            </div>
-            {renderChartControls('dailyTx', { 
-              dataLength: transactionByDateData.length, 
-              zoomState: dailyTxZoom, 
-              setZoomState: setDailyTxZoom, 
-              refAreaState: dailyTxRefArea 
-            })}
-          </h3>
-          
-          {!collapsedCharts['dailyTx'] && (
-            <div className={`w-full ${fullscreenChart === 'dailyTx' ? 'flex-1 h-[calc(100%-60px)] min-h-[300px]' : 'h-80 min-h-[300px]'}`}>
-              {zoomDailyTxData.length > 0 && isMounted ? (
-                <ResponsiveContainer width="100%" height="100%" minHeight={250}>
-                  {chartType === 'line' ? (
-                    <LineChart 
-                      data={zoomDailyTxData} 
-                      margin={{ top: 10, right: 10, left: -20, bottom: 0 }}
-                      onMouseDown={(e) => handleChartMouseDown(e, (val) => setDailyTxRefArea(val))}
-                      onMouseMove={(e) => handleChartMouseMove(e, dailyTxRefArea, (val) => setDailyTxRefArea(val))}
-                      onMouseUp={() => handleChartMouseUp(dailyTxRefArea, (val) => setDailyTxRefArea(val), dailyTxZoom, setDailyTxZoom, transactionByDateData.length)}
-                    >
-                      <XAxis dataKey="name" stroke="#94a3b8" fontSize={10} tickLine={false} />
-                      <YAxis stroke="#94a3b8" fontSize={11} tickLine={false} />
-                      <Tooltip contentStyle={{ borderRadius: 8, border: '1px solid #f1f5f9', fontSize: 11 }} />
-                      <Legend wrapperStyle={{ fontSize: 11 }} />
-                      <Line type="monotone" dataKey="Nhập" stroke="#10b981" strokeWidth={2.5} dot={{ r: 4 }} activeDot={{ r: 6 }} />
-                      <Line type="monotone" dataKey="Xuất" stroke="#8b5cf6" strokeWidth={2.5} dot={{ r: 4 }} activeDot={{ r: 6 }} />
-                      {dailyTxRefArea.left !== null && dailyTxRefArea.right !== null && (
-                        <ReferenceArea 
-                          x1={zoomDailyTxData[Number(dailyTxRefArea.left)]?.name} 
-                          x2={zoomDailyTxData[Number(dailyTxRefArea.right)]?.name} 
-                          {...({ fill: '#3b82f6', fillOpacity: 0.15 } as any)}
-                        />
-                      )}
-                    </LineChart>
-                  ) : (
+        {(!fullscreenChart || fullscreenChart === 'dailyTx') && (
+          <div className={`bento-card !p-5 ${fullscreenChart === 'dailyTx' ? 'fixed inset-4 z-50 bg-white/95 backdrop-blur-md shadow-2xl flex flex-col justify-between' : ''}`}>
+            <h3 className="font-sans font-bold text-slate-850 text-xs uppercase border-b border-slate-50 pb-2 mb-4 flex justify-between items-center">
+              <div className="flex items-center gap-2">
+                <span>Biến Động Nhập Xuất Theo Ngày</span>
+                {dailyTxZoom && (
+                  <span className="text-[9px] font-mono px-1.5 py-0.5 bg-blue-50 text-blue-600 rounded">
+                    Đã thu phóng
+                  </span>
+                )}
+              </div>
+              {renderChartControls('dailyTx', { 
+                dataLength: transactionByDateData.length, 
+                zoomState: dailyTxZoom, 
+                setZoomState: setDailyTxZoom, 
+                refAreaState: dailyTxRefArea 
+              })}
+            </h3>
+            
+            {!collapsedCharts['dailyTx'] && (
+              <div className={`w-full ${fullscreenChart === 'dailyTx' ? 'flex-1 h-[calc(100%-60px)] min-h-[300px]' : 'h-80 min-h-[300px]'}`}>
+                {zoomDailyTxData.length > 0 && isMounted ? (
+                  <SafeResponsiveContainer height={fullscreenChart === 'dailyTx' ? 'calc(100% - 20px)' : 300} minHeight={250}>
+                    {chartType === 'line' ? (
+                      <LineChart 
+                        data={zoomDailyTxData} 
+                        margin={{ top: 10, right: 10, left: -20, bottom: 0 }}
+                        onMouseDown={(e) => handleChartMouseDown(e, (val) => setDailyTxRefArea(val))}
+                        onMouseMove={(e) => handleChartMouseMove(e, dailyTxRefArea, (val) => setDailyTxRefArea(val))}
+                        onMouseUp={() => handleChartMouseUp(dailyTxRefArea, (val) => setDailyTxRefArea(val), dailyTxZoom, setDailyTxZoom, transactionByDateData.length)}
+                      >
+                        <XAxis dataKey="name" stroke="#94a3b8" fontSize={10} tickLine={false} />
+                        <YAxis stroke="#94a3b8" fontSize={11} tickLine={false} />
+                        <Tooltip contentStyle={{ borderRadius: 8, border: '1px solid #f1f5f9', fontSize: 11 }} />
+                        <Legend wrapperStyle={{ fontSize: 11 }} />
+                        <Line type="monotone" dataKey="Nhập" stroke="#10b981" strokeWidth={2.5} dot={{ r: 4 }} activeDot={{ r: 6 }} />
+                        <Line type="monotone" dataKey="Xuất" stroke="#8b5cf6" strokeWidth={2.5} dot={{ r: 4 }} activeDot={{ r: 6 }} />
+                        {dailyTxRefArea.left !== null && dailyTxRefArea.right !== null && (
+                          <ReferenceArea 
+                            x1={zoomDailyTxData[Number(dailyTxRefArea.left)]?.name} 
+                            x2={zoomDailyTxData[Number(dailyTxRefArea.right)]?.name} 
+                            {...({ fill: '#3b82f6', fillOpacity: 0.15 } as any)}
+                          />
+                        )}
+                      </LineChart>
+                    ) : (
+                      <BarChart 
+                        data={zoomDailyTxData} 
+                        margin={{ top: 10, right: 10, left: -20, bottom: 0 }}
+                        onMouseDown={(e) => handleChartMouseDown(e, (val) => setDailyTxRefArea(val))}
+                        onMouseMove={(e) => handleChartMouseMove(e, dailyTxRefArea, (val) => setDailyTxRefArea(val))}
+                        onMouseUp={() => handleChartMouseUp(dailyTxRefArea, (val) => setDailyTxRefArea(val), dailyTxZoom, setDailyTxZoom, transactionByDateData.length)}
+                      >
+                        <XAxis dataKey="name" stroke="#94a3b8" fontSize={10} tickLine={false} />
+                        <YAxis stroke="#94a3b8" fontSize={11} tickLine={false} />
+                        <Tooltip contentStyle={{ borderRadius: 8, border: '1px solid #f1f5f9', fontSize: 11 }} />
+                        <Legend wrapperStyle={{ fontSize: 11 }} />
+                        <Bar dataKey="Nhập" stackId="a" fill="#10b981" />
+                        <Bar dataKey="Xuất" stackId="a" fill="#8b5cf6" radius={[4, 4, 0, 0]} />
+                        {dailyTxRefArea.left !== null && dailyTxRefArea.right !== null && (
+                          <ReferenceArea 
+                            x1={zoomDailyTxData[Number(dailyTxRefArea.left)]?.name} 
+                            x2={zoomDailyTxData[Number(dailyTxRefArea.right)]?.name} 
+                            {...({ fill: '#3b82f6', fillOpacity: 0.15 } as any)}
+                          />
+                        )}
+                      </BarChart>
+                    )}
+                  </SafeResponsiveContainer>
+                ) : (
+                  <div className="h-full flex items-center justify-center text-xs text-slate-400 font-mono">
+                    Không có dữ liệu giao dịch trong khoảng thời gian này
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Biểu đồ 5: Tỷ Lệ Hàng Tồn Kho Theo Thương Hiệu (Pie Chart Mới) */}
+        {(!fullscreenChart || fullscreenChart === 'brandStock') && (
+          <div className={`bento-card !p-5 ${fullscreenChart === 'brandStock' ? 'fixed inset-4 z-50 bg-white/95 backdrop-blur-md shadow-2xl flex flex-col justify-between' : ''}`}>
+            <h3 className="font-sans font-bold text-slate-800 text-xs uppercase border-b border-slate-50 pb-2 mb-4 flex justify-between items-center">
+              <div className="flex items-center gap-2">
+                <span>Tỷ Lệ Hàng Tồn Kho Theo Thương Hiệu</span>
+                {brandStockLimit < brandStockData.length && (
+                  <span className="text-[9px] font-mono px-1.5 py-0.5 bg-blue-50 text-blue-600 rounded">
+                    Top {brandStockLimit}
+                  </span>
+                )}
+              </div>
+              {renderChartControls('brandStock', { isPie: true })}
+            </h3>
+            
+            {!collapsedCharts['brandStock'] && (
+              <div className={`flex flex-col sm:flex-row items-center justify-around gap-4 ${fullscreenChart === 'brandStock' ? 'flex-1 h-[calc(100%-60px)] min-h-[300px]' : 'h-80 min-h-[300px]'}`}>
+                {zoomBrandStockData.length > 0 && isMounted ? (
+                  <>
+                    <div className={`${fullscreenChart === 'brandStock' ? 'h-72 w-72 min-h-[288px] min-w-[288px]' : 'h-44 w-44 min-h-[176px] min-w-[176px]'} transition-all duration-300 relative`}>
+                      <SafeResponsiveContainer height={fullscreenChart === 'brandStock' ? 288 : 176} minHeight={176}>
+                        <PieChart>
+                          <Pie
+                            data={zoomBrandStockData}
+                            cx="50%"
+                            cy="50%"
+                            innerRadius={55 * brandStockZoom * (fullscreenChart === 'brandStock' ? 1.5 : 1)}
+                            outerRadius={75 * brandStockZoom * (fullscreenChart === 'brandStock' ? 1.5 : 1)}
+                            paddingAngle={4}
+                            dataKey="value"
+                          >
+                            {zoomBrandStockData.map((entry, index) => (
+                              <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                            ))}
+                          </Pie>
+                          <Tooltip formatter={(value) => `${value} miếng`} />
+                        </PieChart>
+                      </SafeResponsiveContainer>
+                    </div>
+                    <div className="space-y-2 overflow-y-auto max-h-48 pr-1 flex-1">
+                      {zoomBrandStockData.map((item, index) => (
+                        <div key={item.name} className="flex items-center justify-between text-xs font-semibold">
+                          <div className="flex items-center gap-2">
+                            <span className="w-2.5 h-2.5 rounded-full block" style={{ backgroundColor: COLORS[index % COLORS.length] }} />
+                            <span className="text-slate-600 truncate max-w-[120px]">{item.name}</span>
+                          </div>
+                          <span className="font-mono text-slate-800">{item.value}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </>
+                ) : (
+                  <div className="text-xs text-slate-400 font-mono">
+                    Không có dữ liệu tồn kho thương hiệu
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Biểu đồ 2: Top 5 SKU Xuất Nhiều Nhất (Bar Chart) */}
+        {(!fullscreenChart || fullscreenChart === 'topXuat') && (
+          <div className={`bento-card !p-5 ${fullscreenChart === 'topXuat' ? 'fixed inset-4 z-50 bg-white/95 backdrop-blur-md shadow-2xl flex flex-col justify-between' : ''}`}>
+            <h3 className="font-sans font-bold text-slate-800 text-xs uppercase border-b border-slate-50 pb-2 mb-4 flex justify-between items-center">
+              <div className="flex items-center gap-2">
+                <span>Top 5 SKU Xuất Kho Nhiều Nhất</span>
+                {topXuatZoom && (
+                  <span className="text-[9px] font-mono px-1.5 py-0.5 bg-blue-50 text-blue-600 rounded">
+                    Đã thu phóng
+                  </span>
+                )}
+              </div>
+              {renderChartControls('topXuat', { 
+                dataLength: topXuatData.length, 
+                zoomState: topXuatZoom, 
+                setZoomState: setTopXuatZoom, 
+                refAreaState: topXuatRefArea 
+              })}
+            </h3>
+            
+            {!collapsedCharts['topXuat'] && (
+              <div className={`w-full ${fullscreenChart === 'topXuat' ? 'flex-1 h-[calc(100%-60px)] min-h-[300px]' : 'h-80 min-h-[300px]'}`}>
+                {zoomTopXuatData.length > 0 && isMounted ? (
+                  <SafeResponsiveContainer height={fullscreenChart === 'topXuat' ? 'calc(100% - 20px)' : 300} minHeight={250}>
                     <BarChart 
-                      data={zoomDailyTxData} 
+                      data={zoomTopXuatData} 
                       margin={{ top: 10, right: 10, left: -20, bottom: 0 }}
-                      onMouseDown={(e) => handleChartMouseDown(e, (val) => setDailyTxRefArea(val))}
-                      onMouseMove={(e) => handleChartMouseMove(e, dailyTxRefArea, (val) => setDailyTxRefArea(val))}
-                      onMouseUp={() => handleChartMouseUp(dailyTxRefArea, (val) => setDailyTxRefArea(val), dailyTxZoom, setDailyTxZoom, transactionByDateData.length)}
+                      onMouseDown={(e) => handleChartMouseDown(e, (val) => setTopXuatRefArea(val))}
+                      onMouseMove={(e) => handleChartMouseMove(e, topXuatRefArea, (val) => setTopXuatRefArea(val))}
+                      onMouseUp={() => handleChartMouseUp(topXuatRefArea, (val) => setTopXuatRefArea(val), topXuatZoom, setTopXuatZoom, topXuatData.length)}
                     >
-                      <XAxis dataKey="name" stroke="#94a3b8" fontSize={10} tickLine={false} />
+                      <XAxis dataKey="name" stroke="#94a3b8" fontSize={9} tickLine={false} />
                       <YAxis stroke="#94a3b8" fontSize={11} tickLine={false} />
                       <Tooltip contentStyle={{ borderRadius: 8, border: '1px solid #f1f5f9', fontSize: 11 }} />
-                      <Legend wrapperStyle={{ fontSize: 11 }} />
-                      <Bar dataKey="Nhập" stackId="a" fill="#10b981" />
-                      <Bar dataKey="Xuất" stackId="a" fill="#8b5cf6" radius={[4, 4, 0, 0]} />
-                      {dailyTxRefArea.left !== null && dailyTxRefArea.right !== null && (
+                      <Bar dataKey="Số lượng xuất" fill="#2563eb" radius={[6, 6, 0, 0]} maxBarSize={40}>
+                        {zoomTopXuatData.map((entry, index) => (
+                          <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                        ))}
+                      </Bar>
+                      {topXuatRefArea.left !== null && topXuatRefArea.right !== null && (
                         <ReferenceArea 
-                          x1={zoomDailyTxData[Number(dailyTxRefArea.left)]?.name} 
-                          x2={zoomDailyTxData[Number(dailyTxRefArea.right)]?.name} 
+                          x1={zoomTopXuatData[Number(topXuatRefArea.left)]?.name} 
+                          x2={zoomTopXuatData[Number(topXuatRefArea.right)]?.name} 
                           {...({ fill: '#3b82f6', fillOpacity: 0.15 } as any)}
                         />
                       )}
                     </BarChart>
-                  )}
-                </ResponsiveContainer>
-              ) : (
-                <div className="h-full flex items-center justify-center text-xs text-slate-400 font-mono">
-                  Không có dữ liệu giao dịch trong khoảng thời gian này
-                </div>
-              )}
-            </div>
-          )}
-        </div>
-
-        {/* Biểu đồ 5: Tỷ Lệ Hàng Tồn Kho Theo Thương Hiệu (Pie Chart Mới) */}
-        <div className={`bento-card !p-5 ${fullscreenChart === 'brandStock' ? 'fixed inset-4 z-50 bg-white/95 backdrop-blur-md shadow-2xl flex flex-col justify-between' : ''}`}>
-          <h3 className="font-sans font-bold text-slate-800 text-xs uppercase border-b border-slate-50 pb-2 mb-4 flex justify-between items-center">
-            <div className="flex items-center gap-2">
-              <span>Tỷ Lệ Hàng Tồn Kho Theo Thương Hiệu</span>
-              {brandStockLimit < brandStockData.length && (
-                <span className="text-[9px] font-mono px-1.5 py-0.5 bg-blue-50 text-blue-600 rounded">
-                  Top {brandStockLimit}
-                </span>
-              )}
-            </div>
-            {renderChartControls('brandStock', { isPie: true })}
-          </h3>
-          
-          {!collapsedCharts['brandStock'] && (
-            <div className={`flex flex-col sm:flex-row items-center justify-around gap-4 ${fullscreenChart === 'brandStock' ? 'flex-1 h-[calc(100%-60px)] min-h-[300px]' : 'h-80 min-h-[300px]'}`}>
-              {zoomBrandStockData.length > 0 && isMounted ? (
-                <>
-                  <div className={`${fullscreenChart === 'brandStock' ? 'h-72 w-72 min-h-[288px] min-w-[288px]' : 'h-44 w-44 min-h-[176px] min-w-[176px]'} transition-all duration-300 relative`}>
-                    <ResponsiveContainer width="100%" height="100%" minHeight={176}>
-                      <PieChart>
-                        <Pie
-                          data={zoomBrandStockData}
-                          cx="50%"
-                          cy="50%"
-                          innerRadius={55 * brandStockZoom * (fullscreenChart === 'brandStock' ? 1.5 : 1)}
-                          outerRadius={75 * brandStockZoom * (fullscreenChart === 'brandStock' ? 1.5 : 1)}
-                          paddingAngle={4}
-                          dataKey="value"
-                        >
-                          {zoomBrandStockData.map((entry, index) => (
-                            <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
-                          ))}
-                        </Pie>
-                        <Tooltip formatter={(value) => `${value} miếng`} />
-                      </PieChart>
-                    </ResponsiveContainer>
+                  </SafeResponsiveContainer>
+                ) : (
+                  <div className="h-full flex items-center justify-center text-xs text-slate-400 font-mono">
+                    Chưa có dữ liệu xuất kho phát sinh trong kỳ lọc
                   </div>
-                  <div className="space-y-2 overflow-y-auto max-h-48 pr-1 flex-1">
-                    {zoomBrandStockData.map((item, index) => (
-                      <div key={item.name} className="flex items-center justify-between text-xs font-semibold">
-                        <div className="flex items-center gap-2">
-                          <span className="w-2.5 h-2.5 rounded-full block" style={{ backgroundColor: COLORS[index % COLORS.length] }} />
-                          <span className="text-slate-600 truncate max-w-[120px]">{item.name}</span>
-                        </div>
-                        <span className="font-mono text-slate-800">{item.value}</span>
-                      </div>
-                    ))}
-                  </div>
-                </>
-              ) : (
-                <div className="text-xs text-slate-400 font-mono">
-                  Không có dữ liệu tồn kho thương hiệu
-                </div>
-              )}
-            </div>
-          )}
-        </div>
-
-        {/* Biểu đồ 2: Top 5 SKU Xuất Nhiều Nhất (Bar Chart) */}
-        <div className={`bento-card !p-5 ${fullscreenChart === 'topXuat' ? 'fixed inset-4 z-50 bg-white/95 backdrop-blur-md shadow-2xl flex flex-col justify-between' : ''}`}>
-          <h3 className="font-sans font-bold text-slate-800 text-xs uppercase border-b border-slate-50 pb-2 mb-4 flex justify-between items-center">
-            <div className="flex items-center gap-2">
-              <span>Top 5 SKU Xuất Kho Nhiều Nhất</span>
-              {topXuatZoom && (
-                <span className="text-[9px] font-mono px-1.5 py-0.5 bg-blue-50 text-blue-600 rounded">
-                  Đã thu phóng
-                </span>
-              )}
-            </div>
-            {renderChartControls('topXuat', { 
-              dataLength: topXuatData.length, 
-              zoomState: topXuatZoom, 
-              setZoomState: setTopXuatZoom, 
-              refAreaState: topXuatRefArea 
-            })}
-          </h3>
-          
-          {!collapsedCharts['topXuat'] && (
-            <div className={`w-full ${fullscreenChart === 'topXuat' ? 'flex-1 h-[calc(100%-60px)] min-h-[300px]' : 'h-80 min-h-[300px]'}`}>
-              {zoomTopXuatData.length > 0 && isMounted ? (
-                <ResponsiveContainer width="100%" height="100%" minHeight={250}>
-                  <BarChart 
-                    data={zoomTopXuatData} 
-                    margin={{ top: 10, right: 10, left: -20, bottom: 0 }}
-                    onMouseDown={(e) => handleChartMouseDown(e, (val) => setTopXuatRefArea(val))}
-                    onMouseMove={(e) => handleChartMouseMove(e, topXuatRefArea, (val) => setTopXuatRefArea(val))}
-                    onMouseUp={() => handleChartMouseUp(topXuatRefArea, (val) => setTopXuatRefArea(val), topXuatZoom, setTopXuatZoom, topXuatData.length)}
-                  >
-                    <XAxis dataKey="name" stroke="#94a3b8" fontSize={9} tickLine={false} />
-                    <YAxis stroke="#94a3b8" fontSize={11} tickLine={false} />
-                    <Tooltip contentStyle={{ borderRadius: 8, border: '1px solid #f1f5f9', fontSize: 11 }} />
-                    <Bar dataKey="Số lượng xuất" fill="#2563eb" radius={[6, 6, 0, 0]} maxBarSize={40}>
-                      {zoomTopXuatData.map((entry, index) => (
-                        <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
-                      ))}
-                    </Bar>
-                    {topXuatRefArea.left !== null && topXuatRefArea.right !== null && (
-                      <ReferenceArea 
-                        x1={zoomTopXuatData[Number(topXuatRefArea.left)]?.name} 
-                        x2={zoomTopXuatData[Number(topXuatRefArea.right)]?.name} 
-                        {...({ fill: '#3b82f6', fillOpacity: 0.15 } as any)}
-                      />
-                    )}
-                  </BarChart>
-                </ResponsiveContainer>
-              ) : (
-                <div className="h-full flex items-center justify-center text-xs text-slate-400 font-mono">
-                  Chưa có dữ liệu xuất kho phát sinh trong kỳ lọc
-                </div>
-              )}
-            </div>
-          )}
-        </div>
+                )}
+              </div>
+            )}
+          </div>
+        )}
 
         {/* Biểu đồ 3: Chi Nhánh Lấy Hàng Nhiều Nhất (Bar Chart) */}
-        <div className={`bento-card !p-5 bg-white border border-slate-100 rounded-2xl shadow-xs ${fullscreenChart === 'branch' ? 'fixed inset-4 z-50 bg-white/95 backdrop-blur-md shadow-2xl flex flex-col justify-between' : ''}`}>
-          <h3 className="font-sans font-bold text-slate-800 text-xs uppercase border-b border-slate-50 pb-2 mb-4 flex justify-between items-center">
-            <div className="flex items-center gap-2">
-              <span>Sản Lượng Xuất Theo Chi Nhánh</span>
-              {branchExportZoom && (
-                <span className="text-[9px] font-mono px-1.5 py-0.5 bg-blue-50 text-blue-600 rounded">
-                  Đã thu phóng
-                </span>
-              )}
-            </div>
-            {renderChartControls('branch', { 
-              dataLength: branchData.length, 
-              zoomState: branchExportZoom, 
-              setZoomState: setBranchExportZoom, 
-              refAreaState: branchExportRefArea 
-            })}
-          </h3>
-          
-          {!collapsedCharts['branch'] && (
-            <div className={`w-full ${fullscreenChart === 'branch' ? 'flex-1 h-[calc(100%-60px)] min-h-[300px]' : 'h-80 min-h-[300px]'}`}>
-              {zoomBranchData.length > 0 && isMounted ? (
-                <ResponsiveContainer width="100%" height="100%" minHeight={250}>
-                  <BarChart 
-                    data={zoomBranchData} 
-                    layout="vertical" 
-                    margin={{ top: 10, right: 10, left: 10, bottom: 0 }}
-                    onMouseDown={(e) => handleChartMouseDown(e, (val) => setBranchExportRefArea(val))}
-                    onMouseMove={(e) => handleChartMouseMove(e, branchExportRefArea, (val) => setBranchExportRefArea(val))}
-                    onMouseUp={() => handleChartMouseUp(branchExportRefArea, (val) => setBranchExportRefArea(val), branchExportZoom, setBranchExportZoom, branchData.length)}
-                  >
-                    <XAxis type="number" stroke="#94a3b8" fontSize={11} tickLine={false} />
-                    <YAxis type="category" dataKey="name" stroke="#94a3b8" fontSize={10} width={100} tickLine={false} />
-                    <Tooltip contentStyle={{ borderRadius: 8, border: '1px solid #f1f5f9', fontSize: 11 }} />
-                    <Bar dataKey="Số lượng xuất" fill="#f59e0b" radius={[0, 6, 6, 0]} maxBarSize={25} />
-                    {branchExportRefArea.left !== null && branchExportRefArea.right !== null && (
-                      <ReferenceArea 
-                        y1={zoomBranchData[Number(branchExportRefArea.left)]?.name} 
-                        y2={zoomBranchData[Number(branchExportRefArea.right)]?.name} 
-                        {...({ fill: '#3b82f6', fillOpacity: 0.15 } as any)}
-                      />
-                    )}
-                  </BarChart>
-                </ResponsiveContainer>
-              ) : (
-                <div className="h-full flex items-center justify-center text-xs text-slate-400 font-mono">
-                  Chưa ghi nhận xuất kho tại các chi nhánh ngoại vi
-                </div>
-              )}
-            </div>
-          )}
-        </div>
+        {(!fullscreenChart || fullscreenChart === 'branch') && (
+          <div className={`bento-card !p-5 bg-white border border-slate-100 rounded-2xl shadow-xs ${fullscreenChart === 'branch' ? 'fixed inset-4 z-50 bg-white/95 backdrop-blur-md shadow-2xl flex flex-col justify-between' : ''}`}>
+            <h3 className="font-sans font-bold text-slate-800 text-xs uppercase border-b border-slate-50 pb-2 mb-4 flex justify-between items-center">
+              <div className="flex items-center gap-2">
+                <span>Sản Lượng Xuất Theo Chi Nhánh</span>
+                {branchExportZoom && (
+                  <span className="text-[9px] font-mono px-1.5 py-0.5 bg-blue-50 text-blue-600 rounded">
+                    Đã thu phóng
+                  </span>
+                )}
+              </div>
+              {renderChartControls('branch', { 
+                dataLength: branchData.length, 
+                zoomState: branchExportZoom, 
+                setZoomState: setBranchExportZoom, 
+                refAreaState: branchExportRefArea 
+              })}
+            </h3>
+            
+            {!collapsedCharts['branch'] && (
+              <div className={`w-full ${fullscreenChart === 'branch' ? 'flex-1 h-[calc(100%-60px)] min-h-[300px]' : 'h-80 min-h-[300px]'}`}>
+                {zoomBranchData.length > 0 && isMounted ? (
+                  <SafeResponsiveContainer height={fullscreenChart === 'branch' ? 'calc(100% - 20px)' : 300} minHeight={250}>
+                    <BarChart 
+                      data={zoomBranchData} 
+                      layout="vertical" 
+                      margin={{ top: 10, right: 10, left: 10, bottom: 0 }}
+                      onMouseDown={(e) => handleChartMouseDown(e, (val) => setBranchExportRefArea(val))}
+                      onMouseMove={(e) => handleChartMouseMove(e, branchExportRefArea, (val) => setBranchExportRefArea(val))}
+                      onMouseUp={() => handleChartMouseUp(branchExportRefArea, (val) => setBranchExportRefArea(val), branchExportZoom, setBranchExportZoom, branchData.length)}
+                    >
+                      <XAxis type="number" stroke="#94a3b8" fontSize={11} tickLine={false} />
+                      <YAxis type="category" dataKey="name" stroke="#94a3b8" fontSize={10} width={100} tickLine={false} />
+                      <Tooltip contentStyle={{ borderRadius: 8, border: '1px solid #f1f5f9', fontSize: 11 }} />
+                      <Bar dataKey="Số lượng xuất" fill="#f59e0b" radius={[0, 6, 6, 0]} maxBarSize={25} />
+                      {branchExportRefArea.left !== null && branchExportRefArea.right !== null && (
+                        <ReferenceArea 
+                          y1={zoomBranchData[Number(branchExportRefArea.left)]?.name} 
+                          y2={zoomBranchData[Number(branchExportRefArea.right)]?.name} 
+                          {...({ fill: '#3b82f6', fillOpacity: 0.15 } as any)}
+                        />
+                      )}
+                    </BarChart>
+                  </SafeResponsiveContainer>
+                ) : (
+                  <div className="h-full flex items-center justify-center text-xs text-slate-400 font-mono">
+                    Chưa ghi nhận xuất kho tại các chi nhánh ngoại vi
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        )}
 
       </div>
 
@@ -2342,173 +2417,175 @@ export default function Dashboard({
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
 
           {/* 1. BIỂU ĐỒ CỘT PHÂN TÍCH THEO SPH HOẶC CYL */}
-          <div className={`bento-card !p-5 bg-white border border-slate-100 rounded-2xl shadow-xs flex flex-col justify-between space-y-5 ${fullscreenChart === 'salesBar' ? 'fixed inset-4 z-50 bg-white/95 backdrop-blur-md shadow-2xl flex flex-col justify-between' : ''}`}>
-            
-            {/* Header Column 1 */}
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-100 pb-3">
-              <div className="flex items-center gap-2">
-                <div className="p-2 bg-red-50 text-red-600 rounded-lg">
-                  <BarChart2 className="w-4.5 h-4.5" />
+          {(!fullscreenChart || fullscreenChart === 'salesBar') && (
+            <div className={`bento-card !p-5 bg-white border border-slate-100 rounded-2xl shadow-xs flex flex-col justify-between space-y-5 ${fullscreenChart === 'salesBar' ? 'fixed inset-4 z-50 bg-white/95 backdrop-blur-md shadow-2xl flex flex-col justify-between' : ''}`}>
+              
+              {/* Header Column 1 */}
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-100 pb-3">
+                <div className="flex items-center gap-2">
+                  <div className="p-2 bg-red-50 text-red-600 rounded-lg">
+                    <BarChart2 className="w-4.5 h-4.5" />
+                  </div>
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <h4 className="font-sans font-bold text-slate-800 text-xs uppercase tracking-wider">
+                        Biểu Đồ Phân Tích Chuyển Đổi Độ
+                      </h4>
+                      {salesDbBarZoom && (
+                        <span className="text-[9px] font-mono px-1.5 py-0.5 bg-blue-50 text-blue-600 rounded">
+                          Đã thu phóng
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-[10px] text-slate-400">Xem phân phối lượng giao dịch theo lát cắt cụ thể</p>
+                  </div>
                 </div>
-                <div>
-                  <div className="flex items-center gap-2">
-                    <h4 className="font-sans font-bold text-slate-800 text-xs uppercase tracking-wider">
-                      Biểu Đồ Phân Tích Chuyển Đổi Độ
-                    </h4>
-                    {salesDbBarZoom && (
-                      <span className="text-[9px] font-mono px-1.5 py-0.5 bg-blue-50 text-blue-600 rounded">
-                        Đã thu phóng
-                      </span>
+
+                <div className="flex items-center gap-2">
+                  {/* Selector Mode SPH hoặc CYL */}
+                  <div className="flex bg-slate-100 p-1 rounded-lg mr-2">
+                    <button
+                      type="button"
+                      onClick={() => setSalesDbBarMode('SPH_TO_CYL')}
+                      className={`text-[9px] uppercase font-black px-2 py-1.5 rounded-md transition-all cursor-pointer ${
+                        salesDbBarMode === 'SPH_TO_CYL' 
+                          ? 'bg-blue-600 text-white shadow-3xs' 
+                          : 'text-slate-500 hover:text-slate-800'
+                      }`}
+                    >
+                      Cận → Loạn
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setSalesDbBarMode('CYL_TO_SPH')}
+                      className={`text-[9px] uppercase font-black px-2 py-1.5 rounded-md transition-all cursor-pointer ${
+                        salesDbBarMode === 'CYL_TO_SPH' 
+                          ? 'bg-blue-600 text-white shadow-3xs' 
+                          : 'text-slate-500 hover:text-slate-800'
+                      }`}
+                    >
+                      Loạn → Cận
+                    </button>
+                  </div>
+
+                  {renderChartControls('salesBar', {
+                    dataLength: salesBarChartData.sortedData.length,
+                    zoomState: salesDbBarZoom,
+                    setZoomState: setSalesDbBarZoom,
+                    refAreaState: salesDbBarRefArea
+                  })}
+                </div>
+              </div>
+
+              {!collapsedCharts['salesBar'] && (
+                <>
+                  {/* Điều khiển giá trị cụ thể */}
+                  <div className="flex items-center gap-3 bg-slate-50/70 p-2.5 rounded-xl border border-slate-100">
+                    <span className="text-[10px] font-bold text-slate-400 uppercase shrink-0">Giá trị lọc:</span>
+                    {salesDbBarMode === 'SPH_TO_CYL' ? (
+                      <div className="flex items-center gap-2 w-full">
+                        <select
+                          value={salesDbSelectedSph}
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            setSalesDbSelectedSph(val === 'ALL' ? 'ALL' : parseFloat(val));
+                          }}
+                          className="bg-white border border-slate-200 text-xs font-bold text-slate-700 px-3 py-1.5 rounded-lg focus:outline-hidden focus:ring-1 focus:ring-blue-500 cursor-pointer w-full font-mono shadow-3xs"
+                        >
+                          <option value="ALL">-- Tất cả độ Cận (SPH) --</option>
+                          {uniqueSphValues.map(v => (
+                            <option key={v} value={v}>Cận: {formatDopValue(v)}</option>
+                          ))}
+                        </select>
+                      </div>
+                    ) : (
+                      <div className="flex items-center gap-2 w-full">
+                        <select
+                          value={salesDbSelectedCyl}
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            setSalesDbSelectedCyl(val === 'ALL' ? 'ALL' : parseFloat(val));
+                          }}
+                          className="bg-white border border-slate-200 text-xs font-bold text-slate-700 px-3 py-1.5 rounded-lg focus:outline-hidden focus:ring-1 focus:ring-blue-500 cursor-pointer w-full font-mono shadow-3xs"
+                        >
+                          <option value="ALL">-- Tất cả độ Loạn (CYL) --</option>
+                          {uniqueCylValues.map(v => (
+                            <option key={v} value={v}>Loạn: {formatDopValue(v)}</option>
+                          ))}
+                        </select>
+                      </div>
                     )}
                   </div>
-                  <p className="text-[10px] text-slate-400">Xem phân phối lượng giao dịch theo lát cắt cụ thể</p>
-                </div>
-              </div>
 
-              <div className="flex items-center gap-2">
-                {/* Selector Mode SPH hoặc CYL */}
-                <div className="flex bg-slate-100 p-1 rounded-lg mr-2">
-                  <button
-                    type="button"
-                    onClick={() => setSalesDbBarMode('SPH_TO_CYL')}
-                    className={`text-[9px] uppercase font-black px-2 py-1.5 rounded-md transition-all cursor-pointer ${
-                      salesDbBarMode === 'SPH_TO_CYL' 
-                        ? 'bg-blue-600 text-white shadow-3xs' 
-                        : 'text-slate-500 hover:text-slate-800'
-                    }`}
-                  >
-                    Cận → Loạn
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setSalesDbBarMode('CYL_TO_SPH')}
-                    className={`text-[9px] uppercase font-black px-2 py-1.5 rounded-md transition-all cursor-pointer ${
-                      salesDbBarMode === 'CYL_TO_SPH' 
-                        ? 'bg-blue-600 text-white shadow-3xs' 
-                        : 'text-slate-500 hover:text-slate-800'
-                    }`}
-                  >
-                    Loạn → Cận
-                  </button>
-                </div>
-
-                {renderChartControls('salesBar', {
-                  dataLength: salesBarChartData.sortedData.length,
-                  zoomState: salesDbBarZoom,
-                  setZoomState: setSalesDbBarZoom,
-                  refAreaState: salesDbBarRefArea
-                })}
-              </div>
-            </div>
-
-            {!collapsedCharts['salesBar'] && (
-              <>
-                {/* Điều khiển giá trị cụ thể */}
-                <div className="flex items-center gap-3 bg-slate-50/70 p-2.5 rounded-xl border border-slate-100">
-                  <span className="text-[10px] font-bold text-slate-400 uppercase shrink-0">Giá trị lọc:</span>
-                  {salesDbBarMode === 'SPH_TO_CYL' ? (
-                    <div className="flex items-center gap-2 w-full">
-                      <select
-                        value={salesDbSelectedSph}
-                        onChange={(e) => {
-                          const val = e.target.value;
-                          setSalesDbSelectedSph(val === 'ALL' ? 'ALL' : parseFloat(val));
-                        }}
-                        className="bg-white border border-slate-200 text-xs font-bold text-slate-700 px-3 py-1.5 rounded-lg focus:outline-hidden focus:ring-1 focus:ring-blue-500 cursor-pointer w-full font-mono shadow-3xs"
-                      >
-                        <option value="ALL">-- Tất cả độ Cận (SPH) --</option>
-                        {uniqueSphValues.map(v => (
-                          <option key={v} value={v}>Cận: {formatDopValue(v)}</option>
-                        ))}
-                      </select>
+                  {/* Thống kê Tổng lượng và Top bán chạy */}
+                  <div className="grid grid-cols-3 gap-2.5 text-center text-xs">
+                    <div className="p-2 bg-slate-50 rounded-lg border border-slate-100 shadow-3xs">
+                      <p className="text-[9px] text-slate-400 font-semibold uppercase">Tổng Giao Dịch</p>
+                      <p className="text-xs font-extrabold text-slate-800 font-mono mt-0.5">{salesBarChartData.totalQty} cái</p>
                     </div>
-                  ) : (
-                    <div className="flex items-center gap-2 w-full">
-                      <select
-                        value={salesDbSelectedCyl}
-                        onChange={(e) => {
-                          const val = e.target.value;
-                          setSalesDbSelectedCyl(val === 'ALL' ? 'ALL' : parseFloat(val));
-                        }}
-                        className="bg-white border border-slate-200 text-xs font-bold text-slate-700 px-3 py-1.5 rounded-lg focus:outline-hidden focus:ring-1 focus:ring-blue-500 cursor-pointer w-full font-mono shadow-3xs"
-                      >
-                        <option value="ALL">-- Tất cả độ Loạn (CYL) --</option>
-                        {uniqueCylValues.map(v => (
-                          <option key={v} value={v}>Loạn: {formatDopValue(v)}</option>
-                        ))}
-                      </select>
+                    <div className="p-2 bg-slate-50 rounded-lg border border-slate-100 shadow-3xs col-span-2">
+                      <p className="text-[9px] text-slate-400 font-semibold uppercase">Độ Chiếm Tỉ Trọng Cao Nhất (Top)</p>
+                      <p className="text-xs font-extrabold text-indigo-600 font-mono mt-0.5 truncate">
+                        {salesBarChartData.topValue !== 'N/A' 
+                          ? `${salesBarChartData.topValue} (${salesBarChartData.topQty} cái | ${salesBarChartData.topPercentage}%)`
+                          : 'Không có dữ liệu'}
+                      </p>
                     </div>
-                  )}
-                </div>
-
-                {/* Thống kê Tổng lượng và Top bán chạy */}
-                <div className="grid grid-cols-3 gap-2.5 text-center text-xs">
-                  <div className="p-2 bg-slate-50 rounded-lg border border-slate-100 shadow-3xs">
-                    <p className="text-[9px] text-slate-400 font-semibold uppercase">Tổng Giao Dịch</p>
-                    <p className="text-xs font-extrabold text-slate-800 font-mono mt-0.5">{salesBarChartData.totalQty} cái</p>
                   </div>
-                  <div className="p-2 bg-slate-50 rounded-lg border border-slate-100 shadow-3xs col-span-2">
-                    <p className="text-[9px] text-slate-400 font-semibold uppercase">Độ Chiếm Tỉ Trọng Cao Nhất (Top)</p>
-                    <p className="text-xs font-extrabold text-indigo-600 font-mono mt-0.5 truncate">
-                      {salesBarChartData.topValue !== 'N/A' 
-                        ? `${salesBarChartData.topValue} (${salesBarChartData.topQty} cái | ${salesBarChartData.topPercentage}%)`
-                        : 'Không có dữ liệu'}
-                    </p>
-                  </div>
-                </div>
 
-                {/* Rendering Bar Chart */}
-                <div className={`w-full ${fullscreenChart === 'salesBar' ? 'flex-1 h-[calc(100%-180px)] min-h-[300px]' : 'h-80 min-h-[300px]'}`}>
-                  {zoomSalesDbBarData.length > 0 && isMounted ? (
-                    <ResponsiveContainer width="100%" height="100%" minHeight={250}>
-                      <BarChart 
-                        data={zoomSalesDbBarData} 
-                        margin={{ top: 15, right: 10, left: -25, bottom: 10 }}
-                        onMouseDown={(e) => handleChartMouseDown(e, (val) => setSalesDbBarRefArea(val))}
-                        onMouseMove={(e) => handleChartMouseMove(e, salesDbBarRefArea, (val) => setSalesDbBarRefArea(val))}
-                        onMouseUp={() => handleChartMouseUp(salesDbBarRefArea, (val) => setSalesDbBarRefArea(val), salesDbBarZoom, setSalesDbBarZoom, salesBarChartData.sortedData.length)}
-                      >
-                        <XAxis 
-                          dataKey="name" 
-                          stroke="#94a3b8" 
-                          fontSize={10} 
-                          tickLine={false} 
-                          fontFamily="JetBrains Mono"
-                        />
-                        <YAxis 
-                          stroke="#94a3b8" 
-                          fontSize={10} 
-                          tickLine={false} 
-                          fontFamily="JetBrains Mono"
-                        />
-                        <Tooltip 
-                          contentStyle={{ borderRadius: 8, border: '1px solid #f1f5f9', fontSize: 11 }}
-                          formatter={(value, name, props: any) => [`${value} cái (${props.payload.percentage}%)`, 'Lượng giao dịch']}
-                        />
-                        <Bar dataKey="value" radius={[4, 4, 0, 0]} maxBarSize={35}>
-                          {zoomSalesDbBarData.map((entry, index) => (
-                            <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
-                          ))}
-                        </Bar>
-                        {salesDbBarRefArea.left !== null && salesDbBarRefArea.right !== null && (
-                          <ReferenceArea 
-                            x1={zoomSalesDbBarData[Number(salesDbBarRefArea.left)]?.name} 
-                            x2={zoomSalesDbBarData[Number(salesDbBarRefArea.right)]?.name} 
-                            {...({ fill: '#3b82f6', fillOpacity: 0.15 } as any)}
+                  {/* Rendering Bar Chart */}
+                  <div className={`w-full ${fullscreenChart === 'salesBar' ? 'flex-1 h-[calc(100%-180px)] min-h-[300px]' : 'h-80 min-h-[300px]'}`}>
+                    {zoomSalesDbBarData.length > 0 && isMounted ? (
+                      <SafeResponsiveContainer height={fullscreenChart === 'salesBar' ? 'calc(100% - 20px)' : 300} minHeight={250}>
+                        <BarChart 
+                          data={zoomSalesDbBarData} 
+                          margin={{ top: 15, right: 10, left: -25, bottom: 10 }}
+                          onMouseDown={(e) => handleChartMouseDown(e, (val) => setSalesDbBarRefArea(val))}
+                          onMouseMove={(e) => handleChartMouseMove(e, salesDbBarRefArea, (val) => setSalesDbBarRefArea(val))}
+                          onMouseUp={() => handleChartMouseUp(salesDbBarRefArea, (val) => setSalesDbBarRefArea(val), salesDbBarZoom, setSalesDbBarZoom, salesBarChartData.sortedData.length)}
+                        >
+                          <XAxis 
+                            dataKey="name" 
+                            stroke="#94a3b8" 
+                            fontSize={10} 
+                            tickLine={false} 
+                            fontFamily="JetBrains Mono"
                           />
-                        )}
-                      </BarChart>
-                    </ResponsiveContainer>
-                  ) : (
-                    <div className="h-full flex items-center justify-center text-xs text-slate-400 font-mono italic bg-slate-50/50 rounded-xl border border-dashed border-slate-150">
-                      Không tìm thấy lượng giao dịch tương ứng với điều kiện lọc
-                    </div>
-                  )}
-                </div>
-              </>
-            )}
+                          <YAxis 
+                            stroke="#94a3b8" 
+                            fontSize={10} 
+                            tickLine={false} 
+                            fontFamily="JetBrains Mono"
+                          />
+                          <Tooltip 
+                            contentStyle={{ borderRadius: 8, border: '1px solid #f1f5f9', fontSize: 11 }}
+                            formatter={(value, name, props: any) => [`${value} cái (${props.payload.percentage}%)`, 'Lượng giao dịch']}
+                          />
+                          <Bar dataKey="value" radius={[4, 4, 0, 0]} maxBarSize={35}>
+                            {zoomSalesDbBarData.map((entry, index) => (
+                              <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                            ))}
+                          </Bar>
+                          {salesDbBarRefArea.left !== null && salesDbBarRefArea.right !== null && (
+                            <ReferenceArea 
+                              x1={zoomSalesDbBarData[Number(salesDbBarRefArea.left)]?.name} 
+                              x2={zoomSalesDbBarData[Number(salesDbBarRefArea.right)]?.name} 
+                              {...({ fill: '#3b82f6', fillOpacity: 0.15 } as any)}
+                            />
+                          )}
+                        </BarChart>
+                      </SafeResponsiveContainer>
+                    ) : (
+                      <div className="h-full flex items-center justify-center text-xs text-slate-400 font-mono italic bg-slate-50/50 rounded-xl border border-dashed border-slate-150">
+                        Không tìm thấy lượng giao dịch tương ứng với điều kiện lọc
+                      </div>
+                    )}
+                  </div>
+                </>
+              )}
 
-          </div>
+            </div>
+          )}
 
           {/* 2. TOP TỔ HỢP ĐỘ BÁN CHẠY / NHẬP KHO NHIỀU NHẤT */}
           <div className="bento-card !p-5 bg-white border border-slate-100 rounded-2xl shadow-xs flex flex-col justify-between space-y-4">
