@@ -612,28 +612,18 @@ export async function ensureStorageBucketExists() {
     (window as any).__hasCreatedStorageBucket = true;
   }
 
-  // 1. Kiểm tra trước xem Bucket đã tồn tại hay chưa bằng Storage API để tránh lỗi 400/409
+  // 1. Kiểm tra sự tồn tại và khả năng hoạt động của bucket bằng phương thức Client (list files) thay vì GetBucket quản trị.
+  // Điều này giúp tránh hoàn toàn lỗi "400 Bad Request: Only service_role key can be used..." trong Console.
   try {
-    const { data: bucket, error: getErr } = await supabase.storage.getBucket(SUPABASE_STORAGE_BUCKET);
-    if (bucket && !getErr) {
-      console.log(`[Storage] Bucket '${SUPABASE_STORAGE_BUCKET}' đã tồn tại và sẵn sàng sử dụng.`);
+    const { data: listData, error: listError } = await supabase.storage.from(SUPABASE_STORAGE_BUCKET).list('', { limit: 1 });
+    if (!listError) {
+      console.log(`[Storage] Xác nhận bucket '${SUPABASE_STORAGE_BUCKET}' đã tồn tại và sẵn sàng sử dụng.`);
       return;
     }
   } catch (e) {}
 
-  // 2. Nếu chưa có, tiến hành tạo qua JS Storage API (đây là cách an toàn và chuẩn nhất)
-  try {
-    const { error: createErr } = await supabase.storage.createBucket(SUPABASE_STORAGE_BUCKET, {
-      public: true,
-      fileSizeLimit: 10485760 // 10MB
-    });
-    if (!createErr) {
-      console.log(`[Storage] Đã tạo thành công bucket '${SUPABASE_STORAGE_BUCKET}' qua JS Storage API.`);
-      return;
-    }
-  } catch (e) {}
-
-  // 3. Chỉ sử dụng SQL Fallback thông qua RPC nếu việc tạo bằng JS API phía trên thất bại
+  // 2. Chỉ cố gắng tạo và phân quyền bằng SQL thông qua RPC (exec_sql / run_sql) nếu kiểm tra trên thất bại.
+  // Tuyệt đối KHÔNG gọi supabase.storage.createBucket hay getBucket vì client anon key không được phép và sẽ gây lỗi đỏ 400.
   const sql = `
     DO $$
     BEGIN
