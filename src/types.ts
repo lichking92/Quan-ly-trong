@@ -24,13 +24,18 @@ export interface Role {
 export interface User {
   username: string;
   fullName: string;
-  role: UserRole;
+  role: string;
+  ROLE?: string;
+  roleName?: string;
+  active?: boolean;
   branch: string;
   permissions?: string[]; // Danh sách các Tab được phép truy cập
   writeAccess?: boolean;  // Có quyền Thêm, Sửa, Xóa hay chỉ xem
   WRITE_ACCESS?: boolean; // Tương thích ngược cho các component dùng chữ hoa
   id?: string;            // Supabase auth user_id
   ROLES?: string[];       // Danh sách các vai trò được gán theo RBAC
+  email?: string;         // Email liên kết
+  TRANG_THAI?: string;
 }
 
 // B_SANPHAM: Lưu trữ thông tin sản phẩm và số lượng tồn kho của từng SKU
@@ -131,6 +136,8 @@ export interface NhanVien {
   CHI_NHANH: string;       // Chi nhánh công tác
   EMAIL: string;           // Email liên hệ (dùng để xác thực phân quyền)
   ROLE: UserRole;          // Quyền hạn thao tác trên hệ thống (ADMIN, KHO, NHAN_VIEN)
+  role?: string;           // Chuẩn hóa role dạng chữ thường
+  active?: boolean;        // Chuẩn hóa active dạng boolean
   PASSWORD?: string;       // Mật khẩu đăng nhập hệ thống
   PERMISSIONS?: string[];  // Danh sách các tab/chức năng được phép dùng
   WRITE_ACCESS?: boolean;  // Có quyền thêm/sửa/xóa hay chỉ xem

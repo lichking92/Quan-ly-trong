@@ -1059,8 +1059,14 @@ export default function TransactionHistory({
   const handleHardDeleteEntireInvoice = async () => {
     if (!activeHeader) return;
 
-    if (currentUser.role !== 'ADMIN') {
-      setErrorMsg('Chỉ Admin mới có quyền xóa vĩnh viễn phiếu.');
+    const hasWriteAccess = currentUser.writeAccess !== false && currentUser.WRITE_ACCESS !== false;
+    const hasDeletePermission = hasWriteAccess && (
+      currentUser.permissions?.includes('export.delete') || 
+      currentUser.permissions?.includes('import.delete') || 
+      currentUser.permissions?.includes('transaction.delete')
+    );
+    if (!hasDeletePermission) {
+      setErrorMsg('Tài khoản không có quyền xóa vĩnh viễn phiếu.');
       return;
     }
 
@@ -1137,7 +1143,7 @@ export default function TransactionHistory({
           </div>
 
           <div className="flex items-center gap-2">
-            {currentUser.writeAccess !== false && (
+            {currentUser.writeAccess !== false && currentUser.WRITE_ACCESS !== false && (
               <>
                 <button
                   onClick={handleStartEditInvoice}
@@ -1160,7 +1166,9 @@ export default function TransactionHistory({
                   <Trash2 className="w-3.5 h-3.5" /> Hủy Phiếu
                 </button>
 
-                {currentUser.role === 'ADMIN' && (
+                {(currentUser.permissions?.includes('export.delete') || 
+                  currentUser.permissions?.includes('import.delete') || 
+                  currentUser.permissions?.includes('transaction.delete')) && (
                   <button
                     onClick={handleHardDeleteEntireInvoice}
                     className="flex items-center gap-1 text-[11px] font-bold py-1.5 px-3 rounded-lg bg-rose-600 text-white hover:bg-rose-700 cursor-pointer transition-all"
@@ -1180,7 +1188,7 @@ export default function TransactionHistory({
 
         {/* Form bổ sung dòng hàng */}
         <AnimatePresence>
-          {showAddRowForm && currentUser.writeAccess !== false && (
+          {showAddRowForm && currentUser.writeAccess !== false && currentUser.WRITE_ACCESS !== false && (
             <motion.div
               initial={{ height: 0, opacity: 0 }}
               animate={{ height: 'auto', opacity: 1 }}
@@ -1257,7 +1265,7 @@ export default function TransactionHistory({
                 <th className="py-2.5 px-3">Thông tin Tròng kính (SKU)</th>
                 <th className="py-2.5 px-3 text-center w-28">Số Lượng</th>
                 <th className="py-2.5 px-3">Ghi Chú</th>
-                {currentUser.writeAccess !== false && (
+                {currentUser.writeAccess !== false && currentUser.WRITE_ACCESS !== false && (
                   <th className="py-2.5 px-3 text-center w-24">Tác vụ</th>
                 )}
               </tr>
@@ -1303,7 +1311,7 @@ export default function TransactionHistory({
                         </span>
                       )}
                     </td>
-                    {currentUser.writeAccess !== false && (
+                    {currentUser.writeAccess !== false && currentUser.WRITE_ACCESS !== false && (
                       <td className="py-3 px-3 text-center">
                         {isEditing ? (
                           <div className="flex items-center justify-center gap-1">
@@ -1966,7 +1974,7 @@ export default function TransactionHistory({
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
-          {currentUser.writeAccess !== false && (
+          {currentUser.writeAccess !== false && currentUser.WRITE_ACCESS !== false && (
             <div className="relative group">
               <button className="flex items-center gap-1.5 bg-red-650 hover:bg-red-700 text-white font-extrabold text-xs py-2 px-4 rounded-xl shadow-2xs transition-all cursor-pointer">
                 <Plus className="w-4 h-4" />

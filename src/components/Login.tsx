@@ -15,6 +15,106 @@ interface LoginProps {
   nhanViens?: NhanVien[];
 }
 
+const DEFAULT_ROLES = [
+  {
+    ROLE_CODE: 'ADMIN',
+    TEN_ROLE: 'Quản trị viên (Admin)',
+    PERMISSIONS: [
+      'dashboard.view',
+      'product.view', 'product.create', 'product.edit', 'product.delete',
+      'import.view', 'import.create', 'import.edit', 'import.delete',
+      'export.view', 'export.create', 'export.edit', 'export.delete',
+      'inventory.view', 'inventory.edit',
+      'report.view',
+      'user.view', 'user.create', 'user.edit', 'user.delete',
+      'role.view', 'role.create', 'role.edit', 'role.delete'
+    ]
+  },
+  {
+    ROLE_CODE: 'MANAGER',
+    TEN_ROLE: 'Quản lý nghiệp vụ (Manager)',
+    PERMISSIONS: [
+      'dashboard.view',
+      'product.view', 'product.create', 'product.edit',
+      'import.view', 'import.create', 'import.edit',
+      'export.view', 'export.create', 'export.edit',
+      'inventory.view', 'inventory.edit',
+      'report.view'
+    ]
+  },
+  {
+    ROLE_CODE: 'STAFF',
+    TEN_ROLE: 'Nhân viên bán hàng (Staff)',
+    PERMISSIONS: [
+      'product.view',
+      'export.view', 'export.create',
+      'import.view',
+      'inventory.view'
+    ]
+  }
+];
+
+const isUserActive = (statusStr: string | null | undefined): boolean => {
+  const s = (statusStr || '').trim().toUpperCase();
+  return s === 'ACTIVE' || s === 'HOẠT ĐỘNG' || s === 'KÍCH HOẠT' || s === 'HOAT DONG';
+};
+
+const resolvePermissions = (
+  roleStr: string | null | undefined,
+  employeeDirectPermissions: any,
+  dbRoles: any[]
+): { permissions: string[], roleName: string } => {
+  const upperRole = (roleStr || '').trim().toUpperCase();
+  
+  // Find role in dbRoles (b_role)
+  let matchedRole = dbRoles.find(r => (r.ROLE_CODE || '').trim().toUpperCase() === upperRole);
+  
+  let rolePermissions: string[] = [];
+  let roleName = '';
+  
+  const parsePermissions = (perms: any): string[] => {
+    if (Array.isArray(perms)) return perms;
+    if (typeof perms === 'string') {
+      try {
+        return JSON.parse(perms || '[]');
+      } catch {
+        return perms.split(',').map((p: string) => p.trim()).filter(Boolean);
+      }
+    }
+    return [];
+  };
+
+  if (matchedRole) {
+    rolePermissions = parsePermissions(matchedRole.PERMISSIONS);
+    roleName = matchedRole.TEN_ROLE || '';
+  } else {
+    // Fallback: map 'KHO' to 'MANAGER' and 'NHAN_VIEN' to 'STAFF' for backward compatibility
+    let mappedRoleCode = upperRole;
+    if (upperRole === 'KHO' || upperRole === 'MANAGER') mappedRoleCode = 'MANAGER';
+    if (upperRole === 'NHAN_VIEN' || upperRole === 'STAFF' || upperRole === 'USER') mappedRoleCode = 'STAFF';
+    
+    // Check if we have the mapped code in b_role first
+    matchedRole = dbRoles.find(r => (r.ROLE_CODE || '').trim().toUpperCase() === mappedRoleCode);
+    if (matchedRole) {
+      rolePermissions = parsePermissions(matchedRole.PERMISSIONS);
+      roleName = matchedRole.TEN_ROLE || '';
+    } else {
+      // Fallback to DEFAULT_ROLES
+      const fallback = DEFAULT_ROLES.find(r => r.ROLE_CODE === mappedRoleCode) || 
+                       DEFAULT_ROLES.find(r => r.ROLE_CODE === upperRole);
+      if (fallback) {
+        rolePermissions = fallback.PERMISSIONS;
+        roleName = fallback.TEN_ROLE;
+      }
+    }
+  }
+  
+  // Parse direct permissions from b_nhanvien if any
+  const directPerms = parsePermissions(employeeDirectPermissions);
+  const combined = Array.from(new Set([...rolePermissions, ...directPerms]));
+  return { permissions: combined, roleName: roleName || upperRole };
+};
+
 export default function Login({ onLoginSuccess, nhanViens = [] }: LoginProps) {
   const [username, setUsername] = useState<string>('');
   const [password, setPassword] = useState<string>('');
@@ -293,6 +393,11 @@ export default function Login({ onLoginSuccess, nhanViens = [] }: LoginProps) {
         .select('*')
         .eq('user_id', activeUid);
 
+      const { data: dbRoles } = await supabase
+        .from('b_role')
+        .select('*')
+        .eq('user_id', activeUid);
+
       if (dbNhanViens && dbNhanViens.length > 0) {
         const staffMember = dbNhanViens.find(n => {
           const storedUser = (n.TEN_DANG_NHAP || '').trim().toLowerCase();
@@ -302,15 +407,11 @@ export default function Login({ onLoginSuccess, nhanViens = [] }: LoginProps) {
         });
 
         if (staffMember) {
-          // KIỂM TRA TRẠNG THÁI HOẠT ĐỘNG
-          const rawStatus = (staffMember.TRANG_THAI || '').trim().toUpperCase();
-          if (rawStatus === 'CHỜ DUYỆT' || rawStatus === 'PENDING' || rawStatus === 'CHO DUYET') {
-            setErrorMsg('Tài khoản của bạn đang chờ duyệt. Vui lòng liên hệ Admin để được kích hoạt.');
-            setLoading(false);
-            return;
-          }
-          if (rawStatus && rawStatus !== 'HOẠT ĐỘNG' && rawStatus !== 'ACTIVE' && rawStatus !== 'KÍCH HOẠT' && rawStatus !== 'HOAT DONG') {
-            setErrorMsg('Tài khoản này đã bị khóa hoặc tạm ngừng hoạt động. Vui lòng liên hệ Quản lý.');
+          const isActive = isUserActive(staffMember.TRANG_THAI);
+
+          // KIỂM TRA TRẠNG THÁI HOẠT ĐỘNG VÀ QUYỀN HẠN
+          if (!isActive) {
+            setErrorMsg('Tài khoản của bạn chưa được kích hoạt hoặc đã bị khóa. Vui lòng liên hệ Admin.');
             setLoading(false);
             return;
           }
@@ -319,14 +420,29 @@ export default function Login({ onLoginSuccess, nhanViens = [] }: LoginProps) {
           const matchedPassword = (staffMember.MAT_KHAU || staffMember.PASSWORD || '').trim();
           if (matchedPassword === cleanPass) {
             setLoading(false);
+
+            // Phân giải quyền hạn dựa theo b_nhanvien.ROLE và b_role
+            const { permissions: combinedPermissions, roleName } = resolvePermissions(
+              staffMember.ROLE,
+              staffMember.PERMISSIONS,
+              dbRoles || []
+            );
+
             onLoginSuccess({
               username: staffMember.TEN_DANG_NHAP || staffMember.EMAIL || staffMember.HO_TEN,
               fullName: staffMember.HO_TEN,
-              role: staffMember.ROLE || staffMember.VAI_TRO || 'NHAN_VIEN',
+              role: staffMember.ROLE,
+              ROLE: staffMember.ROLE,
+              roleName: roleName,
+              active: isActive,
               branch: staffMember.CHI_NHANH || 'Kho Trung Tâm',
               writeAccess: staffMember.WRITE_ACCESS !== false,
               WRITE_ACCESS: staffMember.WRITE_ACCESS !== false,
-              id: staffMember.MA_NV
+              id: staffMember.MA_NV,
+              email: staffMember.EMAIL,
+              ROLES: staffMember.ROLES || [staffMember.ROLE],
+              permissions: combinedPermissions,
+              TRANG_THAI: staffMember.TRANG_THAI
             });
             return;
           } else {
@@ -346,6 +462,9 @@ export default function Login({ onLoginSuccess, nhanViens = [] }: LoginProps) {
       const localNhanVien: NhanVien[] = savedNhanViens ? JSON.parse(savedNhanViens) : [];
       const allNhanViens = [...nhanViens, ...localNhanVien];
 
+      const savedB_ROLE = localStorage.getItem('B_ROLE');
+      const localRoles: any[] = savedB_ROLE ? JSON.parse(savedB_ROLE) : [];
+
       const staffMember = allNhanViens.find(n => {
         const storedUser = (n.TEN_DANG_NHAP || '').trim().toLowerCase();
         const storedEmail = (n.EMAIL || '').trim().toLowerCase();
@@ -354,14 +473,11 @@ export default function Login({ onLoginSuccess, nhanViens = [] }: LoginProps) {
       });
 
       if (staffMember) {
-        const rawStatus = (staffMember.TRANG_THAI || '').trim().toUpperCase();
-        if (rawStatus === 'CHỜ DUYỆT' || rawStatus === 'PENDING' || rawStatus === 'CHO DUYET') {
-          setErrorMsg('Tài khoản của bạn đang chờ duyệt. Vui lòng liên hệ Admin để được kích hoạt.');
-          setLoading(false);
-          return;
-        }
-        if (rawStatus && rawStatus !== 'HOẠT ĐỘNG' && rawStatus !== 'ACTIVE' && rawStatus !== 'KÍCH HOẠT' && rawStatus !== 'HOAT DONG') {
-          setErrorMsg('Tài khoản này đã bị khóa hoặc tạm ngừng hoạt động. Vui lòng liên hệ Quản lý.');
+        const isActive = isUserActive(staffMember.TRANG_THAI);
+
+        // KIỂM TRA TRẠNG THÁI HOẠT ĐỘNG VÀ QUYỀN HẠN
+        if (!isActive) {
+          setErrorMsg('Tài khoản của bạn chưa được kích hoạt hoặc đã bị khóa. Vui lòng liên hệ Admin.');
           setLoading(false);
           return;
         }
@@ -369,14 +485,29 @@ export default function Login({ onLoginSuccess, nhanViens = [] }: LoginProps) {
         const matchedPassword = (staffMember.MAT_KHAU || staffMember.PASSWORD || '').trim();
         if (matchedPassword === cleanPass) {
           setLoading(false);
+
+          // Phân giải quyền hạn ngoại tuyến
+          const { permissions: combinedPermissions, roleName } = resolvePermissions(
+            staffMember.ROLE,
+            staffMember.PERMISSIONS,
+            localRoles
+          );
+
           onLoginSuccess({
             username: staffMember.TEN_DANG_NHAP || staffMember.EMAIL || staffMember.HO_TEN,
             fullName: staffMember.HO_TEN,
-            role: staffMember.ROLE || staffMember.VAI_TRO || 'NHAN_VIEN',
+            role: staffMember.ROLE,
+            ROLE: staffMember.ROLE,
+            roleName: roleName,
+            active: isActive,
             branch: staffMember.CHI_NHANH || 'Kho Trung Tâm',
             writeAccess: staffMember.WRITE_ACCESS !== false,
             WRITE_ACCESS: staffMember.WRITE_ACCESS !== false,
-            id: staffMember.MA_NV
+            id: staffMember.MA_NV,
+            email: staffMember.EMAIL,
+            ROLES: staffMember.ROLES || [staffMember.ROLE],
+            permissions: combinedPermissions,
+            TRANG_THAI: staffMember.TRANG_THAI
           });
           return;
         } else {

@@ -169,6 +169,67 @@ const DEFAULT_ROLES: Role[] = [
   }
 ];
 
+const isUserActive = (statusStr: string | null | undefined): boolean => {
+  const s = (statusStr || '').trim().toUpperCase();
+  return s === 'ACTIVE' || s === 'HOẠT ĐỘNG' || s === 'KÍCH HOẠT' || s === 'HOAT DONG';
+};
+
+const resolvePermissions = (
+  roleStr: string | null | undefined,
+  employeeDirectPermissions: any,
+  dbRoles: any[]
+): { permissions: string[], roleName: string } => {
+  const upperRole = (roleStr || '').trim().toUpperCase();
+  
+  // Find role in dbRoles (b_role)
+  let matchedRole = dbRoles.find(r => (r.ROLE_CODE || '').trim().toUpperCase() === upperRole);
+  
+  let rolePermissions: string[] = [];
+  let roleName = '';
+  
+  const parsePermissions = (perms: any): string[] => {
+    if (Array.isArray(perms)) return perms;
+    if (typeof perms === 'string') {
+      try {
+        return JSON.parse(perms || '[]');
+      } catch {
+        return perms.split(',').map((p: string) => p.trim()).filter(Boolean);
+      }
+    }
+    return [];
+  };
+
+  if (matchedRole) {
+    rolePermissions = parsePermissions(matchedRole.PERMISSIONS);
+    roleName = matchedRole.TEN_ROLE || '';
+  } else {
+    // Fallback: map 'KHO' to 'MANAGER' and 'NHAN_VIEN' to 'STAFF' for backward compatibility
+    let mappedRoleCode = upperRole;
+    if (upperRole === 'KHO' || upperRole === 'MANAGER') mappedRoleCode = 'MANAGER';
+    if (upperRole === 'NHAN_VIEN' || upperRole === 'STAFF' || upperRole === 'USER') mappedRoleCode = 'STAFF';
+    
+    // Check if we have the mapped code in b_role first
+    matchedRole = dbRoles.find(r => (r.ROLE_CODE || '').trim().toUpperCase() === mappedRoleCode);
+    if (matchedRole) {
+      rolePermissions = parsePermissions(matchedRole.PERMISSIONS);
+      roleName = matchedRole.TEN_ROLE || '';
+    } else {
+      // Fallback to DEFAULT_ROLES
+      const fallback = DEFAULT_ROLES.find(r => r.ROLE_CODE === mappedRoleCode) || 
+                       DEFAULT_ROLES.find(r => r.ROLE_CODE === upperRole);
+      if (fallback) {
+        rolePermissions = fallback.PERMISSIONS;
+        roleName = fallback.TEN_ROLE;
+      }
+    }
+  }
+  
+  // Parse direct permissions from b_nhanvien if any
+  const directPerms = parsePermissions(employeeDirectPermissions);
+  const combined = Array.from(new Set([...rolePermissions, ...directPerms]));
+  return { permissions: combined, roleName: roleName || upperRole };
+};
+
 const deduplicateProducts = (products: SanPham[]): SanPham[] => {
   const seen = new Set<string>();
   return products.filter(p => {
@@ -325,30 +386,14 @@ export default function App() {
   const hasPermission = useCallback((permissionCode: string): boolean => {
     if (!currentUser) return false;
 
-    // Admin mặc định có toàn quyền
-    const userRoles = safeParseArray(currentUser.ROLES).length > 0 ? safeParseArray(currentUser.ROLES) : (currentUser.role ? [currentUser.role] : []);
-    if (userRoles.includes('ADMIN')) return true;
+    if (Array.isArray(currentUser.permissions)) {
+      return currentUser.permissions.includes(permissionCode);
+    }
 
-    // Thu thập toàn bộ permission từ các role của user
-    const userPermissions = new Set<string>();
-    userRoles.forEach(roleCode => {
-      const matchedRole = roles.find(r => r.ROLE_CODE === roleCode);
-      if (matchedRole && matchedRole.PERMISSIONS) {
-        matchedRole.PERMISSIONS.forEach(p => userPermissions.add(p));
-      } else {
-        // Tương thích ngược: Đối sánh với vai trò mặc định nếu mã vai trò không khớp trực tiếp
-        let fallbackRoleCode = roleCode;
-        if (roleCode === 'KHO') fallbackRoleCode = 'MANAGER';
-        if (roleCode === 'NHAN_VIEN') fallbackRoleCode = 'STAFF';
-
-        const matchedFallback = roles.find(r => r.ROLE_CODE === fallbackRoleCode) || DEFAULT_ROLES.find(r => r.ROLE_CODE === fallbackRoleCode);
-        if (matchedFallback && matchedFallback.PERMISSIONS) {
-          matchedFallback.PERMISSIONS.forEach(p => userPermissions.add(p));
-        }
-      }
-    });
-
-    return userPermissions.has(permissionCode);
+    // Fallback: dynamic lookup from roles/DEFAULT_ROLES
+    const userRole = (currentUser.ROLE || currentUser.role || '').trim().toUpperCase();
+    const { permissions } = resolvePermissions(userRole, undefined, roles);
+    return permissions.includes(permissionCode);
   }, [currentUser, roles]);
 
   const handleLogout = async () => {
@@ -558,31 +603,42 @@ export default function App() {
         return false;
       }
 
-      const rawStatus = (staffMember.TRANG_THAI || '').trim().toUpperCase();
-      const isPending = rawStatus === 'CHỜ DUYỆT' || rawStatus === 'PENDING' || rawStatus === 'CHO DUYET';
-      const isActive = rawStatus === 'HOẠT ĐỘNG' || rawStatus === 'ACTIVE' || rawStatus === 'KÍCH HOẠT' || rawStatus === 'HOAT DONG';
+      const isActive = isUserActive(staffMember.TRANG_THAI);
 
-      if (isPending || !isActive) {
-        console.error(`[Auth Guard] Tài khoản ${currentUser.username} không hoạt động (${rawStatus})! Đăng xuất cưỡng chế.`);
+      if (!isActive) {
+        console.error(`[Auth Guard] Tài khoản ${currentUser.username} không hoạt động hoặc không được cấp quyền! Đăng xuất cưỡng chế.`);
         forceLogout();
         return false;
       }
 
+      const { permissions: combinedPermissions, roleName } = resolvePermissions(
+        staffMember.ROLE,
+        staffMember.PERMISSIONS,
+        roles
+      );
+
       const updatedUser: User = {
         username: staffMember.TEN_DANG_NHAP || staffMember.EMAIL || staffMember.HO_TEN,
         fullName: staffMember.HO_TEN,
-        role: staffMember.ROLE || staffMember.VAI_TRO || 'NHAN_VIEN',
+        role: staffMember.ROLE,
+        ROLE: staffMember.ROLE,
+        roleName: roleName,
+        active: isActive,
         branch: staffMember.CHI_NHANH || 'Kho Trung Tâm',
         writeAccess: staffMember.WRITE_ACCESS !== false,
         WRITE_ACCESS: staffMember.WRITE_ACCESS !== false,
         id: staffMember.MA_NV,
-        ROLES: staffMember.ROLES || []
+        email: staffMember.EMAIL,
+        ROLES: staffMember.ROLES || [staffMember.ROLE],
+        permissions: combinedPermissions,
+        TRANG_THAI: staffMember.TRANG_THAI
       };
 
       if (
         currentUser.role !== updatedUser.role ||
         currentUser.branch !== updatedUser.branch ||
-        currentUser.writeAccess !== updatedUser.writeAccess
+        currentUser.writeAccess !== updatedUser.writeAccess ||
+        JSON.stringify(currentUser.permissions) !== JSON.stringify(updatedUser.permissions)
       ) {
         console.log("[Auth Guard] Cập nhật thông tin và quyền hạn của người dùng từ Supabase...");
         setCurrentUser(updatedUser);
@@ -850,26 +906,35 @@ export default function App() {
             );
 
             if (latestStaff) {
+              const isActive = isUserActive(latestStaff.TRANG_THAI);
+
+              if (!isActive) {
+                console.error(`[Auth Guard] Tài khoản ${savedUser.username} ở trạng thái không hoạt động (${latestStaff.TRANG_THAI})! Tiến hành đăng xuất cưỡng chế.`);
+                forceLogout();
+                return;
+              }
+
+              const { permissions: combinedPermissions, roleName } = resolvePermissions(
+                latestStaff.ROLE,
+                latestStaff.PERMISSIONS,
+                payload.roles || roles || []
+              );
+
               const u: User = {
                 username: latestStaff.TEN_DANG_NHAP || latestStaff.EMAIL || latestStaff.HO_TEN,
                 fullName: latestStaff.HO_TEN,
-                role: latestStaff.ROLE || latestStaff.VAI_TRO || 'NHAN_VIEN',
+                role: latestStaff.ROLE || 'NHAN_VIEN',
+                ROLE: latestStaff.ROLE || 'NHAN_VIEN',
+                roleName: roleName,
                 branch: latestStaff.CHI_NHANH || 'Kho Trung Tâm',
                 writeAccess: latestStaff.WRITE_ACCESS !== false,
                 WRITE_ACCESS: latestStaff.WRITE_ACCESS !== false,
                 id: latestStaff.MA_NV,
-                ROLES: latestStaff.ROLES || []
+                email: latestStaff.EMAIL,
+                ROLES: latestStaff.ROLES || [latestStaff.ROLE],
+                permissions: combinedPermissions,
+                TRANG_THAI: latestStaff.TRANG_THAI
               };
-
-              const rawStatus = (latestStaff.TRANG_THAI || '').trim().toUpperCase();
-              const isPending = rawStatus === 'CHỜ DUYỆT' || rawStatus === 'PENDING' || rawStatus === 'CHO DUYET';
-              const isActive = rawStatus === 'HOẠT ĐỘNG' || rawStatus === 'ACTIVE' || rawStatus === 'KÍCH HOẠT' || rawStatus === 'HOAT DONG';
-
-              if (isPending || !isActive) {
-                console.error(`[Auth Guard] Tài khoản ${savedUser.username} ở trạng thái không hoạt động (${rawStatus})! Tiến hành đăng xuất cưỡng chế.`);
-                forceLogout();
-                return;
-              }
 
               setCurrentUser(u);
               localStorage.setItem('CURRENT_USER', JSON.stringify(u));
@@ -1218,21 +1283,31 @@ export default function App() {
                     (mappedItem.EMAIL || '').trim().toLowerCase() === (savedUser.username || '').trim().toLowerCase();
                   
                   if (matchesCurrentUser) {
-                    const u: User = {
-                      username: mappedItem.TEN_DANG_NHAP || mappedItem.EMAIL || mappedItem.HO_TEN,
-                      fullName: mappedItem.HO_TEN,
-                      role: mappedItem.ROLE || 'NHAN_VIEN',
-                      branch: mappedItem.CHI_NHANH || 'Kho Trung Tâm',
-                      writeAccess: mappedItem.WRITE_ACCESS !== false,
-                      WRITE_ACCESS: mappedItem.WRITE_ACCESS !== false,
-                      id: mappedItem.MA_NV,
-                      ROLES: mappedItem.ROLES || []
-                    };
-                    const rawStatus = (mappedItem.TRANG_THAI || '').trim().toUpperCase();
-                    const isBlocked = rawStatus === 'BLOCKED' || rawStatus === 'KHÓA' || rawStatus === 'KHOA';
-                    if (isBlocked) {
+                    const isActive = isUserActive(mappedItem.TRANG_THAI);
+                    if (!isActive) {
                       handleLogout();
                     } else {
+                      const { permissions: combinedPermissions, roleName } = resolvePermissions(
+                        mappedItem.ROLE,
+                        mappedItem.PERMISSIONS,
+                        roles
+                      );
+
+                      const u: User = {
+                        username: mappedItem.TEN_DANG_NHAP || mappedItem.EMAIL || mappedItem.HO_TEN,
+                        fullName: mappedItem.HO_TEN,
+                        role: mappedItem.ROLE || 'NHAN_VIEN',
+                        ROLE: mappedItem.ROLE || 'NHAN_VIEN',
+                        roleName: roleName,
+                        branch: mappedItem.CHI_NHANH || 'Kho Trung Tâm',
+                        writeAccess: mappedItem.WRITE_ACCESS !== false,
+                        WRITE_ACCESS: mappedItem.WRITE_ACCESS !== false,
+                        id: mappedItem.MA_NV,
+                        email: mappedItem.EMAIL,
+                        ROLES: mappedItem.ROLES || [mappedItem.ROLE],
+                        permissions: combinedPermissions,
+                        TRANG_THAI: mappedItem.TRANG_THAI
+                      };
                       setCurrentUser(u);
                       localStorage.setItem('CURRENT_USER', JSON.stringify(u));
                     }
@@ -3156,15 +3231,41 @@ export default function App() {
   const handleSwitchUser = (email: string) => {
     const found = nhanViens.find(n => n.EMAIL === email);
     if (found) {
-      setCurrentUser({
-        username: found.EMAIL,
+      const isActive = isUserActive(found.TRANG_THAI);
+
+      if (!isActive) {
+        alert('Tài khoản này chưa được kích hoạt hoặc đã bị khóa.');
+        return;
+      }
+
+      const { permissions: combinedPermissions, roleName } = resolvePermissions(
+        found.ROLE,
+        found.PERMISSIONS,
+        roles
+      );
+
+      const switchedUser: User = {
+        username: found.TEN_DANG_NHAP || found.EMAIL || found.HO_TEN,
         fullName: found.HO_TEN,
         role: found.ROLE,
-        branch: found.CHI_NHANH
-      });
+        ROLE: found.ROLE,
+        roleName: roleName,
+        active: isActive,
+        branch: found.CHI_NHANH || 'Kho Trung Tâm',
+        writeAccess: found.WRITE_ACCESS !== false,
+        WRITE_ACCESS: found.WRITE_ACCESS !== false,
+        id: found.MA_NV,
+        email: found.EMAIL,
+        ROLES: found.ROLES || [found.ROLE],
+        permissions: combinedPermissions,
+        TRANG_THAI: found.TRANG_THAI
+      };
+
+      setCurrentUser(switchedUser);
+      localStorage.setItem('CURRENT_USER', JSON.stringify(switchedUser));
       
       // Tự động chuyển tab về trang sản phẩm/lịch sử nếu tab hiện tại bị khóa do phân quyền của vai trò mới
-      if (found.ROLE === 'NHAN_VIEN') {
+      if (!combinedPermissions.includes('dashboard.view')) {
         setActiveTab('TRANSACTION_XUAT');
       } else {
         setActiveTab('DASHBOARD');
@@ -3191,11 +3292,11 @@ export default function App() {
             // ĐỒNG BỘ DỮ LIỆU LẬP TỨC KHI ĐĂNG NHẬP THÀNH CÔNG!
             syncAllDataFromSupabase(user.id || '00000000-0000-0000-0000-000000000000', user.username);
             
-            // Tự động chuyển hướng tab phù hợp
-            if (user.role === 'NHAN_VIEN') {
-              setActiveTab('TRANSACTION_XUAT');
-            } else {
+            // Tự động chuyển hướng tab phù hợp dựa trên quyền dashboard.view
+            if (user.permissions && user.permissions.includes('dashboard.view')) {
               setActiveTab('DASHBOARD');
+            } else {
+              setActiveTab('TRANSACTION_XUAT');
             }
           }} 
         />
@@ -3322,7 +3423,7 @@ export default function App() {
                 <div className="min-w-0 flex-1">
                   <p className={`text-xs font-bold truncate ${sidebarStyle.userText}`}>{currentUser.fullName}</p>
                   <p className={`text-[9px] font-mono font-bold uppercase tracking-wider truncate ${sidebarStyle.userSub}`}>
-                    {currentUser.role === 'ADMIN' ? 'Chủ Cửa Hàng' : currentUser.role === 'KHO' ? 'Thủ Kho' : 'Nhân Viên'} | {currentUser.branch}
+                    {currentUser.roleName || currentUser.role || 'Nhân Viên'} | {currentUser.branch}
                   </p>
                 </div>
               )}
@@ -3500,8 +3601,8 @@ export default function App() {
           </button>
         </nav>
 
-        {/* PHÂN VÙNG ĐỔI VAI NHANH - CHỈ HIỂN THỊ CHO TÀI KHOẢN ADMIN KHI CHƯA COLLAPSED */}
-        {currentUser.role === 'ADMIN' && !sidebarCollapsed && (
+        {/* PHÂN VÙNG ĐỔI VAI NHANH - CHỈ HIỂN THỊ CHO TÀI KHOẢN CÓ QUYỀN CHỈNH SỬA VAI TRÒ KHI CHƯA COLLAPSED */}
+        {hasPermission('role.edit') && !sidebarCollapsed && (
           <div className={`p-4 mx-3 my-2 rounded-xl border shrink-0 space-y-3.5 ${sidebarStyle.switchBox}`}>
             <div>
               <div className={`text-[9px] font-bold uppercase tracking-wider mb-1.5 ${sidebarStyle.switchText}`}>Mô phỏng đổi vai nhanh:</div>
@@ -3772,8 +3873,8 @@ export default function App() {
                     currentUser={currentUser}
                     sanPhams={sanPhams}
                     nhapXuats={
-                      // Nhân viên chỉ được xem lịch sử phiếu của chính bản thân tạo ra
-                      currentUser.role === 'NHAN_VIEN'
+                      // Nếu không có quyền view dashboard thì chỉ được xem lịch sử phiếu của chính mình tạo ra
+                      !hasPermission('dashboard.view')
                         ? nhapXuats.filter(h => h.NGUOI_TAO === currentUser.username)
                         : nhapXuats
                     }

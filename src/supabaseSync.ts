@@ -106,7 +106,7 @@ export async function tryCreateColumnsOnSupabase() {
   if (hasCreatedColumns) return;
   hasCreatedColumns = true;
 
-  const SCHEMA_VERSION = 'v2_gom_don_rls_disable';
+  const SCHEMA_VERSION = 'v3_roles_active_v1';
   if (typeof window !== 'undefined') {
     if (localStorage.getItem('SUPABASE_RPC_NOT_AVAILABLE') === 'true') {
       console.log("Bỏ qua cấu hình tự động do không được hỗ trợ trên Supabase này.");
@@ -201,6 +201,38 @@ export async function tryCreateColumnsOnSupabase() {
 
       BEGIN
         ALTER TABLE b_nhanvien ADD COLUMN IF NOT EXISTS "ROLES" text[];
+      EXCEPTION WHEN others THEN NULL;
+      END;
+
+      BEGIN
+        ALTER TABLE b_nhanvien ADD COLUMN IF NOT EXISTS "role" text;
+      EXCEPTION WHEN others THEN NULL;
+      END;
+
+      BEGIN
+        ALTER TABLE b_nhanvien ADD COLUMN IF NOT EXISTS "active" boolean;
+      EXCEPTION WHEN others THEN NULL;
+      END;
+
+      -- Di chuyển dữ liệu cũ
+      BEGIN
+        UPDATE b_nhanvien 
+        SET "role" = CASE 
+          WHEN upper(trim("ROLE")) = 'ADMIN' THEN 'admin'
+          WHEN upper(trim("ROLE")) = 'KHO' THEN 'manager'
+          ELSE 'user'
+        END
+        WHERE "role" IS NULL;
+      EXCEPTION WHEN others THEN NULL;
+      END;
+
+      BEGIN
+        UPDATE b_nhanvien 
+        SET "active" = CASE 
+          WHEN upper(trim("TRANG_THAI")) IN ('HOẠT ĐỘNG', 'ACTIVE', 'KÍCH HOẠT', 'HOAT DONG') THEN true
+          ELSE false
+        END
+        WHERE "active" IS NULL;
       EXCEPTION WHEN others THEN NULL;
       END;
 
@@ -538,12 +570,12 @@ export async function tryCreateColumnsOnSupabase() {
         -- 4. Insert record
         INSERT INTO public.b_nhanvien (
           "MA_NV", "HO_TEN", "CHUC_VU", "BO_PHAN", "CHI_NHANH", 
-          "EMAIL", "ROLE", "WRITE_ACCESS", "TEN_DANG_NHAP", 
+          "EMAIL", "ROLE", "role", "active", "WRITE_ACCESS", "TEN_DANG_NHAP", 
           "MAT_KHAU", "TRANG_THAI", "YEU_CAU_RESET", "NGAY_DANG_KY", "user_id",
           "ROLES", "PERMISSIONS"
         ) VALUES (
           p_ma_nv, p_ho_ten, v_chuc_vu, v_bo_phan, 'Kho Trung Tâm',
-          p_email, v_role, v_write_access, p_ten_dang_nhap,
+          p_email, v_role, CASE WHEN v_role = 'ADMIN' THEN 'admin' ELSE 'pending' END, (v_role = 'ADMIN'), v_write_access, p_ten_dang_nhap,
           p_mat_khau, v_trang_thai, false, v_current_date, p_user_id,
           v_roles, v_permissions
         );
@@ -597,7 +629,7 @@ export async function tryCreateColumnsOnSupabase() {
   }
 
   if (typeof window !== 'undefined') {
-    localStorage.setItem('DB_SCHEMA_VERSION', 'v2_gom_don_rls_disable');
+    localStorage.setItem('DB_SCHEMA_VERSION', 'v3_roles_active_v1');
   }
 }
 
@@ -1578,6 +1610,16 @@ export async function syncNhanVien(n: NhanVien, userId: string) {
       "CHI_NHANH": n.CHI_NHANH,
       "EMAIL": n.EMAIL || '',
       "ROLE": n.ROLE,
+      "role": n.role || (() => {
+        const R = (n.ROLE || '').trim().toUpperCase();
+        if (R === 'ADMIN') return 'admin';
+        if (R === 'KHO') return 'manager';
+        return 'user';
+      })(),
+      "active": typeof n.active === 'boolean' ? n.active : (() => {
+        const status = (n.TRANG_THAI || '').trim().toUpperCase();
+        return status === 'HOẠT ĐỘNG' || status === 'ACTIVE' || status === 'KÍCH HOẠT' || status === 'HOAT DONG';
+      })(),
       "PERMISSIONS": n.PERMISSIONS,
       "WRITE_ACCESS": n.WRITE_ACCESS,
       "TEN_DANG_NHAP": n.TEN_DANG_NHAP || '',

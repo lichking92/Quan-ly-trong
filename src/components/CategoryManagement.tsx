@@ -106,8 +106,12 @@ export default function CategoryManagement({
 }: CategoryManagementProps) {
   
   const hasPerm = (p: string) => {
+    const isWrite = p.endsWith('.create') || p.endsWith('.edit') || p.endsWith('.delete') || p.includes('.create') || p.includes('.edit') || p.includes('.delete');
+    if (isWrite && (currentUser?.writeAccess === false || currentUser?.WRITE_ACCESS === false)) {
+      return false;
+    }
     if (hasPermission) return hasPermission(p);
-    return currentUser?.writeAccess !== false;
+    return currentUser?.writeAccess !== false && currentUser?.WRITE_ACCESS !== false;
   };
 
   // --- 1. QUẢN LÝ TAB DANH MỤC HIỆN TẠI ---
@@ -516,6 +520,8 @@ export default function CategoryManagement({
     const generatedEmail = `${newStaffUsername.trim().toLowerCase()}@glassstock.com`;
 
     const derivedRole = newStaffRoles.includes('ADMIN') ? 'ADMIN' : newStaffRoles.includes('MANAGER') ? 'KHO' : 'NHAN_VIEN';
+    const normalizedRole = derivedRole === 'ADMIN' ? 'admin' : derivedRole === 'KHO' ? 'manager' : 'user';
+    const isActive = newStaffStatus === 'ACTIVE' || newStaffStatus === 'HOẠT ĐỘNG' || newStaffStatus === 'KÍCH HOẠT';
 
     const staffRecord: NhanVien = {
       MA_NV: `NV${String(nhanViens.length + 1).padStart(4, '0')}`,
@@ -525,6 +531,8 @@ export default function CategoryManagement({
       CHI_NHANH: newStaffBranch,
       EMAIL: generatedEmail,
       ROLE: derivedRole,
+      role: normalizedRole,
+      active: isActive,
       WRITE_ACCESS: derivedRole === 'ADMIN' || derivedRole === 'KHO',
       TEN_DANG_NHAP: newStaffUsername.trim(),
       MAT_KHAU: newStaffPassword.trim(),
@@ -569,6 +577,8 @@ export default function CategoryManagement({
     }
 
     const derivedRole = newStaffRoles.includes('ADMIN') ? 'ADMIN' : newStaffRoles.includes('MANAGER') ? 'KHO' : 'NHAN_VIEN';
+    const normalizedRole = derivedRole === 'ADMIN' ? 'admin' : derivedRole === 'KHO' ? 'manager' : 'user';
+    const isActive = newStaffStatus === 'ACTIVE' || newStaffStatus === 'HOẠT ĐỘNG' || newStaffStatus === 'KÍCH HOẠT';
 
     const updatedStaff: NhanVien = {
       MA_NV: editingStaff.staff.MA_NV,
@@ -578,6 +588,8 @@ export default function CategoryManagement({
       CHI_NHANH: newStaffBranch,
       EMAIL: editingStaff.staff.EMAIL, // Giữ nguyên Email cũ làm khóa duy nhất cho các logic đồng bộ cũ
       ROLE: derivedRole,
+      role: normalizedRole,
+      active: isActive,
       WRITE_ACCESS: derivedRole === 'ADMIN' || derivedRole === 'KHO',
       TEN_DANG_NHAP: newStaffUsername.trim(),
       MAT_KHAU: newStaffPassword.trim(),

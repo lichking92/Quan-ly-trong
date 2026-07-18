@@ -17,9 +17,17 @@
  * - "1.67" -> "1.67"
  * - "1.74" -> "1.74"
  */
-export function normalizeChietXuat(cx: string | undefined | null): string {
+export function normalizeChietXuat(cx: any): string {
   if (!cx) return '';
-  const clean = cx.trim();
+  
+  let val = '';
+  if (typeof cx === 'object') {
+    val = cx.CHIET_XUAT || cx.CHIET_SUAT || cx.chiet_suat || cx.refractiveIndex || '';
+  } else {
+    val = String(cx);
+  }
+  
+  const clean = val.trim();
   
   // Hỗ trợ mã viết tắt shorthand
   if (clean === '156') return '1.56';
@@ -42,7 +50,7 @@ export function normalizeChietXuat(cx: string | undefined | null): string {
 /**
  * So sánh hai giá trị chiết suất sau khi chuẩn hóa
  */
-export function compareChietXuat(cx1: string | undefined | null, cx2: string | undefined | null): boolean {
+export function compareChietXuat(cx1: any, cx2: any): boolean {
   const norm1 = normalizeChietXuat(cx1);
   const norm2 = normalizeChietXuat(cx2);
   return norm1 === norm2;

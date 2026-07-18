@@ -109,8 +109,15 @@ export default function DiopterMatrix({
 
   // Đảm bảo chiết suất được chọn luôn hợp lệ khi đổi thương hiệu
   React.useEffect(() => {
-    if (availableChietXuats.length > 0 && !availableChietXuats.includes(selectedChietXuat)) {
-      setSelectedChietXuat(availableChietXuats[0]);
+    if (availableChietXuats.length > 0) {
+      const matched = availableChietXuats.find(cx => normalizeChietXuat(cx) === normalizeChietXuat(selectedChietXuat));
+      if (matched) {
+        if (selectedChietXuat !== matched) {
+          setSelectedChietXuat(matched);
+        }
+      } else {
+        setSelectedChietXuat(availableChietXuats[0]);
+      }
     }
   }, [availableChietXuats, selectedChietXuat]);
 
@@ -216,7 +223,8 @@ export default function DiopterMatrix({
     sanPhams.forEach(p => {
       const matchBrand = p.THUONG_HIEU.trim().toLowerCase() === selectedBrand.trim().toLowerCase();
       const matchFeature = p.TINH_NANG.trim().toLowerCase() === selectedFeature.trim().toLowerCase();
-      const normalizedProductIdx = normalizeChietXuat(p.CHIET_XUAT);
+      const productRawIndex = p.CHIET_XUAT || (p as any).CHIET_SUAT || (p as any).chiet_suat || (p as any).refractiveIndex || '';
+      const normalizedProductIdx = normalizeChietXuat(productRawIndex);
       const matchChietXuat = normalizedProductIdx === normalizedSelected;
       
       // Logging debug as requested to track down any misaligned values
@@ -224,7 +232,7 @@ export default function DiopterMatrix({
         console.log({
           selectedIndex: selectedChietXuat,
           normalizedSelectedIndex: normalizedSelected,
-          productIndex: p.CHIET_XUAT,
+          productIndex: productRawIndex,
           normalizedProductIndex: normalizedProductIdx,
           matched: matchChietXuat,
           sku: p.SKU
