@@ -100,7 +100,8 @@ import {
   syncEmailLog,
   fetchEmailLogs,
   setOfflineMode,
-  resolveEffectiveUserId
+  resolveEffectiveUserId,
+  memoryCache
 } from './supabaseSync';
 
 // Import Components con (lazy loaded for optimal bundle size)
@@ -980,7 +981,11 @@ export default function App() {
           if (eventType === 'DELETE') {
             const skuToDelete = oldRow?.SKU;
             if (skuToDelete) {
-              setSanPhams(prev => prev.filter(p => p.SKU !== skuToDelete));
+              setSanPhams(prev => {
+                const next = prev.filter(p => p.SKU !== skuToDelete);
+                memoryCache['B_SANPHAM'] = next;
+                return next;
+              });
             }
           } else if (newRow) {
             // INSERT or UPDATE
@@ -1008,7 +1013,9 @@ export default function App() {
               } else {
                 next = [mappedItem, ...prev];
               }
-              return deduplicateProducts(next);
+              const res = deduplicateProducts(next);
+              memoryCache['B_SANPHAM'] = res;
+              return res;
             });
           }
           break;
@@ -1018,7 +1025,11 @@ export default function App() {
           if (eventType === 'DELETE') {
             const hoaDonToDelete = oldRow?.HOA_DON;
             if (hoaDonToDelete) {
-              setNhapXuats(prev => prev.filter(nx => nx.HOA_DON !== hoaDonToDelete));
+              setNhapXuats(prev => {
+                const next = prev.filter(nx => nx.HOA_DON !== hoaDonToDelete);
+                memoryCache['B_NHAPXUAT'] = next;
+                return next;
+              });
             }
           } else if (newRow) {
             // INSERT or UPDATE
@@ -1038,13 +1049,15 @@ export default function App() {
             };
             setNhapXuats(prev => {
               const index = prev.findIndex(nx => nx.HOA_DON === mappedItem.HOA_DON);
+              let next;
               if (index !== -1) {
-                const next = [...prev];
+                next = [...prev];
                 next[index] = mappedItem;
-                return next;
               } else {
-                return [mappedItem, ...prev];
+                next = [mappedItem, ...prev];
               }
+              memoryCache['B_NHAPXUAT'] = next;
+              return next;
             });
           }
           break;
@@ -1054,7 +1067,11 @@ export default function App() {
           if (eventType === 'DELETE') {
             const idToDelete = oldRow?.id !== undefined ? oldRow.id : oldRow?.ID;
             if (idToDelete !== undefined) {
-              setNhapXuatCTs(prev => prev.filter(d => d.ID !== idToDelete));
+              setNhapXuatCTs(prev => {
+                const next = prev.filter(d => d.ID !== idToDelete);
+                memoryCache['B_NHAPXUATCT'] = next;
+                return next;
+              });
             }
           } else if (newRow) {
             // INSERT or UPDATE
@@ -1077,13 +1094,15 @@ export default function App() {
             };
             setNhapXuatCTs(prev => {
               const index = prev.findIndex(d => d.ID === mappedItem.ID);
+              let next;
               if (index !== -1) {
-                const next = [...prev];
+                next = [...prev];
                 next[index] = mappedItem;
-                return next;
               } else {
-                return [mappedItem, ...prev];
+                next = [mappedItem, ...prev];
               }
+              memoryCache['B_NHAPXUATCT'] = next;
+              return next;
             });
           }
           break;
@@ -1092,7 +1111,11 @@ export default function App() {
         case 'b_kiemkho': {
           if (eventType === 'DELETE') {
             const keyMap = (oldRow?.MA_PHIEU || '') + '_' + (oldRow?.SKU || '');
-            setKiemKhos(prev => prev.filter(kk => ((kk.MA_PHIEU || '') + '_' + (kk.SKU || '')) !== keyMap));
+            setKiemKhos(prev => {
+              const next = prev.filter(kk => ((kk.MA_PHIEU || '') + '_' + (kk.SKU || '')) !== keyMap);
+              memoryCache['B_KIEMKHO'] = next;
+              return next;
+            });
           } else if (newRow) {
             // INSERT or UPDATE
             const mappedItem: KiemKho = {
@@ -1108,13 +1131,15 @@ export default function App() {
             setKiemKhos(prev => {
               const keyMap = (mappedItem.MA_PHIEU || '') + '_' + (mappedItem.SKU || '');
               const index = prev.findIndex(kk => ((kk.MA_PHIEU || '') + '_' + (kk.SKU || '')) === keyMap);
+              let next;
               if (index !== -1) {
-                const next = [...prev];
+                next = [...prev];
                 next[index] = mappedItem;
-                return next;
               } else {
-                return [mappedItem, ...prev];
+                next = [mappedItem, ...prev];
               }
+              memoryCache['B_KIEMKHO'] = next;
+              return next;
             });
           }
           break;
@@ -1124,7 +1149,11 @@ export default function App() {
           if (eventType === 'DELETE') {
             const brandToDelete = oldRow?.THUONG_HIEU;
             if (brandToDelete) {
-              setThuongHieus(prev => prev.filter(th => th.THUONG_HIEU !== brandToDelete));
+              setThuongHieus(prev => {
+                const next = prev.filter(th => th.THUONG_HIEU !== brandToDelete);
+                memoryCache['B_THUONGHIEU'] = next;
+                return next;
+              });
             }
           } else if (newRow) {
             // INSERT or UPDATE
@@ -1141,13 +1170,15 @@ export default function App() {
             };
             setThuongHieus(prev => {
               const index = prev.findIndex(th => th.THUONG_HIEU === mappedItem.THUONG_HIEU);
+              let next;
               if (index !== -1) {
-                const next = [...prev];
+                next = [...prev];
                 next[index] = mappedItem;
-                return next;
               } else {
-                return [mappedItem, ...prev];
+                next = [mappedItem, ...prev];
               }
+              memoryCache['B_THUONGHIEU'] = next;
+              return next;
             });
           }
           break;
@@ -1157,7 +1188,11 @@ export default function App() {
           if (eventType === 'DELETE') {
             const branchToDelete = oldRow?.CHI_NHANH;
             if (branchToDelete) {
-              setChiNhanhs(prev => prev.filter(cn => cn.CHI_NHANH !== branchToDelete));
+              setChiNhanhs(prev => {
+                const next = prev.filter(cn => cn.CHI_NHANH !== branchToDelete);
+                memoryCache['B_CHINHANH'] = next;
+                return next;
+              });
             }
           } else if (newRow) {
             // INSERT or UPDATE
@@ -1168,13 +1203,15 @@ export default function App() {
             };
             setChiNhanhs(prev => {
               const index = prev.findIndex(cn => cn.CHI_NHANH === mappedItem.CHI_NHANH);
+              let next;
               if (index !== -1) {
-                const next = [...prev];
+                next = [...prev];
                 next[index] = mappedItem;
-                return next;
               } else {
-                return [mappedItem, ...prev];
+                next = [mappedItem, ...prev];
               }
+              memoryCache['B_CHINHANH'] = next;
+              return next;
             });
           }
           break;
@@ -1184,7 +1221,11 @@ export default function App() {
           if (eventType === 'DELETE') {
             const staffToDelete = oldRow?.MA_NV;
             if (staffToDelete) {
-              setNhanViens(prev => prev.filter(nv => nv.MA_NV !== staffToDelete));
+              setNhanViens(prev => {
+                const next = prev.filter(nv => nv.MA_NV !== staffToDelete);
+                memoryCache['B_NHANVIEN'] = next;
+                return next;
+              });
             }
           } else if (newRow) {
             // INSERT or UPDATE
@@ -1207,13 +1248,15 @@ export default function App() {
             };
             setNhanViens(prev => {
               const index = prev.findIndex(nv => nv.MA_NV === mappedItem.MA_NV);
+              let next;
               if (index !== -1) {
-                const next = [...prev];
+                next = [...prev];
                 next[index] = mappedItem;
-                return next;
               } else {
-                return [mappedItem, ...prev];
+                next = [mappedItem, ...prev];
               }
+              memoryCache['B_NHANVIEN'] = next;
+              return next;
             });
 
             // Cập nhật thông tin CURRENT_USER nếu khớp tài khoản đang đăng nhập
@@ -1235,7 +1278,7 @@ export default function App() {
                        const { permissions: combinedPermissions, roleName } = resolvePermissions(
                         mappedItem.ROLE,
                         mappedItem.PERMISSIONS,
-                        roles
+                        rolesRef.current
                       );
 
                       const hasWritePermission = combinedPermissions.some(p => p.includes('.create') || p.includes('.edit') || p.includes('.delete'));
@@ -1302,7 +1345,11 @@ export default function App() {
           if (eventType === 'DELETE') {
             const roleToDelete = oldRow?.ROLE_CODE;
             if (roleToDelete) {
-              setRoles(prev => prev.filter(r => r.ROLE_CODE !== roleToDelete));
+              setRoles(prev => {
+                const next = prev.filter(r => r.ROLE_CODE !== roleToDelete);
+                memoryCache['B_ROLE'] = next;
+                return next;
+              });
             }
           } else if (newRow) {
             // INSERT or UPDATE
@@ -1313,13 +1360,15 @@ export default function App() {
             };
             setRoles(prev => {
               const index = prev.findIndex(r => r.ROLE_CODE === mappedItem.ROLE_CODE);
+              let next;
               if (index !== -1) {
-                const next = [...prev];
+                next = [...prev];
                 next[index] = mappedItem;
-                return next;
               } else {
-                return [mappedItem, ...prev];
+                next = [mappedItem, ...prev];
               }
+              memoryCache['B_ROLE'] = next;
+              return next;
             });
           }
           break;
@@ -1353,11 +1402,42 @@ export default function App() {
             // Lấy user_id từ dữ liệu thay đổi
             const newRow = payload.new;
             const oldRow = payload.old;
+            const eventType = payload.eventType;
+            const table = payload.table;
             const rowUserId = (newRow && newRow.user_id) || (oldRow && oldRow.user_id);
 
             // Nếu dữ liệu thay đổi thuộc về user hiện tại hoặc Owner, tự động cập nhật gia tăng tại chỗ
             const ownerId = localStorage.getItem('DB_OWNER_USER_ID') || userId;
-            if (rowUserId === userId || rowUserId === ownerId || rowUserId === '00000000-0000-0000-0000-000000000000') {
+            
+            // Đối với sự kiện DELETE, nếu không tìm thấy rowUserId (do PostgreSQL replica identity mặc định không trả về các cột không phải khóa chính),
+            // ta thực hiện kiểm tra so khớp cục bộ bằng refs để xem bản ghi bị xóa có nằm trong dữ liệu hiện tại của chúng ta hay không.
+            let isTargetUser = (rowUserId === userId || rowUserId === ownerId || rowUserId === '00000000-0000-0000-0000-000000000000');
+            
+            if (!isTargetUser && eventType === 'DELETE' && oldRow) {
+              if (table === 'b_nhapxuat') {
+                const hoaDon = oldRow.HOA_DON;
+                isTargetUser = nhapXuatsRef.current.some(nx => nx.HOA_DON === hoaDon);
+              } else if (table === 'b_nhapxuatct') {
+                const id = oldRow.id !== undefined ? oldRow.id : oldRow.ID;
+                isTargetUser = nhapXuatCTsRef.current.some(d => d.ID === id);
+              } else if (table === 'b_sanpham') {
+                const sku = oldRow.SKU;
+                isTargetUser = sanPhamsRef.current.some(p => p.SKU === sku);
+              } else if (table === 'b_kiemkho') {
+                const keyMap = (oldRow.MA_PHIEU || '') + '_' + (oldRow.SKU || '');
+                isTargetUser = kiemKhosRef.current.some(kk => ((kk.MA_PHIEU || '') + '_' + (kk.SKU || '')) === keyMap);
+              } else if (table === 'b_thuonghieu') {
+                isTargetUser = thuongHieusRef.current.some(th => th.THUONG_HIEU === oldRow.THUONG_HIEU);
+              } else if (table === 'b_chinhanh') {
+                isTargetUser = chiNhanhsRef.current.some(cn => cn.CHI_NHANH === oldRow.CHI_NHANH);
+              } else if (table === 'b_nhanvien') {
+                isTargetUser = nhanViensRef.current.some(nv => nv.MA_NV === oldRow.MA_NV);
+              } else if (table === 'b_role') {
+                isTargetUser = rolesRef.current.some(r => r.ROLE_CODE === oldRow.ROLE_CODE);
+              }
+            }
+
+            if (isTargetUser) {
               if (ignoreRealtimeRef.current) {
                 console.log('Đang bỏ qua sự kiện Realtime do cờ ignoreRealtime...');
                 return;
@@ -1478,6 +1558,47 @@ export default function App() {
 
   // --- 3. ĐIỀU HƯỚNG TAB CHỨC NĂNG ---
   const [activeTab, setActiveTab] = useState<string>('DASHBOARD');
+  
+  // --- STATE REFS TO PREVENT CLOSURE TRAPS IN REALTIME EVENT PAYLOADS ---
+  const nhapXuatsRef = useRef(nhapXuats);
+  const nhapXuatCTsRef = useRef(nhapXuatCTs);
+  const sanPhamsRef = useRef(sanPhams);
+  const kiemKhosRef = useRef(kiemKhos);
+  const thuongHieusRef = useRef(thuongHieus);
+  const chiNhanhsRef = useRef(chiNhanhs);
+  const nhanViensRef = useRef(nhanViens);
+  const rolesRef = useRef(roles);
+
+  useEffect(() => { nhapXuatsRef.current = nhapXuats; }, [nhapXuats]);
+  useEffect(() => { nhapXuatCTsRef.current = nhapXuatCTs; }, [nhapXuatCTs]);
+  useEffect(() => { sanPhamsRef.current = sanPhams; }, [sanPhams]);
+  useEffect(() => { kiemKhosRef.current = kiemKhos; }, [kiemKhos]);
+  useEffect(() => { thuongHieusRef.current = thuongHieus; }, [thuongHieus]);
+  useEffect(() => { chiNhanhsRef.current = chiNhanhs; }, [chiNhanhs]);
+  useEffect(() => { nhanViensRef.current = nhanViens; }, [nhanViens]);
+  useEffect(() => { rolesRef.current = roles; }, [roles]);
+
+  // --- AUTOMATIC ACTIVE TAB PERMISSION ROUTE GUARD ---
+  useEffect(() => {
+    if (currentUser) {
+      const allowedTabs = [];
+      if (hasPermission('dashboard.view')) allowedTabs.push('DASHBOARD');
+      if (hasPermission('ordercheck.view') || hasPermission('picking.view')) allowedTabs.push('ORDER_PARSER');
+      if (hasPermission('export.create')) allowedTabs.push('TRANSACTION_XUAT');
+      if (hasPermission('import.create')) allowedTabs.push('TRANSACTION_NHAP');
+      if (hasPermission('inventory.view') || hasPermission('product.view')) allowedTabs.push('PRODUCT');
+      if (hasPermission('matrix.view') || hasPermission('product.view')) allowedTabs.push('MATRIX');
+      if (hasPermission('stocktake.view') || hasPermission('inventory.view')) allowedTabs.push('AUDIT');
+      if (hasPermission('history.view') || hasPermission('import.view') || hasPermission('export.view')) allowedTabs.push('HISTORY');
+      if (hasPermission('employee.view') || hasPermission('user.view') || hasPermission('role.view') || hasPermission('product.edit') || hasPermission('product.create')) allowedTabs.push('CATEGORY');
+      allowedTabs.push('SETTINGS');
+
+      if (!allowedTabs.includes(activeTab)) {
+        setActiveTab(allowedTabs[0] || 'SETTINGS');
+      }
+    }
+  }, [currentUser, hasPermission, activeTab]);
+
   const [historyFiltersOverride, setHistoryFiltersOverride] = useState<{
     historyTypeFilter: 'Tất cả' | 'NHẬP' | 'XUẤT' | 'KIỂM KHO' | 'NHẬP_KIEM_KHO' | 'XUAT_KIEM_KHO';
     branchFilter: string;
@@ -3209,12 +3330,19 @@ export default function App() {
       setCurrentUser(switchedUser);
       localStorage.setItem('CURRENT_USER', JSON.stringify(switchedUser));
       
-      // Tự động chuyển tab về trang sản phẩm/lịch sử nếu tab hiện tại bị khóa do phân quyền của vai trò mới
-      if (!combinedPermissions.includes('dashboard.view')) {
-        setActiveTab('TRANSACTION_XUAT');
-      } else {
-        setActiveTab('DASHBOARD');
-      }
+      // Tự động chuyển tab dựa trên phân quyền của vai trò mới
+      const check = (perm: string) => combinedPermissions.includes(perm);
+      let targetTab = 'SETTINGS';
+      if (check('dashboard.view')) targetTab = 'DASHBOARD';
+      else if (check('ordercheck.view') || check('picking.view')) targetTab = 'ORDER_PARSER';
+      else if (check('export.create')) targetTab = 'TRANSACTION_XUAT';
+      else if (check('import.create')) targetTab = 'TRANSACTION_NHAP';
+      else if (check('inventory.view') || check('product.view')) targetTab = 'PRODUCT';
+      else if (check('matrix.view') || check('product.view')) targetTab = 'MATRIX';
+      else if (check('stocktake.view') || check('inventory.view')) targetTab = 'AUDIT';
+      else if (check('history.view') || check('import.view') || check('export.view')) targetTab = 'HISTORY';
+      else if (check('employee.view') || check('user.view') || check('role.view') || check('product.edit') || check('product.create')) targetTab = 'CATEGORY';
+      setActiveTab(targetTab);
     }
   };
 
@@ -3239,12 +3367,20 @@ export default function App() {
             syncAllDataFromSupabase(ownerId, user.username);
             setupRealtimeRef.current?.(ownerId);
             
-            // Tự động chuyển hướng tab phù hợp dựa trên quyền dashboard.view
-            if (user.permissions && user.permissions.includes('dashboard.view')) {
-              setActiveTab('DASHBOARD');
-            } else {
-              setActiveTab('TRANSACTION_XUAT');
-            }
+            // Tự động chuyển hướng sang tab phù hợp nhất dựa trên phân quyền thực tế của tài khoản vừa đăng nhập
+            const userPerms = user.permissions || [];
+            const check = (perm: string) => userPerms.includes(perm);
+            let targetTab = 'SETTINGS';
+            if (check('dashboard.view')) targetTab = 'DASHBOARD';
+            else if (check('ordercheck.view') || check('picking.view')) targetTab = 'ORDER_PARSER';
+            else if (check('export.create')) targetTab = 'TRANSACTION_XUAT';
+            else if (check('import.create')) targetTab = 'TRANSACTION_NHAP';
+            else if (check('inventory.view') || check('product.view')) targetTab = 'PRODUCT';
+            else if (check('matrix.view') || check('product.view')) targetTab = 'MATRIX';
+            else if (check('stocktake.view') || check('inventory.view')) targetTab = 'AUDIT';
+            else if (check('history.view') || check('import.view') || check('export.view')) targetTab = 'HISTORY';
+            else if (check('employee.view') || check('user.view') || check('role.view') || check('product.edit') || check('product.create')) targetTab = 'CATEGORY';
+            setActiveTab(targetTab);
           }} 
         />
       </Suspense>

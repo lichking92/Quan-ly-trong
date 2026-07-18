@@ -690,7 +690,9 @@ export default function TransactionHistory({
     const list = nhapXuats.filter(h => {
       let matchType = false;
       if (historyTypeFilter === 'Tất cả') {
-        matchType = true;
+        // Chỉ hiển thị Nhập/Xuất thông thường, không gộp Nhập KK và Xuất KK
+        matchType = (h.LOAI === 'NHẬP' && !h.HOA_DON.startsWith('PNK')) ||
+                    (h.LOAI === 'XUẤT' && !h.HOA_DON.startsWith('PXK'));
       } else if (historyTypeFilter === 'NHẬP') {
         matchType = h.LOAI === 'NHẬP' && !h.HOA_DON.startsWith('PNK');
       } else if (historyTypeFilter === 'XUẤT') {
@@ -1415,13 +1417,39 @@ export default function TransactionHistory({
           />
         </th>
       ),
-      renderCell: (h, isSelected, badgeColor) => (
-        <td key="type" className="py-3 px-3">
-          <span className={`text-[9px] font-bold py-0.5 px-2 rounded-full border uppercase tracking-wider ${badgeColor}`}>
-            {h.LOAI}
-          </span>
-        </td>
-      )
+      renderCell: (h) => {
+        let label: string = h.LOAI;
+        let finalBadgeColor = 'bg-emerald-50 text-emerald-700 border-emerald-100';
+        
+        if (h.LOAI === 'NHẬP') {
+          if (h.HOA_DON.startsWith('PNK')) {
+            label = 'Nhập KK';
+            finalBadgeColor = 'bg-amber-50 text-amber-700 border-amber-100';
+          } else {
+            label = 'Nhập';
+            finalBadgeColor = 'bg-emerald-50 text-emerald-700 border-emerald-100';
+          }
+        } else if (h.LOAI === 'XUẤT') {
+          if (h.HOA_DON.startsWith('PXK')) {
+            label = 'Xuất KK';
+            finalBadgeColor = 'bg-indigo-50 text-indigo-700 border-indigo-100';
+          } else {
+            label = 'Xuất';
+            finalBadgeColor = 'bg-rose-50 text-rose-700 border-rose-100';
+          }
+        } else if (h.LOAI === 'KIỂM KHO') {
+          label = 'Kiểm Kho';
+          finalBadgeColor = 'bg-blue-50 text-blue-700 border-blue-100';
+        }
+
+        return (
+          <td key="type" className="py-3 px-3">
+            <span className={`text-[10px] font-bold py-0.5 px-2 rounded-full border uppercase tracking-wider ${finalBadgeColor}`}>
+              {label}
+            </span>
+          </td>
+        );
+      }
     },
     status: {
       label: 'Trạng thái',
@@ -2044,7 +2072,7 @@ export default function TransactionHistory({
 
           {/* Lọc loại phiếu */}
           <div className="flex bg-slate-100 p-1 rounded-xl w-full lg:w-auto overflow-x-auto gap-0.5">
-            {(['Tất cả', 'NHẬP', 'XUẤT', 'NHẬP_KIEM_KHO', 'XUAT_KIEM_KHO', 'KIỂM KHO'] as const).map(type => (
+            {(['Tất cả', 'NHẬP', 'XUẤT', 'NHẬP_KIEM_KHO', 'XUAT_KIEM_KHO'] as const).map(type => (
               <button
                 key={type}
                 onClick={() => { setHistoryTypeFilter(type); setSelectedInvoice(null); }}
@@ -2052,12 +2080,11 @@ export default function TransactionHistory({
                   historyTypeFilter === type ? 'bg-red-650 text-white shadow-xs' : 'text-slate-500 hover:text-slate-700'
                 }`}
               >
-                {type === 'Tất cả' && 'Mọi loại phiếu'}
-                {type === 'NHẬP' && 'Phiếu Nhập (PN)'}
-                {type === 'XUẤT' && 'Phiếu Xuất (PX)'}
-                {type === 'NHẬP_KIEM_KHO' && 'Nhập Kiểm Kho (PNK)'}
-                {type === 'XUAT_KIEM_KHO' && 'Xuất Kiểm Kho (PXK)'}
-                {type === 'KIỂM KHO' && 'Kiểm Kho (PKK)'}
+                {type === 'Tất cả' && 'Tất cả'}
+                {type === 'NHẬP' && 'Nhập'}
+                {type === 'XUẤT' && 'Xuất'}
+                {type === 'NHẬP_KIEM_KHO' && 'Nhập KK'}
+                {type === 'XUAT_KIEM_KHO' && 'Xuất KK'}
               </button>
             ))}
           </div>

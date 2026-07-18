@@ -332,6 +332,162 @@ export default function OrderParser({
     fetchTempOrdersFromSupabase();
   }, [currentUser]);
 
+  // Thiết lập Supabase Realtime cho b_gomdon và b_gomdonct để đồng bộ hóa lập tức nhiều users
+  useEffect(() => {
+    let activeChannel: any = null;
+
+    const setupGomDonRealtime = async () => {
+      try {
+        const userId = await resolveEffectiveUserId();
+        const channelName = `realtime-gomdon-${userId}-${Math.random().toString(36).substring(2, 8)}`;
+        
+        activeChannel = supabase
+          .channel(channelName)
+          .on(
+            'postgres_changes',
+            { event: '*', schema: 'public', table: 'b_gomdon' },
+            async (payload: any) => {
+              const { eventType, new: newRow, old: oldRow } = payload;
+              const rowUserId = (newRow && newRow.user_id) || (oldRow && oldRow.user_id);
+              
+              // Nếu là DELETE, không lọc ngay theo rowUserId (vì nó rỗng do replica identity)
+              // Thay vào đó lọc trong setTempOrders
+              if (eventType !== 'DELETE') {
+                if (rowUserId && rowUserId !== userId && rowUserId !== '00000000-0000-0000-0000-000000000000') return;
+              }
+
+              if (eventType === 'DELETE') {
+                const idToDelete = oldRow?.id;
+                if (idToDelete) {
+                  setTempOrders(prev => {
+                    const exists = prev.some(o => o.id === idToDelete);
+                    if (!exists) return prev;
+                    const updated = prev.filter(o => o.id !== idToDelete);
+                    localStorage.setItem('BATCH_PICKING_TEMP_ORDERS', JSON.stringify(updated));
+                    return updated;
+                  });
+                }
+              } else if (eventType === 'INSERT') {
+                const h = newRow;
+                setTempOrders(prev => {
+                  const exists = prev.some(o => o.id === h.id);
+                  if (exists) return prev;
+                  const newOrder = {
+                    id: h.id,
+                    branch: h.branch,
+                    originalText: h.original_text,
+                    createdAt: h.created_at ? new Date(h.created_at).toLocaleString('vi-VN') : new Date().toLocaleString('vi-VN'),
+                    trangThai: h.trang_thai,
+                    soPhieuXuat: h.so_phieu_xuat,
+                    items: []
+                  };
+                  const updated = [newOrder, ...prev];
+                  localStorage.setItem('BATCH_PICKING_TEMP_ORDERS', JSON.stringify(updated));
+                  return updated;
+                });
+              } else if (eventType === 'UPDATE') {
+                const h = newRow;
+                setTempOrders(prev => {
+                  const exists = prev.some(o => o.id === h.id);
+                  if (!exists) return prev;
+                  const updated = prev.map(o => {
+                    if (o.id === h.id) {
+                      return {
+                        ...o,
+                        branch: h.branch,
+                        trangThai: h.trang_thai,
+                        soPhieuXuat: h.so_phieu_xuat,
+                        originalText: h.original_text
+                      };
+                    }
+                    return o;
+                  });
+                  localStorage.setItem('BATCH_PICKING_TEMP_ORDERS', JSON.stringify(updated));
+                  return updated;
+                });
+              }
+            }
+          )
+          .on(
+            'postgres_changes',
+            { event: '*', schema: 'public', table: 'b_gomdonct' },
+            async (payload: any) => {
+              const { eventType, new: newRow, old: oldRow } = payload;
+              const rowUserId = (newRow && newRow.user_id) || (oldRow && oldRow.user_id);
+              if (eventType !== 'DELETE') {
+                if (rowUserId && rowUserId !== userId && rowUserId !== '00000000-0000-0000-0000-000000000000') return;
+              }
+
+              if (eventType === 'DELETE') {
+                const idToDelete = oldRow?.id;
+                if (idToDelete) {
+                  setTempOrders(prev => {
+                    const exists = prev.some(o => o.items.some(item => item.id === idToDelete));
+                    if (!exists) return prev;
+                    const updated = prev.map(o => ({
+                      ...o,
+                      items: o.items.filter(item => item.id !== idToDelete)
+                    }));
+                    localStorage.setItem('BATCH_PICKING_TEMP_ORDERS', JSON.stringify(updated));
+                    return updated;
+                  });
+                }
+              } else if (eventType === 'INSERT' || eventType === 'UPDATE') {
+                const d = newRow;
+                const mappedItem = {
+                  id: d.id,
+                  rawLine: d.raw_line,
+                  brand: d.brand,
+                  chietXuat: d.chiet_xuat,
+                  tinhNang: d.tinh_nang,
+                  sph: Number(d.sph),
+                  cyl: Number(d.cyl),
+                  quantity: Number(d.quantity),
+                  unit: d.unit,
+                  sku: d.sku,
+                  error: d.error || undefined
+                };
+
+                setTempOrders(prev => {
+                  const hasParent = prev.some(o => o.id === d.gom_don_id);
+                  if (!hasParent) return prev;
+                  const updated = prev.map(o => {
+                    if (o.id === d.gom_don_id) {
+                      const itemIndex = o.items.findIndex(item => item.id === mappedItem.id);
+                      let newItems = [...o.items];
+                      if (itemIndex !== -1) {
+                        newItems[itemIndex] = mappedItem;
+                      } else {
+                        newItems.push(mappedItem);
+                      }
+                      return {
+                        ...o,
+                        items: newItems
+                      };
+                    }
+                    return o;
+                  });
+                  localStorage.setItem('BATCH_PICKING_TEMP_ORDERS', JSON.stringify(updated));
+                  return updated;
+                });
+              }
+            }
+          )
+          .subscribe();
+      } catch (err) {
+        console.error('Error setting up gomdon realtime subscription:', err);
+      }
+    };
+
+    setupGomDonRealtime();
+
+    return () => {
+      if (activeChannel) {
+        supabase.removeChannel(activeChannel);
+      }
+    };
+  }, [currentUser]);
+
   // Set default branch when chiNhanhs loaded
   useEffect(() => {
     if (chiNhanhs && chiNhanhs.length > 0 && !selectedOrderBranch) {
