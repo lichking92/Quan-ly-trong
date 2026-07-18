@@ -351,7 +351,7 @@ export default function OrderParser({
     brandList.forEach(b => {
       const bName = (b.THUONG_HIEU || '').trim();
       if (!bName) return;
-      const bUpper = bName.toUpperCase();
+      const bUpper = bName.toUpperCase().replace(/[\s\u00a0\u200b]+/g, ' ').trim();
       
       if (!profiles[bUpper]) {
         profiles[bUpper] = {
@@ -400,7 +400,7 @@ export default function OrderParser({
     sanPhams.forEach(p => {
       const bName = (p.THUONG_HIEU || '').trim();
       if (!bName) return;
-      const bUpper = bName.toUpperCase();
+      const bUpper = bName.toUpperCase().replace(/[\s\u00a0\u200b]+/g, ' ').trim();
 
       if (!profiles[bUpper]) {
         profiles[bUpper] = {
@@ -654,21 +654,21 @@ export default function OrderParser({
 
     // Dynamically retrieve brand list from state, fallback if empty
     const uniqueBrands = Array.from(new Set([
-      ...brandList.map(b => (b.THUONG_HIEU || '').toUpperCase().trim()),
-      ...sanPhams.map(p => (p.THUONG_HIEU || '').toUpperCase().trim())
+      ...brandList.map(b => (b.THUONG_HIEU || '').toUpperCase().replace(/[\s\u00a0\u200b]+/g, ' ').trim()),
+      ...sanPhams.map(p => (p.THUONG_HIEU || '').toUpperCase().replace(/[\s\u00a0\u200b]+/g, ' ').trim())
     ])).filter(Boolean).sort((a, b) => b.length - a.length); // Sort longest first for accurate greedy matching
 
     const uniqueChietXuats = Array.from(new Set([
       '1.56', '1.60', '1.61', '1.67', '1.74',
-      ...brandList.map(b => (b.CHIET_XUAT_MAC_DINH || '').split(',').map((s: string) => s.trim().toUpperCase())).flat(),
-      ...sanPhams.map(p => (p.CHIET_XUAT || '').trim().toUpperCase())
+      ...brandList.map(b => (b.CHIET_XUAT_MAC_DINH || '').split(',').map((s: string) => s.toUpperCase().replace(/[\s\u00a0\u200b]+/g, ' ').trim())).flat(),
+      ...sanPhams.map(p => (p.CHIET_XUAT || '').toUpperCase().replace(/[\s\u00a0\u200b]+/g, ' ').trim())
     ])).filter(Boolean).sort((a, b) => b.length - a.length);
 
     const uniqueFeatures = Array.from(new Set([
       'ASX', 'ĐM', 'ĐỔI MÀU', 'DOI MAU', 'CLEAR', 'BLUE', 'ROCK', 'PRE', 'ASG', 'BLUE CUT', 'CORON',
-      ...brandList.map(b => (b.TINH_NANG_MAC_DINH || '').toUpperCase().trim()),
-      ...brandList.map(b => (b.TINH_NANG || '').toUpperCase().trim()),
-      ...sanPhams.map(p => (p.TINH_NANG || '').toUpperCase().trim())
+      ...brandList.map(b => (b.TINH_NANG_MAC_DINH || '').toUpperCase().replace(/[\s\u00a0\u200b]+/g, ' ').trim()),
+      ...brandList.map(b => (b.TINH_NANG || '').toUpperCase().replace(/[\s\u00a0\u200b]+/g, ' ').trim()),
+      ...sanPhams.map(p => (p.TINH_NANG || '').toUpperCase().replace(/[\s\u00a0\u200b]+/g, ' ').trim())
     ])).filter(Boolean).sort((a, b) => b.length - a.length);
 
     // Preprocess "Danh sách độ dùng chung"
@@ -714,10 +714,10 @@ export default function OrderParser({
       // Normalize all whitespace to standard spaces and remove duplicate spaces
       const lineUpper = line.toUpperCase().replace(/[\s\u00a0\u200b]+/g, ' ').trim();
 
-      // Step 1: Detect and update context (Brand, Chiet Xuat, Feature)
+      // Step 1: Detect and update context (strictly ordered: Brand -> Chiết suất -> Feature -> Độ)
       let foundBrand = '';
-      let foundChiet = '';
       let foundFeat = '';
+      let foundChiet = '';
 
       let remainingLineUpper = lineUpper;
 
@@ -726,13 +726,13 @@ export default function OrderParser({
         const brandIdx = findWordIndex(remainingLineUpper, brandKey);
         if (brandIdx !== -1) {
           foundBrand = brandProfiles[brandKey].name;
-          // Blank out matched brand characters to prevent any sub-part of the brand name from being matched as a feature
+          // Blank out matched brand characters to prevent any sub-part of the brand name from being matched as a feature/chiết suất
           remainingLineUpper = remainingLineUpper.substring(0, brandIdx) + ' '.repeat(brandKey.length) + remainingLineUpper.substring(brandIdx + brandKey.length);
           break;
         }
       }
 
-      // 2. Find Chiết suất from the remaining part of the line
+      // 2. Find Chiết suất from the remaining part of the line (longest matching first)
       for (const cx of uniqueChietXuats) {
         const cxIdx = findWordIndex(remainingLineUpper, cx);
         if (cxIdx !== -1) {
@@ -754,7 +754,7 @@ export default function OrderParser({
         }
       }
 
-      // 3. Find Feature from the remaining part of the line
+      // 3. Find Feature from the remaining part of the line (longest matching first)
       const sortedFeatures = uniqueFeatures.slice().sort((a, b) => b.length - a.length);
       for (const f of sortedFeatures) {
         const fIdx = findWordIndex(remainingLineUpper, f);
@@ -772,19 +772,28 @@ export default function OrderParser({
         }
       }
 
+      // Count matched fields on this specific line
+      let matchedFieldsCount = 0;
+      if (foundBrand) matchedFieldsCount++;
+      if (foundFeat) matchedFieldsCount++;
+      if (foundChiet) matchedFieldsCount++;
+
       // Context Tracking & Reset/Update logic:
-      // Whenever we encounter any title components in a line (brand, chiet, feat), we update the context.
-      // If we are starting a group (because of a brand/chiet/feat change or new title-only line), 
-      // we resolve missing parts using the brand config defaults or smart auto-deductions.
-      if (foundBrand || foundChiet || foundFeat) {
-        const resolvedBrand = foundBrand || activeFallbackBrand || currentBrand || '';
-        
+      // - A line containing at least 2 out of the 3 fields (Brand, Chiết suất, Feature) OR containing an explicit Brand
+      //   is treated as a new BLOCK.
+      // - When a new BLOCK is detected, we MUST completely reset the old context to avoid any cross-contamination.
+      if (matchedFieldsCount >= 2 || foundBrand) {
+        // RESET OLD CONTEXT COMPLETELY
+        currentBrand = '';
+        currentChietXuat = '';
+        currentFeature = '';
+
         let resolvedChiet = foundChiet;
         let resolvedFeat = foundFeat;
 
-        // Try to resolve/deduce missing fields from the Brand Profile
-        if (resolvedBrand) {
-          const profile = brandProfiles[resolvedBrand.toUpperCase()];
+        // Try to resolve/deduce missing fields from the newly matched Brand's Profile
+        if (foundBrand) {
+          const profile = brandProfiles[foundBrand.toUpperCase()];
           if (profile) {
             // Auto-deduce chiết suất if the brand has only one unique chiết suất
             if (!resolvedChiet) {
@@ -795,22 +804,36 @@ export default function OrderParser({
               resolvedFeat = profile.allFeatures.length === 1 ? profile.allFeatures[0] : (profile.defaultFeature || '');
             }
           }
-        }
 
-        // If still missing, check in sanPhams for any sample product of this brand as a secondary fallback
-        if (!resolvedChiet || !resolvedFeat) {
-          const matchedProdSample = sanPhams.find(p => 
-            (p.THUONG_HIEU || '').toUpperCase().trim() === resolvedBrand.toUpperCase().trim()
-          );
-          if (matchedProdSample) {
-            if (!resolvedChiet) resolvedChiet = matchedProdSample.CHIET_XUAT || '';
-            if (!resolvedFeat) resolvedFeat = matchedProdSample.TINH_NANG || '';
+          // Secondary fallback: check in sanPhams for any sample product of this brand
+          if (!resolvedChiet || !resolvedFeat) {
+            const matchedProdSample = sanPhams.find(p => 
+              (p.THUONG_HIEU || '').toUpperCase().trim() === foundBrand.toUpperCase().trim()
+            );
+            if (matchedProdSample) {
+              if (!resolvedChiet) resolvedChiet = matchedProdSample.CHIET_XUAT || '';
+              if (!resolvedFeat) resolvedFeat = matchedProdSample.TINH_NANG || '';
+            }
           }
         }
 
-        currentBrand = resolvedBrand;
+        currentBrand = foundBrand;
         currentChietXuat = resolvedChiet;
         currentFeature = resolvedFeat;
+
+        console.log(`BLOCK DETECTED:\nBrand=${currentBrand || 'N/A'}\nFeature=${currentFeature || 'N/A'}\nIndex=${currentChietXuat || 'N/A'}\n`);
+      } else if (foundChiet || foundFeat) {
+        // No brand or block detected on this line, but chiết suất or feature was specified individually.
+        // We update the active brand context with the new chiết suất/feature.
+        if (!currentBrand) {
+          currentBrand = activeFallbackBrand || '';
+        }
+        if (foundChiet) {
+          currentChietXuat = foundChiet;
+        }
+        if (foundFeat) {
+          currentFeature = foundFeat;
+        }
       }
 
       // Step 2: Parse Diopters and Quantities
@@ -1004,6 +1027,7 @@ export default function OrderParser({
             const normGenSku = cleanSKU(generatedSku);
             const matchedProduct = sanPhams.find(p => cleanSKU(p.SKU) === normGenSku) || null;
 
+            console.log(`PARSED SKU:\n${generatedSku}\n`);
             console.log(`  - Generated SKU: "${generatedSku}"`);
             if (matchedProduct) {
               console.log(`  - SUCCESS: Matched DB Product: "${matchedProduct.TEN_SAN_PHAM}" (Stock: ${matchedProduct.TON_CUOI})`);
