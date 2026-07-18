@@ -427,46 +427,57 @@ export default function App() {
         const timeoutId = setTimeout(() => controller.abort(), 4000); // 4 seconds timeout
 
         try {
-          const response = await fetch(`${cleanUrl}/rest/v1/`, {
+          // Sử dụng /auth/v1/health làm phép thử chính (yêu cầu gửi kèm apikey)
+          const response = await fetch(`${cleanUrl}/auth/v1/health`, {
             method: "GET",
             signal: controller.signal,
             headers: {
               "apikey": anonKey,
-              "Authorization": `Bearer ${anonKey}`,
               "Cache-Control": "no-cache"
             }
           });
           clearTimeout(timeoutId);
-          lastPingResult = true;
-          lastPingTime = Date.now();
-          return true;
-        } catch (restErr) {
+          
+          if (response.ok || response.status === 200) {
+            lastPingResult = true;
+            lastPingTime = Date.now();
+            return true;
+          }
+          throw new Error(`Ping failed with status ${response.status}`);
+        } catch (authErr) {
           clearTimeout(timeoutId);
           
           const isDebug = typeof window !== 'undefined' && ((window as any).__DEBUG_MODE__ || localStorage.getItem('DEBUG_MODE') === 'true');
           if (isDebug) {
-            console.warn("[Ping] Thử endpoint /rest/v1/ không thành công, chuyển sang thử /auth/v1/health:", restErr);
+            console.warn("[Ping] Thử auth health không thành công, chuyển sang thử query bảng b_sanpham:", authErr);
           }
           
           const backupController = new AbortController();
           const backupTimeoutId = setTimeout(() => backupController.abort(), 3000);
           
           try {
-            const backupResponse = await fetch(`${cleanUrl}/auth/v1/health`, {
+            // Thử một câu truy vấn bảng thực tế (nhẹ nhất có thể) để xác nhận kết nối
+            const backupResponse = await fetch(`${cleanUrl}/rest/v1/b_sanpham?select=id&limit=1`, {
               method: "GET",
               signal: backupController.signal,
               headers: {
+                "apikey": anonKey,
+                "Authorization": `Bearer ${anonKey}`,
                 "Cache-Control": "no-cache"
               }
             });
             clearTimeout(backupTimeoutId);
-            lastPingResult = true;
-            lastPingTime = Date.now();
-            return true; // Received response from backup endpoint = reachable
-          } catch (authErr) {
+            
+            if (backupResponse.ok || backupResponse.status === 200) {
+              lastPingResult = true;
+              lastPingTime = Date.now();
+              return true;
+            }
+            throw new Error(`Backup ping failed with status ${backupResponse.status}`);
+          } catch (tableErr) {
             clearTimeout(backupTimeoutId);
             if (isDebug) {
-              console.warn("[Ping] Cả 2 endpoint của Supabase đều thất bại:", authErr);
+              console.warn("[Ping] Cả 2 phương án kiểm tra kết nối đều thất bại:", tableErr);
             }
             lastPingResult = false;
             lastPingTime = Date.now();

@@ -612,6 +612,28 @@ export async function ensureStorageBucketExists() {
     (window as any).__hasCreatedStorageBucket = true;
   }
 
+  // 1. Kiểm tra trước xem Bucket đã tồn tại hay chưa bằng Storage API để tránh lỗi 400/409
+  try {
+    const { data: bucket, error: getErr } = await supabase.storage.getBucket(SUPABASE_STORAGE_BUCKET);
+    if (bucket && !getErr) {
+      console.log(`[Storage] Bucket '${SUPABASE_STORAGE_BUCKET}' đã tồn tại và sẵn sàng sử dụng.`);
+      return;
+    }
+  } catch (e) {}
+
+  // 2. Nếu chưa có, tiến hành tạo qua JS Storage API (đây là cách an toàn và chuẩn nhất)
+  try {
+    const { error: createErr } = await supabase.storage.createBucket(SUPABASE_STORAGE_BUCKET, {
+      public: true,
+      fileSizeLimit: 10485760 // 10MB
+    });
+    if (!createErr) {
+      console.log(`[Storage] Đã tạo thành công bucket '${SUPABASE_STORAGE_BUCKET}' qua JS Storage API.`);
+      return;
+    }
+  } catch (e) {}
+
+  // 3. Chỉ sử dụng SQL Fallback thông qua RPC nếu việc tạo bằng JS API phía trên thất bại
   const sql = `
     DO $$
     BEGIN
@@ -681,16 +703,6 @@ export async function ensureStorageBucketExists() {
     if (!err2) {
       console.log(`[Storage] Đã cấu hình khởi tạo và phân quyền cho bucket '${SUPABASE_STORAGE_BUCKET}' thành công via run_sql.`);
       return;
-    }
-  } catch (e) {}
-
-  try {
-    const { error: err3 } = await supabase.storage.createBucket(SUPABASE_STORAGE_BUCKET, {
-      public: true,
-      fileSizeLimit: 10485760 // 10MB
-    });
-    if (!err3) {
-      console.log(`[Storage] Đã tạo hoặc xác nhận bucket '${SUPABASE_STORAGE_BUCKET}' thành công qua JS Storage API.`);
     }
   } catch (e) {}
 }

@@ -39,8 +39,13 @@ Date.now = function() {
 export const syncTimeWithSupabase = async () => {
   try {
     const startTime = originalNow();
-    // Gửi một yêu cầu nhẹ đến endpoint health của Auth để lấy header Date của server
-    const response = await fetch(`${SUPABASE_URL}/auth/v1/health`, { method: "GET" });
+    // Gửi một yêu cầu nhẹ đến endpoint health của Auth để lấy header Date của server (kèm theo apikey để tránh lỗi 401)
+    const response = await fetch(`${SUPABASE_URL}/auth/v1/health`, {
+      method: "GET",
+      headers: {
+        "apikey": SUPABASE_PUBLIC_KEY
+      }
+    });
     const endTime = originalNow();
     const serverDateHeader = response.headers.get("date");
     if (serverDateHeader) {
