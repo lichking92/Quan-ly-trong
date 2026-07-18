@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useMemo, useEffect, useRef, useCallback, Component, ReactNode } from 'react';
+import React, { useState, useMemo, useEffect, useRef, useCallback, Component, ReactNode, lazy, Suspense } from 'react';
 
 // Intercept and demote non-fatal network/Supabase errors from console.error to console.warn
 const originalAppError = console.error;
@@ -102,17 +102,17 @@ import {
   resolveEffectiveUserId
 } from './supabaseSync';
 
-// Import Components con
-import Login from './components/Login';
-import Dashboard from './components/Dashboard';
-import ProductManagement from './components/ProductManagement';
-import TransactionForm from './components/TransactionForm';
-import InventoryAudit from './components/InventoryAudit';
-import TransactionHistory from './components/TransactionHistory';
-import CategoryManagement from './components/CategoryManagement';
-import ThemeSettings from './components/ThemeSettings';
-import DiopterMatrix from './components/DiopterMatrix';
-import OrderParser from './components/OrderParser';
+// Import Components con (lazy loaded for optimal bundle size)
+const Login = lazy(() => import('./components/Login'));
+const Dashboard = lazy(() => import('./components/Dashboard'));
+const ProductManagement = lazy(() => import('./components/ProductManagement'));
+const TransactionForm = lazy(() => import('./components/TransactionForm'));
+const InventoryAudit = lazy(() => import('./components/InventoryAudit'));
+const TransactionHistory = lazy(() => import('./components/TransactionHistory'));
+const CategoryManagement = lazy(() => import('./components/CategoryManagement'));
+const ThemeSettings = lazy(() => import('./components/ThemeSettings'));
+const DiopterMatrix = lazy(() => import('./components/DiopterMatrix'));
+const OrderParser = lazy(() => import('./components/OrderParser'));
 import { monitor } from './utils/debugMonitor';
 
 
@@ -3173,23 +3173,32 @@ export default function App() {
 
   if (!currentUser) {
     return (
-      <Login 
-        nhanViens={nhanViens}
-        onLoginSuccess={(user) => {
-          setCurrentUser(user);
-          localStorage.setItem('CURRENT_USER', JSON.stringify(user));
+      <Suspense fallback={
+        <div className="min-h-screen flex items-center justify-center bg-[#0f172a] text-slate-100">
+          <div className="flex flex-col items-center gap-3">
+            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-emerald-500"></div>
+            <p className="text-sm font-medium font-sans">Đang tải trang đăng nhập...</p>
+          </div>
+        </div>
+      }>
+        <Login 
+          nhanViens={nhanViens}
+          onLoginSuccess={(user) => {
+            setCurrentUser(user);
+            localStorage.setItem('CURRENT_USER', JSON.stringify(user));
 
-          // ĐỒNG BỘ DỮ LIỆU LẬP TỨC KHI ĐĂNG NHẬP THÀNH CÔNG!
-          syncAllDataFromSupabase(user.id || '00000000-0000-0000-0000-000000000000', user.username);
-          
-          // Tự động chuyển hướng tab phù hợp
-          if (user.role === 'NHAN_VIEN') {
-            setActiveTab('TRANSACTION_XUAT');
-          } else {
-            setActiveTab('DASHBOARD');
-          }
-        }} 
-      />
+            // ĐỒNG BỘ DỮ LIỆU LẬP TỨC KHI ĐĂNG NHẬP THÀNH CÔNG!
+            syncAllDataFromSupabase(user.id || '00000000-0000-0000-0000-000000000000', user.username);
+            
+            // Tự động chuyển hướng tab phù hợp
+            if (user.role === 'NHAN_VIEN') {
+              setActiveTab('TRANSACTION_XUAT');
+            } else {
+              setActiveTab('DASHBOARD');
+            }
+          }} 
+        />
+      </Suspense>
     );
   }
 
@@ -3632,7 +3641,13 @@ export default function App() {
               className="h-full"
             >
               <ErrorBoundary key={activeTab} fallbackTitle={`Lỗi kết xuất chức năng ${activeTab}`}>
-                {activeTab === 'ORDER_PARSER' && (hasPermission('export.create') || hasPermission('export.view')) && (
+                <Suspense fallback={
+                  <div className="flex flex-col items-center justify-center min-h-[300px] h-full gap-3 text-slate-500 font-sans py-12">
+                    <div className="animate-spin rounded-full h-8 w-8 border-b-2" style={{ borderBottomColor: 'var(--accent-color)' }}></div>
+                    <p className="text-xs font-semibold uppercase tracking-wider opacity-75">Đang tải phân hệ...</p>
+                  </div>
+                }>
+                  {activeTab === 'ORDER_PARSER' && (hasPermission('export.create') || hasPermission('export.view')) && (
                   <OrderParser
                     sanPhams={sanPhams}
                     brandList={thuongHieus}
@@ -3867,6 +3882,7 @@ export default function App() {
                     onUpdatePassword={handleUpdatePassword}
                   />
                 )}
+                </Suspense>
               </ErrorBoundary>
             </motion.div>
           </AnimatePresence>
