@@ -503,22 +503,6 @@ export default function Login({ onLoginSuccess, nhanViens = [] }: LoginProps) {
     }
   };
 
-  // Trợ lý điền thông tin nhanh khi test
-  const handleQuickLogin = (roleType: 'ADMIN' | 'KHO' | 'NHAN_VIEN') => {
-    if (roleType === 'ADMIN') {
-      setUsername('admin');
-      setPassword('123456');
-    } else if (roleType === 'KHO') {
-      setUsername('kho');
-      setPassword('12345');
-    } else {
-      setUsername('nhanvien');
-      setPassword('12345');
-    }
-    setErrorMsg('');
-    setSuccessMsg('');
-  };
-
   return (
     <div className="min-h-screen bg-slate-900 flex items-center justify-center p-4 relative overflow-hidden font-sans">
       
@@ -649,34 +633,6 @@ export default function Login({ onLoginSuccess, nhanViens = [] }: LoginProps) {
                 <UserPlus className="w-4 h-4" />
                 Đăng ký tài khoản nhân viên mới
               </button>
-            </div>
-
-            {/* PHÂN VAI KIỂM THỬ NHANH */}
-            <div className="mt-6 border-t border-slate-800 pt-5 space-y-3">
-              <p className="text-[10px] font-bold text-slate-500 uppercase tracking-widest text-center">GỢI Ý TÀI KHẢN KHẢO SÁT CHỨC NĂNG</p>
-              <div className="grid grid-cols-3 gap-2">
-                <button
-                  onClick={() => handleQuickLogin('ADMIN')}
-                  className="py-2 px-1 bg-slate-800/40 hover:bg-blue-600/10 border border-slate-750 hover:border-blue-500/30 text-slate-400 hover:text-blue-400 text-[10px] font-bold rounded-lg cursor-pointer transition-all text-center"
-                >
-                  Chủ Cửa Hàng
-                  <span className="block text-[8px] opacity-65 font-normal font-mono">admin / 123456</span>
-                </button>
-                <button
-                  onClick={() => handleQuickLogin('KHO')}
-                  className="py-2 px-1 bg-slate-800/40 hover:bg-emerald-600/10 border border-slate-750 hover:border-emerald-500/30 text-slate-400 hover:text-emerald-400 text-[10px] font-bold rounded-lg cursor-pointer transition-all text-center"
-                >
-                  Quản Lý Kho
-                  <span className="block text-[8px] opacity-65 font-normal font-mono">kho / 12345</span>
-                </button>
-                <button
-                  onClick={() => handleQuickLogin('NHAN_VIEN')}
-                  className="py-2 px-1 bg-slate-800/40 hover:bg-amber-600/10 border border-slate-750 hover:border-amber-500/30 text-slate-400 hover:text-amber-400 text-[10px] font-bold rounded-lg cursor-pointer transition-all text-center"
-                >
-                  Nhân Viên Bán
-                  <span className="block text-[8px] opacity-65 font-normal font-mono">nhanvien / 12345</span>
-                </button>
-              </div>
             </div>
           </>
         ) : (
