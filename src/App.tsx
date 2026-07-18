@@ -742,45 +742,13 @@ export default function App() {
     }
   };
 
-  // Background polling interval - Tự động đồng bộ liên tục mỗi 60 giây (seamless, không che mờ màn hình)
+  // Background polling interval - Đã vô hiệu hóa việc định kỳ tải lại toàn bộ database để tiết kiệm egress/quota và tránh spam.
+  // Mọi cập nhật sẽ được thực hiện tự động thông qua kênh Realtime gia tăng (Incremental) siêu nhẹ.
   useEffect(() => {
-    if (!currentUser || !currentUser.id) return;
-
-    const interval = setInterval(async () => {
-      if (isOfflineRef.current) {
-        console.log("Background Polling: Hệ thống đang ngoại tuyến, tạm dừng polling...");
-        return;
-      }
-      if (ignoreRealtimeRef.current) {
-        console.log("Đang lưu phiếu hoặc có thao tác ghi dữ liệu, tạm dừng polling...");
-        return;
-      }
-      if (isSyncingRef.current) {
-        console.log("Background Polling: Hệ thống đang bận đồng bộ, tạm dừng...");
-        return;
-      }
-      // Tránh polling dồn dập nếu vừa mới thực hiện đồng bộ trong 45 giây qua
-      if (Date.now() - lastSyncTimeRef.current < 45000) {
-        console.log("Background Polling: Hệ thống vừa mới đồng bộ gần đây. Bỏ qua lượt này.");
-        return;
-      }
-
-      try {
-        console.log("Background Polling: Đang âm thầm kiểm tra cập nhật mới...");
-        if (typeof window !== 'undefined') {
-          (window as any).__isBackgroundRequest = true;
-        }
-        await syncAllDataFromSupabase(currentUser.id, currentUser.username, true);
-      } catch (err) {
-        console.warn("Lỗi đồng bộ ngầm:", err);
-      } finally {
-        if (typeof window !== 'undefined') {
-          (window as any).__isBackgroundRequest = false;
-        }
-      }
-    }, 60000); // 60 giây
-
-    return () => clearInterval(interval);
+    const isDebug = typeof window !== 'undefined' && ((window as any).__DEBUG_MODE__ || localStorage.getItem('DEBUG_MODE') === 'true');
+    if (isDebug) {
+      console.log("[Sync] Định kỳ tải lại đã được tắt. Hệ thống chuyển sang cơ chế Realtime Incremental siêu nhẹ.");
+    }
   }, [currentUser]);
 
   // Hàm tải dữ liệu chuyên biệt từ Supabase Cloud và gán đồng bộ vào State và LocalStorage
@@ -932,6 +900,409 @@ export default function App() {
     let realtimeChannel: any = null;
     let currentUserId: string | null = null;
 
+    // Hàm cập nhật gia tăng các state cục bộ từ sự kiện realtime mà không tải lại toàn bộ database từ xa
+    const handleIncrementalRealtimeUpdate = (payload: any) => {
+      const isDebug = typeof window !== 'undefined' && ((window as any).__DEBUG_MODE__ || localStorage.getItem('DEBUG_MODE') === 'true');
+      if (isDebug) {
+        console.log('[Realtime Incremental] Nhận sự kiện thay đổi dữ liệu:', payload.table, payload.eventType, payload.new || payload.old);
+      }
+
+      const { table, eventType, new: newRow, old: oldRow } = payload;
+      if (!table) return;
+
+      switch (table) {
+        case 'b_sanpham': {
+          if (eventType === 'DELETE') {
+            const skuToDelete = oldRow?.SKU;
+            if (skuToDelete) {
+              setSanPhams(prev => {
+                const next = prev.filter(p => p.SKU !== skuToDelete);
+                localStorage.setItem('B_SANPHAM', JSON.stringify(next));
+                return next;
+              });
+            }
+          } else if (newRow) {
+            // INSERT or UPDATE
+            const mappedItem: SanPham = {
+              SKU: newRow.SKU,
+              TEN_SAN_PHAM: newRow.TEN_SAN_PHAM,
+              THUONG_HIEU: newRow.THUONG_HIEU,
+              CHIET_XUAT: newRow.CHIET_XUAT,
+              TINH_NANG: newRow.TINH_NANG,
+              CAN: Number(newRow.CAN ?? 0),
+              LOAN: Number(newRow.LOAN ?? 0),
+              DVT: newRow.DVT,
+              TON_DAU: Number(newRow.TON_DAU ?? 0),
+              NHAP: Number(newRow.NHAP ?? 0),
+              XUAT: Number(newRow.XUAT ?? 0),
+              TON_CUOI: Number(newRow.TON_CUOI ?? 0),
+              TON_TOI_THIEU: Number(newRow.TON_TOI_THIEU ?? 0)
+            };
+            setSanPhams(prev => {
+              const index = prev.findIndex(p => p.SKU === mappedItem.SKU);
+              let next;
+              if (index !== -1) {
+                next = [...prev];
+                next[index] = mappedItem;
+              } else {
+                next = [mappedItem, ...prev];
+              }
+              next = deduplicateProducts(next);
+              localStorage.setItem('B_SANPHAM', JSON.stringify(next));
+              return next;
+            });
+          }
+          break;
+        }
+
+        case 'b_nhapxuat': {
+          if (eventType === 'DELETE') {
+            const hoaDonToDelete = oldRow?.HOA_DON;
+            if (hoaDonToDelete) {
+              setNhapXuats(prev => {
+                const next = prev.filter(nx => nx.HOA_DON !== hoaDonToDelete);
+                localStorage.setItem('B_NHAPXUAT', JSON.stringify(next));
+                return next;
+              });
+            }
+          } else if (newRow) {
+            // INSERT or UPDATE
+            const mappedItem: NhapXuat = {
+              HOA_DON: newRow.HOA_DON,
+              CHI_NHANH: newRow.CHI_NHANH,
+              NGAY: newRow.NGAY,
+              LOAI: newRow.LOAI,
+              TONG_SL: Number(newRow.TONG_SL ?? 0),
+              NGUOI_TAO: newRow.NGUOI_TAO,
+              TEN_NGUOI_TAO: newRow.TEN_NGUOI_TAO,
+              TG_TAO: newRow.TG_TAO,
+              GHI_CHU: newRow.GHI_CHU || '',
+              MA_NV: newRow.MA_NV || undefined,
+              TEN_DANG_NHAP: newRow.TEN_DANG_NHAP || undefined,
+              TRANG_THAI: newRow.TRANG_THAI || 'Hoàn tất'
+            };
+            setNhapXuats(prev => {
+              const index = prev.findIndex(nx => nx.HOA_DON === mappedItem.HOA_DON);
+              let next;
+              if (index !== -1) {
+                next = [...prev];
+                next[index] = mappedItem;
+              } else {
+                next = [mappedItem, ...prev];
+              }
+              localStorage.setItem('B_NHAPXUAT', JSON.stringify(next));
+              return next;
+            });
+          }
+          break;
+        }
+
+        case 'b_nhapxuatct': {
+          if (eventType === 'DELETE') {
+            const idToDelete = oldRow?.id !== undefined ? oldRow.id : oldRow?.ID;
+            if (idToDelete !== undefined) {
+              setNhapXuatCTs(prev => {
+                const next = prev.filter(d => d.ID !== idToDelete);
+                localStorage.setItem('B_NHAPXUATCT', JSON.stringify(next));
+                return next;
+              });
+            }
+          } else if (newRow) {
+            // INSERT or UPDATE
+            const mappedId = newRow.id !== undefined ? newRow.id : newRow.ID;
+            const mappedItem: NhapXuatCT = {
+              ID: mappedId,
+              HOA_DON: newRow.HOA_DON,
+              SKU: newRow.SKU,
+              TEN_SP: newRow.TEN_SP,
+              THUONG_HIEU: newRow.THUONG_HIEU,
+              CHIET_XUAT: newRow.CHIET_XUAT,
+              TINH_NANG: newRow.TINH_NANG,
+              SPH: Number(newRow.SPH ?? 0),
+              CYL: Number(newRow.CYL ?? 0),
+              SO_LUONG: Number(newRow.SO_LUONG ?? 0),
+              DVT: newRow.DVT,
+              GHI_CHU: newRow.GHI_CHU || '',
+              LOAI: newRow.LOAI,
+              NGAY: newRow.NGAY
+            };
+            setNhapXuatCTs(prev => {
+              const index = prev.findIndex(d => d.ID === mappedItem.ID);
+              let next;
+              if (index !== -1) {
+                next = [...prev];
+                next[index] = mappedItem;
+              } else {
+                next = [mappedItem, ...prev];
+              }
+              localStorage.setItem('B_NHAPXUATCT', JSON.stringify(next));
+              return next;
+            });
+          }
+          break;
+        }
+
+        case 'b_kiemkho': {
+          if (eventType === 'DELETE') {
+            const keyMap = (oldRow?.MA_PHIEU || '') + '_' + (oldRow?.SKU || '');
+            setKiemKhos(prev => {
+              const next = prev.filter(kk => ((kk.MA_PHIEU || '') + '_' + (kk.SKU || '')) !== keyMap);
+              localStorage.setItem('B_KIEMKHO', JSON.stringify(next));
+              return next;
+            });
+          } else if (newRow) {
+            // INSERT or UPDATE
+            const mappedItem: KiemKho = {
+              MA_PHIEU: newRow.MA_PHIEU,
+              SKU: newRow.SKU,
+              TON_HE_THONG: Number(newRow.TON_HE_THONG ?? 0),
+              TON_THUC_TE: Number(newRow.TON_THUC_TE ?? 0),
+              LECH: Number(newRow.LECH ?? 0),
+              LOAI_BU: newRow.LOAI_BU,
+              NGUOI_KIEM: newRow.NGUOI_KIEM,
+              THOI_DIEM: newRow.THOI_DIEM
+            };
+            setKiemKhos(prev => {
+              const keyMap = (mappedItem.MA_PHIEU || '') + '_' + (mappedItem.SKU || '');
+              const index = prev.findIndex(kk => ((kk.MA_PHIEU || '') + '_' + (kk.SKU || '')) === keyMap);
+              let next;
+              if (index !== -1) {
+                next = [...prev];
+                next[index] = mappedItem;
+              } else {
+                next = [mappedItem, ...prev];
+              }
+              localStorage.setItem('B_KIEMKHO', JSON.stringify(next));
+              return next;
+            });
+          }
+          break;
+        }
+
+        case 'b_thuonghieu': {
+          if (eventType === 'DELETE') {
+            const brandToDelete = oldRow?.THUONG_HIEU;
+            if (brandToDelete) {
+              setThuongHieus(prev => {
+                const next = prev.filter(th => th.THUONG_HIEU !== brandToDelete);
+                localStorage.setItem('B_THUONGHIEU', JSON.stringify(next));
+                return next;
+              });
+            }
+          } else if (newRow) {
+            // INSERT or UPDATE
+            const mappedItem: ThuongHieu = {
+              THUONG_HIEU: newRow.THUONG_HIEU,
+              CHIET_XUAT_MAC_DINH: newRow.CHIET_XUAT_MAC_DINH,
+              TINH_NANG_MAC_DINH: newRow.TINH_NANG_MAC_DINH,
+              TINH_NANG: newRow.TINH_NANG_MAC_DINH || '',
+              SPH_TU: newRow.SPH_TU !== null && newRow.SPH_TU !== undefined ? Number(newRow.SPH_TU) : undefined,
+              SPH_DEN: newRow.SPH_DEN !== null && newRow.SPH_DEN !== undefined ? Number(newRow.SPH_DEN) : undefined,
+              SPH_VIEN_TU: newRow.SPH_VIEN_TU !== null && newRow.SPH_VIEN_TU !== undefined ? Number(newRow.SPH_VIEN_TU) : undefined,
+              SPH_VIEN_DEN: newRow.SPH_VIEN_DEN !== null && newRow.SPH_VIEN_DEN !== undefined ? Number(newRow.SPH_VIEN_DEN) : undefined,
+              BUOC_NHAY: newRow.BUOC_NHAY !== null && newRow.BUOC_NHAY !== undefined ? Number(newRow.BUOC_NHAY) : undefined
+            };
+            setThuongHieus(prev => {
+              const index = prev.findIndex(th => th.THUONG_HIEU === mappedItem.THUONG_HIEU);
+              let next;
+              if (index !== -1) {
+                next = [...prev];
+                next[index] = mappedItem;
+              } else {
+                next = [mappedItem, ...prev];
+              }
+              localStorage.setItem('B_THUONGHIEU', JSON.stringify(next));
+              return next;
+            });
+          }
+          break;
+        }
+
+        case 'b_chinhanh': {
+          if (eventType === 'DELETE') {
+            const branchToDelete = oldRow?.CHI_NHANH;
+            if (branchToDelete) {
+              setChiNhanhs(prev => {
+                const next = prev.filter(cn => cn.CHI_NHANH !== branchToDelete);
+                localStorage.setItem('B_CHINHANH', JSON.stringify(next));
+                return next;
+              });
+            }
+          } else if (newRow) {
+            // INSERT or UPDATE
+            const mappedItem: ChiNhanh = {
+              CHI_NHANH: newRow.CHI_NHANH,
+              DIA_CHI: newRow.DIA_CHI,
+              SDT: newRow.SDT
+            };
+            setChiNhanhs(prev => {
+              const index = prev.findIndex(cn => cn.CHI_NHANH === mappedItem.CHI_NHANH);
+              let next;
+              if (index !== -1) {
+                next = [...prev];
+                next[index] = mappedItem;
+              } else {
+                next = [mappedItem, ...prev];
+              }
+              localStorage.setItem('B_CHINHANH', JSON.stringify(next));
+              return next;
+            });
+          }
+          break;
+        }
+
+        case 'b_nhanvien': {
+          if (eventType === 'DELETE') {
+            const staffToDelete = oldRow?.MA_NV;
+            if (staffToDelete) {
+              setNhanViens(prev => {
+                const next = prev.filter(nv => nv.MA_NV !== staffToDelete);
+                localStorage.setItem('B_NHANVIEN', JSON.stringify(next));
+                return next;
+              });
+            }
+          } else if (newRow) {
+            // INSERT or UPDATE
+            const mappedItem: NhanVien = {
+              MA_NV: newRow.MA_NV,
+              HO_TEN: newRow.HO_TEN,
+              CHUC_VU: newRow.CHUC_VU,
+              BO_PHAN: newRow.BO_PHAN,
+              CHI_NHANH: newRow.CHI_NHANH,
+              EMAIL: newRow.EMAIL,
+              ROLE: newRow.ROLE,
+              PERMISSIONS: safeParseArray(newRow.PERMISSIONS),
+              WRITE_ACCESS: newRow.WRITE_ACCESS ?? false,
+              TEN_DANG_NHAP: newRow.TEN_DANG_NHAP || '',
+              MAT_KHAU: newRow.MAT_KHAU || '',
+              TRANG_THAI: newRow.TRANG_THAI || 'Hoạt động',
+              YEU_CAU_RESET: newRow.YEU_CAU_RESET || false,
+              NGAY_DANG_KY: newRow.NGAY_DANG_KY || '',
+              ROLES: safeParseArray(newRow.ROLES)
+            };
+            setNhanViens(prev => {
+              const index = prev.findIndex(nv => nv.MA_NV === mappedItem.MA_NV);
+              let next;
+              if (index !== -1) {
+                next = [...prev];
+                next[index] = mappedItem;
+              } else {
+                next = [mappedItem, ...prev];
+              }
+              localStorage.setItem('B_NHANVIEN', JSON.stringify(next));
+              return next;
+            });
+
+            // Cập nhật thông tin CURRENT_USER nếu khớp tài khoản đang đăng nhập
+            const savedUserStr = localStorage.getItem('CURRENT_USER');
+            if (savedUserStr) {
+              try {
+                const savedUser = JSON.parse(savedUserStr);
+                if (savedUser && savedUser.id) {
+                  const matchesCurrentUser = 
+                    (mappedItem.MA_NV || '').trim().toLowerCase() === (savedUser.id || '').trim().toLowerCase() ||
+                    (mappedItem.TEN_DANG_NHAP || '').trim().toLowerCase() === (savedUser.username || '').trim().toLowerCase() ||
+                    (mappedItem.EMAIL || '').trim().toLowerCase() === (savedUser.username || '').trim().toLowerCase();
+                  
+                  if (matchesCurrentUser) {
+                    const u: User = {
+                      username: mappedItem.TEN_DANG_NHAP || mappedItem.EMAIL || mappedItem.HO_TEN,
+                      fullName: mappedItem.HO_TEN,
+                      role: mappedItem.ROLE || 'NHAN_VIEN',
+                      branch: mappedItem.CHI_NHANH || 'Kho Trung Tâm',
+                      writeAccess: mappedItem.WRITE_ACCESS !== false,
+                      WRITE_ACCESS: mappedItem.WRITE_ACCESS !== false,
+                      id: mappedItem.MA_NV,
+                      ROLES: mappedItem.ROLES || []
+                    };
+                    const rawStatus = (mappedItem.TRANG_THAI || '').trim().toUpperCase();
+                    const isBlocked = rawStatus === 'BLOCKED' || rawStatus === 'KHÓA' || rawStatus === 'KHOA';
+                    if (isBlocked) {
+                      handleLogout();
+                    } else {
+                      setCurrentUser(u);
+                      localStorage.setItem('CURRENT_USER', JSON.stringify(u));
+                    }
+                  }
+                }
+              } catch (e) {}
+            }
+          }
+          break;
+        }
+
+        case 'b_emaillog': {
+          if (eventType === 'DELETE') {
+            const idToDelete = oldRow?.id;
+            if (idToDelete) {
+              setEmailLogs(prev => {
+                const next = prev.filter(el => el.id !== idToDelete);
+                localStorage.setItem('B_EMAILLOG', JSON.stringify(next));
+                return next;
+              });
+            }
+          } else if (newRow) {
+            // INSERT or UPDATE
+            const mappedItem: EmailLog = {
+              id: newRow.id,
+              EMAIL: newRow.EMAIL,
+              TIEU_DE: newRow.TIEU_DE,
+              NOI_DUNG: newRow.NOI_DUNG,
+              NGAY_GUI: newRow.NGAY_GUI,
+              TRANG_THAI: newRow.TRANG_THAI || 'Thành công',
+              LOAI_EMAIL: newRow.LOAI_EMAIL
+            };
+            setEmailLogs(prev => {
+              const index = prev.findIndex(el => el.id === mappedItem.id);
+              let next;
+              if (index !== -1) {
+                next = [...prev];
+                next[index] = mappedItem;
+              } else {
+                next = [mappedItem, ...prev];
+              }
+              localStorage.setItem('B_EMAILLOG', JSON.stringify(next));
+              return next;
+            });
+          }
+          break;
+        }
+
+        case 'b_role': {
+          if (eventType === 'DELETE') {
+            const roleToDelete = oldRow?.ROLE_CODE;
+            if (roleToDelete) {
+              setRoles(prev => {
+                const next = prev.filter(r => r.ROLE_CODE !== roleToDelete);
+                localStorage.setItem('B_ROLE', JSON.stringify(next));
+                return next;
+              });
+            }
+          } else if (newRow) {
+            // INSERT or UPDATE
+            const mappedItem: Role = {
+              ROLE_CODE: newRow.ROLE_CODE,
+              TEN_ROLE: newRow.TEN_ROLE,
+              PERMISSIONS: safeParseArray(newRow.PERMISSIONS)
+            };
+            setRoles(prev => {
+              const index = prev.findIndex(r => r.ROLE_CODE === mappedItem.ROLE_CODE);
+              let next;
+              if (index !== -1) {
+                next = [...prev];
+                next[index] = mappedItem;
+              } else {
+                next = [mappedItem, ...prev];
+              }
+              localStorage.setItem('B_ROLE', JSON.stringify(next));
+              return next;
+            });
+          }
+          break;
+        }
+      }
+    };
+
     // Hàm thiết lập kênh Realtime lắng nghe mọi thay đổi trên Supabase
     const setupRealtime = (userId: string) => {
       if (realtimeChannel) {
@@ -959,49 +1330,16 @@ export default function App() {
             const oldRow = payload.old;
             const rowUserId = (newRow && newRow.user_id) || (oldRow && oldRow.user_id);
 
-            // Nếu thay đổi thuộc về b_role, chỉ tải lại vai trò, không tải lại toàn bộ database để tránh làm chậm hệ thống
-            if (payload.table === 'b_role') {
-              if (ignoreRealtimeRef.current) {
-                console.log('Đang bỏ qua sự kiện Realtime cho bảng b_role do cờ ignoreRealtime...');
-                return;
-              }
-              const ownerId = localStorage.getItem('DB_OWNER_USER_ID') || userId;
-              if (rowUserId === userId || rowUserId === ownerId || rowUserId === '00000000-0000-0000-0000-000000000000') {
-                console.log('Phát hiện thay đổi cấu hình vai trò trên Supabase Cloud. Tiến hành cập nhật danh sách vai trò tại chỗ...');
-                await reloadRoles();
-              }
-              return;
-            }
-
-            // Nếu dữ liệu thay đổi thuộc về user hiện tại hoặc Owner, tự động reload lại toàn bộ với debounce để gom nhóm
+            // Nếu dữ liệu thay đổi thuộc về user hiện tại hoặc Owner, tự động cập nhật gia tăng tại chỗ
             const ownerId = localStorage.getItem('DB_OWNER_USER_ID') || userId;
             if (rowUserId === userId || rowUserId === ownerId || rowUserId === '00000000-0000-0000-0000-000000000000') {
               if (ignoreRealtimeRef.current) {
-                console.log('Đang bỏ qua sự kiện Realtime để tránh ghi đè dữ liệu cục bộ đang đồng bộ...');
-                return;
-              }
-              if (isSyncingRef.current) {
-                console.log('Đang thực hiện đồng bộ, bỏ qua sự kiện Realtime lặp...');
+                console.log('Đang bỏ qua sự kiện Realtime do cờ ignoreRealtime...');
                 return;
               }
               
-              console.log('Phát hiện thay đổi dữ liệu của bạn trên Supabase Cloud. Lên lịch đồng bộ thời gian thực tự động sau 800ms...');
-              if (realtimeDebounceTimerRef.current) {
-                clearTimeout(realtimeDebounceTimerRef.current);
-              }
-              
-              realtimeDebounceTimerRef.current = setTimeout(async () => {
-                if (isSyncingRef.current) {
-                  console.log('Đang có tiến trình đồng bộ khác chạy, hủy bỏ lượt đồng bộ realtime này.');
-                  return;
-                }
-                try {
-                  console.log('Đang thực hiện tải dữ liệu tự động từ sự kiện Realtime...');
-                  await syncAllDataFromSupabase(userId, currentUser?.username || '', true);
-                } catch (e) {
-                  console.error('Lỗi khi đồng bộ realtime từ Supabase:', e);
-                }
-              }, 800);
+              // Cập nhật gia tăng (Incremental update) tại chỗ, không reload lại toàn bộ dữ liệu từ xa
+              handleIncrementalRealtimeUpdate(payload);
             }
           }
         )
@@ -2694,7 +3032,7 @@ export default function App() {
                 // Phê duyệt tài khoản
                 title = "Tài khoản của bạn đã được kích hoạt";
                 mailContent = `Chào ${staff.HO_TEN},\n\n` +
-                  `Chúng tôi vui mừng thông báo rằng yêu cầu đăng ký tài khoản của bạn trên hệ thống Quản lý Xuất Nhập Tồn Tròng Kính Glass Stock Pro đã được Admin phê duyệt kích hoạt thành công!\n\n` +
+                  `Chúng tôi vui mừng thông báo rằng yêu cầu đăng ký tài khoản của bạn trên hệ thống Quản lý Xuất Nhập Tồn Tròng Kính Quản Lý Kho đã được Admin phê duyệt kích hoạt thành công!\n\n` +
                   `Thông tin tài khoản hoạt động:\n` +
                   `- Họ và tên: ${staff.HO_TEN}\n` +
                   `- Tên đăng nhập: ${staff.TEN_DANG_NHAP || staff.EMAIL}\n` +
@@ -2705,32 +3043,32 @@ export default function App() {
                   `Bây giờ bạn có thể đăng nhập vào ứng dụng và sử dụng các tính năng được cấp quyền ngay lập tức.\n\n` +
                   `Đường dẫn đăng nhập hệ thống: ${window.location.origin}\n\n` +
                   `Chúc bạn có một trải nghiệm làm việc hiệu quả!\n\n` +
-                  `Trân trọng,\nBan Quản Trị Glass Stock Pro`;
+                  `Trân trọng,\nBan Quản Trị Quản Lý Kho`;
                 loaiEmail = "Phê duyệt";
               } else if (isPending && isRejected) {
                 // Từ chối tài khoản
                 title = "Yêu cầu đăng ký tài khoản bị từ chối";
                 mailContent = `Chào ${staff.HO_TEN},\n\n` +
-                  `Chúng tôi rất tiếc phải thông báo rằng yêu cầu đăng ký tài khoản của bạn trên hệ thống Glass Stock Pro đã bị từ chối bởi Quản trị viên hệ thống.\n\n` +
+                  `Chúng tôi rất tiếc phải thông báo rằng yêu cầu đăng ký tài khoản của bạn trên hệ thống Quản Lý Kho đã bị từ chối bởi Quản trị viên hệ thống.\n\n` +
                   `Thông tin tài khoản đăng ký:\n` +
                   `- Họ và tên: ${staff.HO_TEN}\n` +
                   `- Tên đăng nhập: ${staff.TEN_DANG_NHAP}\n` +
                   `- Email liên hệ: ${staff.EMAIL}\n` +
                   `- Trạng thái: Bị từ chối (Rejected)\n\n` +
                   `Nếu có bất kỳ thắc mắc nào hoặc muốn biết thêm lý do, vui lòng liên hệ trực tiếp với Quản lý hoặc Admin để được hỗ trợ giải đáp.\n\n` +
-                  `Trân trọng,\nBan Quản Trị Glass Stock Pro`;
+                  `Trân trọng,\nBan Quản Trị Quản Lý Kho`;
                 loaiEmail = "Từ chối";
               } else if (isBlocked) {
                 // Khóa tài khoản
                 title = "Tài khoản của bạn đã bị khóa";
                 mailContent = `Chào ${staff.HO_TEN},\n\n` +
-                  `Chúng tôi thông báo rằng tài khoản của bạn trên hệ thống Glass Stock Pro đã bị KHÓA (Blocked) bởi Ban Quản Trị.\n\n` +
+                  `Chúng tôi thông báo rằng tài khoản của bạn trên hệ thống Quản Lý Kho đã bị KHÓA (Blocked) bởi Ban Quản Trị.\n\n` +
                   `Thông tin chi tiết:\n` +
                   `- Họ và tên: ${staff.HO_TEN}\n` +
                   `- Tên đăng nhập: ${staff.TEN_DANG_NHAP || staff.EMAIL}\n` +
                   `- Trạng thái: Đã bị khóa (Blocked)\n\n` +
                   `Bạn sẽ không thể đăng nhập vào hệ thống kể từ thời điểm này. Nếu đây là một sự nhầm lẫn hoặc cần khôi phục tài khoản, vui lòng liên hệ trực tiếp với Admin hệ thống.\n\n` +
-                  `Trân trọng,\nBan Quản Trị Glass Stock Pro`;
+                  `Trân trọng,\nBan Quản Trị Quản Lý Kho`;
                 loaiEmail = "Khóa tài khoản";
               }
 
@@ -2868,7 +3206,7 @@ export default function App() {
           <span className={`font-sans font-bold text-xs uppercase tracking-wider ${
             themeMode === 'light' ? 'text-slate-900' : 'text-slate-100'
           }`}>
-            Glass Stock Pro
+            Quản Lý Kho
           </span>
           <span className={`h-2 w-2 rounded-full shrink-0 ${isOffline ? 'bg-red-500 animate-pulse' : 'bg-emerald-500 animate-pulse'}`} title={isOffline ? 'Ngoại tuyến' : 'Trực tuyến'} />
         </div>
@@ -2916,7 +3254,7 @@ export default function App() {
             </div>
             <div>
               <h1 className={`font-sans font-bold text-sm uppercase tracking-wider flex items-center gap-1.5 ${sidebarStyle.logoText}`}>
-                Glass Stock Pro
+                Quản Lý Kho
                 <span className="text-[8px] bg-blue-500/20 text-blue-300 font-mono py-0.5 px-1.5 rounded-full uppercase">v4.0</span>
               </h1>
               <p className={`text-[9px] font-mono ${sidebarStyle.subText}`}>Quản Lý Xuất Nhập Tồn Tròng Kính</p>
@@ -2925,7 +3263,7 @@ export default function App() {
 
           {/* Khi thu gọn, hiển thị Logo icon căn giữa */}
           {sidebarCollapsed && (
-            <div className="p-2 rounded-xl shadow-md text-white" style={{ backgroundColor: accentHex }} title="Glass Stock Pro v4.0">
+            <div className="p-2 rounded-xl shadow-md text-white" style={{ backgroundColor: accentHex }} title="Quản Lý Kho v4.0">
               <Boxes className="w-5 h-5" />
             </div>
           )}
@@ -3525,7 +3863,7 @@ export default function App() {
         {/* FOOTER CHUYÊN NGHIỆP */}
         <footer className="footer-theme border-t py-3 text-center text-[10px] shrink-0 font-medium shadow-[0_-1px_3px_rgba(0,0,0,0.02)]">
           <p className="flex items-center justify-center gap-1.5 text-desc-color">
-            <span>© 2026 Glass Stock Pro. Thiết kế & vận hành bởi Nguyễn Kiến Đức.</span>
+            <span>© 2026 Quản Lý Kho. Thiết kế & vận hành bởi Nguyễn Kiến Đức.</span>
             <span className="text-slate-300">|</span>
             <span className="font-mono text-blue-500" style={{ color: 'var(--accent-color)' }}>Cập nhật thời gian thực bằng Google Apps Script & Sheets</span>
           </p>

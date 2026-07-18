@@ -1846,7 +1846,8 @@ export async function fetchEmailLogs(userId: string): Promise<EmailLog[]> {
       .from('b_emaillog')
       .select('*')
       .eq('user_id', userId)
-      .order('NGAY_GUI', { ascending: false });
+      .order('NGAY_GUI', { ascending: false })
+      .limit(100);
       
     if (error) {
       // Giảm độ nghiêm trọng của log nếu chỉ là lỗi thiếu bảng hoặc lỗi cache schema
