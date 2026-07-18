@@ -6,17 +6,22 @@ import { createClient } from "@supabase/supabase-js";
 // Tự động làm sạch URL nếu người dùng vô tình dán thêm hậu tố "/rest/v1/".
 // =========================================================================
 
-const rawUrl = import.meta.env.VITE_SUPABASE_URL || "";
+const rawUrl = (import.meta.env.VITE_SUPABASE_URL || "").trim().replace(/^['"]|['"]$/g, "");
 const cleanUrl = rawUrl ? rawUrl.replace(/\/rest\/v1\/?$/, "").replace(/\/$/, "") : "";
 
 const SUPABASE_URL = cleanUrl;
-const SUPABASE_PUBLIC_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY || "";
-export const SUPABASE_STORAGE_BUCKET = import.meta.env.VITE_STORAGE_BUCKET || "user_luutru";
+const rawKey = (import.meta.env.VITE_SUPABASE_ANON_KEY || "").trim().replace(/^['"]|['"]$/g, "");
+const SUPABASE_PUBLIC_KEY = rawKey;
+export const SUPABASE_STORAGE_BUCKET = (import.meta.env.VITE_STORAGE_BUCKET || "user_luutru").trim().replace(/^['"]|['"]$/g, "");
 
 if (!SUPABASE_URL || !SUPABASE_PUBLIC_KEY) {
   console.error(
     "⚠️ [Supabase Config Alert] Thiếu biến môi trường VITE_SUPABASE_URL hoặc VITE_SUPABASE_ANON_KEY. Vui lòng cấu hình đầy đủ trong file .env hoặc Settings."
   );
+} else {
+  console.log(`[Supabase Init Diagnostics] URL: ${SUPABASE_URL}`);
+  console.log(`[Supabase Init Diagnostics] Anon Key Length: ${SUPABASE_PUBLIC_KEY.length}`);
+  console.log(`[Supabase Init Diagnostics] Anon Key Preview: ${SUPABASE_PUBLIC_KEY.substring(0, 8)}...${SUPABASE_PUBLIC_KEY.substring(SUPABASE_PUBLIC_KEY.length - 8)}`);
 }
 
 // -------------------------------------------------------------------------
