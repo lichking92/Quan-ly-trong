@@ -21,21 +21,188 @@ export interface Role {
   user_id?: string;     // Supabase user_id
 }
 
+export interface PermissionNode {
+  code: string;
+  desc: string;
+  children?: PermissionNode[];
+}
+
+export const HIERARCHICAL_PERMISSIONS: PermissionNode[] = [
+  {
+    code: 'dashboard.view',
+    desc: 'Dashboard',
+    children: [
+      { code: 'dashboard.read', desc: 'Xem Dashboard' },
+      { code: 'dashboard.export', desc: 'Xuất báo cáo Dashboard' }
+    ]
+  },
+  {
+    code: 'ordercheck.view',
+    desc: 'Kiểm tra đơn',
+    children: [
+      { code: 'ordercheck.read', desc: 'Xem Kiểm tra đơn' },
+      { code: 'ordercheck.analyze', desc: 'Phân tích đơn hàng' },
+      { code: 'ordercheck.save', desc: 'Lưu đơn hàng' },
+      { code: 'ordercheck.export', desc: 'Xuất kết quả' }
+    ]
+  },
+  {
+    code: 'picking_xuat.view',
+    desc: 'Lập phiếu xuất',
+    children: [
+      { code: 'picking_xuat.read', desc: 'Xem phiếu xuất' },
+      { code: 'picking_xuat.create', desc: 'Tạo phiếu xuất' },
+      { code: 'picking_xuat.edit', desc: 'Sửa phiếu xuất' },
+      { code: 'picking_xuat.delete', desc: 'Xóa phiếu xuất' },
+      { code: 'picking_xuat.export', desc: 'Xuất Excel/PDF' }
+    ]
+  },
+  {
+    code: 'picking_nhap.view',
+    desc: 'Lập phiếu nhập',
+    children: [
+      { code: 'picking_nhap.read', desc: 'Xem phiếu nhập' },
+      { code: 'picking_nhap.create', desc: 'Tạo phiếu nhập' },
+      { code: 'picking_nhap.edit', desc: 'Sửa phiếu nhập' },
+      { code: 'picking_nhap.delete', desc: 'Xóa phiếu nhập' }
+    ]
+  },
+  {
+    code: 'history.view',
+    desc: 'Lịch sử nhập xuất',
+    children: [
+      { code: 'history.read', desc: 'Xem Lịch sử nhập xuất (Bản thân)' },
+      { code: 'history.read_all', desc: 'Xem toàn bộ Lịch sử nhập xuất (Tất cả)' },
+      { code: 'history.create', desc: 'Tạo phiếu nhập xuất' },
+      { code: 'history.edit', desc: 'Sửa phiếu nhập xuất' },
+      { code: 'history.delete', desc: 'Xóa phiếu nhập xuất' },
+      { code: 'history.export', desc: 'Xuất Excel/PDF' }
+    ]
+  },
+  {
+    code: 'picking.view',
+    desc: 'Gom đơn',
+    children: [
+      { code: 'picking.read', desc: 'Xem Gom đơn' },
+      { code: 'picking.create', desc: 'Tạo Gom đơn' },
+      { code: 'picking.delete', desc: 'Xóa Gom đơn' },
+      { code: 'picking.export', desc: 'Xuất phiếu Gom đơn' }
+    ]
+  },
+  {
+    code: 'matrix.view',
+    desc: 'Bảng độ',
+    children: [
+      { code: 'matrix.read', desc: 'Xem Bảng độ' }
+    ]
+  },
+  {
+    code: 'stocktake.view',
+    desc: 'Kiểm kho',
+    children: [
+      { code: 'stocktake.read', desc: 'Xem Kiểm kho' }
+    ]
+  },
+  {
+    code: 'product.view',
+    desc: 'Sản phẩm',
+    children: [
+      { code: 'product.read', desc: 'Xem Sản phẩm' },
+      { code: 'product.create', desc: 'Thêm Sản phẩm' },
+      { code: 'product.edit', desc: 'Sửa Sản phẩm' },
+      { code: 'product.delete', desc: 'Xóa Sản phẩm' }
+    ]
+  },
+  {
+    code: 'employee.view',
+    desc: 'Nhân viên',
+    children: [
+      { code: 'employee.read', desc: 'Xem Nhân viên' },
+      { code: 'employee.create', desc: 'Thêm Nhân viên' },
+      { code: 'employee.edit', desc: 'Sửa Nhân viên' },
+      { code: 'employee.delete', desc: 'Xóa Nhân viên' }
+    ]
+  },
+  {
+    code: 'role.view',
+    desc: 'Vai trò',
+    children: [
+      { code: 'role.read', desc: 'Xem Vai trò' },
+      { code: 'role.create', desc: 'Thêm Vai trò' },
+      { code: 'role.edit', desc: 'Sửa Vai trò' },
+      { code: 'role.delete', desc: 'Xóa Vai trò' }
+    ]
+  },
+  {
+    code: 'settings.view',
+    desc: 'Cài đặt',
+    children: [
+      { code: 'settings.read', desc: 'Xem Cài đặt' }
+    ]
+  }
+];
+
+export const PERMISSION_PARENT_MAP: Record<string, string> = {
+  'dashboard.read': 'dashboard.view',
+  'dashboard.export': 'dashboard.view',
+  'ordercheck.read': 'ordercheck.view',
+  'ordercheck.analyze': 'ordercheck.view',
+  'ordercheck.save': 'ordercheck.view',
+  'ordercheck.export': 'ordercheck.view',
+  'picking_xuat.read': 'picking_xuat.view',
+  'picking_xuat.create': 'picking_xuat.view',
+  'picking_xuat.edit': 'picking_xuat.view',
+  'picking_xuat.delete': 'picking_xuat.view',
+  'picking_xuat.export': 'picking_xuat.view',
+  'picking_nhap.read': 'picking_nhap.view',
+  'picking_nhap.create': 'picking_nhap.view',
+  'picking_nhap.edit': 'picking_nhap.view',
+  'picking_nhap.delete': 'picking_nhap.view',
+  'history.read': 'history.view',
+  'history.read_all': 'history.view',
+  'history.create': 'history.view',
+  'history.edit': 'history.view',
+  'history.delete': 'history.view',
+  'history.export': 'history.view',
+  'picking.read': 'picking.view',
+  'picking.create': 'picking.view',
+  'picking.delete': 'picking.view',
+  'picking.export': 'picking.view',
+  'matrix.read': 'matrix.view',
+  'stocktake.read': 'stocktake.view',
+  'product.read': 'product.view',
+  'product.create': 'product.view',
+  'product.edit': 'product.view',
+  'product.delete': 'product.view',
+  'employee.read': 'employee.view',
+  'employee.create': 'employee.view',
+  'employee.edit': 'employee.view',
+  'employee.delete': 'employee.view',
+  'role.read': 'role.view',
+  'role.create': 'role.view',
+  'role.edit': 'role.view',
+  'role.delete': 'role.view',
+  'settings.read': 'settings.view'
+};
+
+export interface Role {
+  ROLE_CODE: string;    // e.g. 'ADMIN', 'MANAGER', 'STAFF'
+  TEN_ROLE: string;     // Tên vai trò, e.g. 'Quản trị viên', 'Quản lý', 'Nhân viên bán hàng'
+  PERMISSIONS: string[]; // Danh sách mã quyền, e.g. ['dashboard.view', 'product.view', ...]
+  user_id?: string;     // Supabase user_id
+}
+
 export interface User {
   username: string;
   fullName: string;
-  role: string;
-  ROLE?: string;
-  roleName?: string;
-  active?: boolean;
+  role: UserRole;
   branch: string;
   permissions?: string[]; // Danh sách các Tab được phép truy cập
   writeAccess?: boolean;  // Có quyền Thêm, Sửa, Xóa hay chỉ xem
   WRITE_ACCESS?: boolean; // Tương thích ngược cho các component dùng chữ hoa
   id?: string;            // Supabase auth user_id
   ROLES?: string[];       // Danh sách các vai trò được gán theo RBAC
-  email?: string;         // Email liên kết
-  TRANG_THAI?: string;
+  user_id?: string;       // Owner/Tenant ID
 }
 
 // B_SANPHAM: Lưu trữ thông tin sản phẩm và số lượng tồn kho của từng SKU
@@ -136,8 +303,6 @@ export interface NhanVien {
   CHI_NHANH: string;       // Chi nhánh công tác
   EMAIL: string;           // Email liên hệ (dùng để xác thực phân quyền)
   ROLE: UserRole;          // Quyền hạn thao tác trên hệ thống (ADMIN, KHO, NHAN_VIEN)
-  role?: string;           // Chuẩn hóa role dạng chữ thường
-  active?: boolean;        // Chuẩn hóa active dạng boolean
   PASSWORD?: string;       // Mật khẩu đăng nhập hệ thống
   PERMISSIONS?: string[];  // Danh sách các tab/chức năng được phép dùng
   WRITE_ACCESS?: boolean;  // Có quyền thêm/sửa/xóa hay chỉ xem
@@ -148,6 +313,8 @@ export interface NhanVien {
   YEU_CAU_RESET?: boolean; // Yêu cầu khôi phục mật khẩu
   NGAY_DANG_KY?: string;   // Ngày đăng ký tài khoản mới
   ROLES?: string[];        // Danh sách vai trò được gán theo RBAC
+  user_id?: string;        // Owner/Tenant ID
+  active?: boolean;        // Trạng thái hoạt động kích hoạt
 }
 
 // B_EMAILLOG: Nhật ký gửi email thông báo từ hệ thống
@@ -185,5 +352,13 @@ export function safeParseArray(val: any): string[] {
     return [trimmed];
   }
   return [];
+}
+
+export function normalizeDbRole(role: string): UserRole {
+  if (!role) return 'NHAN_VIEN';
+  const r = role.trim().toUpperCase();
+  if (r === 'ADMIN') return 'ADMIN';
+  if (r === 'KHO' || r === 'MANAGER') return 'KHO';
+  return 'NHAN_VIEN';
 }
 

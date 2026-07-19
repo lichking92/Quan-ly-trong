@@ -54,6 +54,7 @@ interface TransactionFormProps {
   onSaveTransaction: (header: NhapXuat, details: NhapXuatCT[]) => void;
   onNavigateToHistory: () => void;
   onTriggerToast?: (message: string) => void;
+  hasPermission?: (permissionCode: string) => boolean;
 }
 
 // Kiểu dữ liệu tạm thời cho dòng sản phẩm trong giỏ hàng chờ xác nhận
@@ -84,12 +85,19 @@ export default function TransactionForm({
   onClearPrefilledCartItems,
   onSaveTransaction,
   onNavigateToHistory,
-  onTriggerToast
+  onTriggerToast,
+  hasPermission
 }: TransactionFormProps) {
   monitor.trackRender('TransactionForm');
+
+  const hasPerm = (p: string) => {
+    if (hasPermission) return hasPermission(p);
+    return currentUser?.writeAccess !== false;
+  };
   
   // --- 1. THÔNG TIN CHỨNG TỪ (BẢNG 1) ---
   const [loaiPhieu, setLoaiPhieu] = useState<LoaiPhieu>(loaiPhieuMacDinh);
+  const canWrite = loaiPhieu === 'NHẬP' ? hasPerm('picking_nhap.create') : hasPerm('picking_xuat.create');
   const [selectedBranch, setSelectedBranch] = useState<string>('');
   const [ngayLap, setNgayLap] = useState<string>(getVietnamDateString());
   const [ghiChuPhieu, setGhiChuPhieu] = useState<string>('');
@@ -966,7 +974,7 @@ export default function TransactionForm({
                 </div>
 
                 {/* NÚT THÊM VÀO GIỎ */}
-                {currentUser.writeAccess !== false && (
+                {canWrite && (
                   <div className="space-y-2">
                     <div className="flex items-center justify-between gap-2">
                       <AnimatePresence>
@@ -1129,7 +1137,7 @@ export default function TransactionForm({
                   </div>
                 </div>
 
-                {currentUser.writeAccess !== false ? (
+                {canWrite ? (
                   <button
                     type="button"
                     onClick={handleCompleteTransaction}
@@ -1190,30 +1198,34 @@ export default function TransactionForm({
 
         {/* Nút chuyển đổi loại phiếu nhanh */}
         <div className="flex bg-slate-100 p-1 rounded-xl">
-          <button
-            onClick={() => { setLoaiPhieu('NHẬP'); setCart([]); setErrorMsg(''); }}
-            className={`py-1.5 px-3.5 text-xs font-bold rounded-lg transition-all cursor-pointer ${
-              loaiPhieu === 'NHẬP' ? 'bg-emerald-500 text-white shadow-xs' : 'text-slate-400 hover:text-slate-600'
-            }`}
-          >
-            Phiếu Nhập
-          </button>
-          <button
-            onClick={() => { setLoaiPhieu('XUẤT'); setCart([]); setErrorMsg(''); }}
-            className={`py-1.5 px-3.5 text-xs font-bold rounded-lg transition-all cursor-pointer ${
-              loaiPhieu === 'XUẤT' ? 'bg-rose-500 text-white shadow-xs' : 'text-slate-400 hover:text-slate-600'
-            }`}
-          >
-            Phiếu Xuất
-          </button>
+          {hasPerm('picking_nhap.view') && (
+            <button
+              onClick={() => { setLoaiPhieu('NHẬP'); setCart([]); setErrorMsg(''); }}
+              className={`py-1.5 px-3.5 text-xs font-bold rounded-lg transition-all cursor-pointer ${
+                loaiPhieu === 'NHẬP' ? 'bg-emerald-500 text-white shadow-xs' : 'text-slate-400 hover:text-slate-600'
+              }`}
+            >
+              Phiếu Nhập
+            </button>
+          )}
+          {hasPerm('picking_xuat.view') && (
+            <button
+              onClick={() => { setLoaiPhieu('XUẤT'); setCart([]); setErrorMsg(''); }}
+              className={`py-1.5 px-3.5 text-xs font-bold rounded-lg transition-all cursor-pointer ${
+                loaiPhieu === 'XUẤT' ? 'bg-rose-500 text-white shadow-xs' : 'text-slate-400 hover:text-slate-600'
+              }`}
+            >
+              Phiếu Xuất
+            </button>
+          )}
         </div>
       </div>
 
-      {currentUser.writeAccess === false && (
+      {((loaiPhieu === 'NHẬP' && !hasPerm('picking_nhap.create')) || (loaiPhieu === 'XUẤT' && !hasPerm('picking_xuat.create'))) && (
         <div className="p-4 bg-amber-50 border border-amber-100 text-amber-800 rounded-xl text-xs flex items-center gap-3 shadow-2xs">
           <AlertCircle className="w-5 h-5 shrink-0 text-amber-500" />
           <span className="font-semibold">
-            Tài khoản của bạn <strong>({currentUser.fullName} - {currentUser.role})</strong> được phân quyền <strong>Chỉ Xem</strong>. Mọi tác vụ Thêm vào phiếu chờ và Lưu phiếu giao dịch đã bị khóa.
+            Tài khoản của bạn <strong>({currentUser.fullName} - {currentUser.role})</strong> không có quyền lập loại phiếu này. Mọi tác vụ Thêm vào phiếu chờ và Lưu phiếu giao dịch đã bị khóa.
           </span>
         </div>
       )}
@@ -1317,7 +1329,7 @@ export default function TransactionForm({
           </div>
 
           {/* Nút lưu nhanh ngay tại Bảng 1 (Tận dụng không gian Desktop, tránh cuộn) */}
-          {cart.length > 0 && currentUser.writeAccess !== false && (
+          {cart.length > 0 && canWrite && (
             <div className="space-y-2 pt-1">
               <button
                 type="button"
@@ -1591,7 +1603,7 @@ export default function TransactionForm({
           )}
 
           {/* NÚT THÊM VÀO GIỎ CHỜ XÁC NHẬN */}
-          {currentUser.writeAccess !== false && (
+          {canWrite && (
             <div className="flex items-center justify-end gap-3 pt-2">
               <AnimatePresence>
                 {isAdded && (
@@ -1728,7 +1740,7 @@ export default function TransactionForm({
         </div>
 
         {/* Nút lưu chứng từ giao dịch */}
-        {cart.length > 0 && currentUser.writeAccess !== false && (
+        {cart.length > 0 && canWrite && (
           <div className="bg-slate-50 px-5 py-4 border-t border-slate-100 flex justify-end gap-3">
             <button
               type="button"

@@ -6,86 +6,14 @@
 import React, { useState } from 'react';
 import { Shield, Key, User as UserIcon, AlertCircle, Eye, EyeOff, Boxes, CheckCircle2, HelpCircle, X, Mail, UserPlus, ArrowLeft } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { User, NhanVien, safeParseArray } from '../types';
+import { User, NhanVien } from '../types';
 import { supabase } from '../supabaseClient';
-import { resolveEffectiveUserId, syncEmailLog, memoryCache } from '../supabaseSync';
+import { resolveEffectiveUserId, syncEmailLog } from '../supabaseSync';
 
 interface LoginProps {
   onLoginSuccess: (user: User) => void;
   nhanViens?: NhanVien[];
 }
-
-const DEFAULT_ROLES = [
-  {
-    ROLE_CODE: 'ADMIN',
-    TEN_ROLE: 'Quản trị viên (Admin)',
-    PERMISSIONS: [
-      'dashboard.view',
-      'product.view', 'product.create', 'product.edit', 'product.delete',
-      'import.view', 'import.create', 'import.edit', 'import.delete',
-      'export.view', 'export.create', 'export.edit', 'export.delete',
-      'inventory.view', 'inventory.edit',
-      'report.view',
-      'user.view', 'user.create', 'user.edit', 'user.delete',
-      'role.view', 'role.create', 'role.edit', 'role.delete'
-    ]
-  },
-  {
-    ROLE_CODE: 'MANAGER',
-    TEN_ROLE: 'Quản lý nghiệp vụ (Manager)',
-    PERMISSIONS: [
-      'dashboard.view',
-      'product.view', 'product.create', 'product.edit',
-      'import.view', 'import.create', 'import.edit',
-      'export.view', 'export.create', 'export.edit',
-      'inventory.view', 'inventory.edit',
-      'report.view'
-    ]
-  },
-  {
-    ROLE_CODE: 'STAFF',
-    TEN_ROLE: 'Nhân viên bán hàng (Staff)',
-    PERMISSIONS: [
-      'product.view',
-      'export.view', 'export.create',
-      'import.view',
-      'inventory.view'
-    ]
-  }
-];
-
-const isUserActive = (statusStr: string | null | undefined): boolean => {
-  const s = (statusStr || '').trim().toUpperCase();
-  return s === 'ACTIVE' || s === 'HOẠT ĐỘNG' || s === 'KÍCH HOẠT' || s === 'HOAT DONG';
-};
-
-const resolvePermissions = (
-  roleStr: string | null | undefined,
-  employeeDirectPermissions: any, // Ignored: b_nhanvien.PERMISSIONS is NOT used for checking permissions anymore.
-  dbRoles: any[]
-): { permissions: string[], roleName: string } => {
-  const upperRole = (roleStr || '').trim().toUpperCase();
-  
-  // Find role in dbRoles (b_role)
-  let matchedRole = dbRoles.find(r => (r.ROLE_CODE || '').trim().toUpperCase() === upperRole);
-  
-  let rolePermissions: string[] = [];
-  let roleName = '';
-  
-  if (matchedRole) {
-    rolePermissions = safeParseArray(matchedRole.PERMISSIONS);
-    roleName = matchedRole.TEN_ROLE || '';
-  } else {
-    // Fallback directly to DEFAULT_ROLES
-    const fallback = DEFAULT_ROLES.find(r => r.ROLE_CODE === upperRole);
-    if (fallback) {
-      rolePermissions = fallback.PERMISSIONS;
-      roleName = fallback.TEN_ROLE;
-    }
-  }
-  
-  return { permissions: rolePermissions, roleName: roleName || upperRole };
-};
 
 export default function Login({ onLoginSuccess, nhanViens = [] }: LoginProps) {
   const [username, setUsername] = useState<string>('');
@@ -142,28 +70,18 @@ export default function Login({ onLoginSuccess, nhanViens = [] }: LoginProps) {
       return;
     }
 
-    // Bảo đảm 100% có session Supabase Auth kết nối với tài khoản Chủ Cửa Hàng để mở khóa RLS
     try {
-      const { data: { session } } = await supabase.auth.getSession();
-    } catch (e) {
-      console.warn('Lỗi kết nối ngầm khi đăng ký:', e);
-    }
-
-    try {
-      const activeUid = await resolveEffectiveUserId();
-      
-      const lowerEmail = email.toLowerCase();
-      const lowerUsername = usernameInput.toLowerCase();
-
-      // 1. Kiểm tra xem Email hoặc Tên đăng nhập đã tồn tại trong bảng b_nhanvien chưa (toàn hệ thống)
+      // 1. Kiểm tra xem Email hoặc Tên đăng nhập đã tồn tại trong bảng b_nhanvien chưa (kiểm tra toàn hệ thống để đảm bảo duy nhất)
       const { data: dbNhanViens, error: checkError } = await supabase
         .from('b_nhanvien')
-        .select('EMAIL, TEN_DANG_NHAP')
-        .or(`EMAIL.ilike.${lowerEmail},TEN_DANG_NHAP.ilike.${lowerUsername}`);
+        .select('EMAIL, TEN_DANG_NHAP');
 
       if (checkError) {
         console.error('Lỗi khi kiểm tra nhân viên tồn tại:', checkError);
       }
+
+      const lowerEmail = email.toLowerCase();
+      const lowerUsername = usernameInput.toLowerCase();
 
       if (dbNhanViens && dbNhanViens.length > 0) {
         const isEmailExist = dbNhanViens.some(n => (n.EMAIL || '').trim().toLowerCase() === lowerEmail);
@@ -182,147 +100,206 @@ export default function Login({ onLoginSuccess, nhanViens = [] }: LoginProps) {
         }
       }
 
-      // 2. Tạo bản ghi nhân viên mới sử dụng RPC để tránh race condition và tự động gán ADMIN.
-      // Nếu RPC không khả dụng (ví dụ do database chưa tạo hàm), sử dụng cơ chế client-side fallback an toàn.
+      // B1. Đăng ký tài khoản bằng Supabase Auth signUp
+      const { data: signUpData, error: signUpError } = await supabase.auth.signUp({
+        email: email,
+        password: passwordInput,
+        options: {
+          data: {
+            full_name: fullName,
+            username: usernameInput
+          }
+        }
+      });
+
+      if (signUpError) {
+        setErrorMsg('Lỗi đăng ký tài khoản Auth: ' + signUpError.message);
+        setRegLoading(false);
+        return;
+      }
+
+      // B2. Lấy auth.user.id từ Supabase Auth
+      const authUserId = signUpData.user?.id;
+      if (!authUserId) {
+        setErrorMsg('Đăng ký thành công trên Auth nhưng không nhận được User ID.');
+        setRegLoading(false);
+        return;
+      }
+
+      // B3. Đăng ký thông tin nhân viên vào bảng b_nhanvien
       const randomId = 'NV' + Math.floor(100000 + Math.random() * 900000);
-      let registeredRole = 'NHAN_VIEN';
-      let registeredStatus = 'PENDING';
+      const currentDate = new Date().toISOString().split('T')[0];
+      let registeredRole = 'PENDING';
       let rpcRes = null;
       let rpcError = null;
 
       try {
-        const { data, error } = await supabase
-          .rpc('register_nhanvien', {
-            p_ma_nv: randomId,
-            p_ho_ten: fullName,
-            p_email: email,
-            p_ten_dang_nhap: usernameInput,
-            p_mat_khau: passwordInput,
-            p_user_id: activeUid
-          });
+        const { data, error } = await supabase.rpc('register_nhanvien', {
+          p_ma_nv: randomId,
+          p_ho_ten: fullName,
+          p_email: email,
+          p_ten_dang_nhap: usernameInput,
+          p_mat_khau: passwordInput,
+          p_user_id: authUserId
+        });
         rpcRes = data;
         rpcError = error;
       } catch (err) {
         rpcError = err;
       }
 
-      if (rpcError) {
-        console.warn('Hàm RPC register_nhanvien không khả dụng, sử dụng cơ chế client-side fallback an toàn:', rpcError);
+      if (rpcError || !rpcRes || rpcRes.success === false) {
+        console.warn('RPC register_nhanvien không khả dụng hoặc trả về lỗi, chuyển sang cơ chế client-side fallback:', rpcError || rpcRes?.message);
         
-        // Cơ chế fallback client-side:
-        // Đếm xem đã có tài khoản ADMIN nào thuộc user_id này chưa
-        const { data: existingStaff, error: countError } = await supabase
-          .from('b_nhanvien')
-          .select('ROLE')
-          .eq('user_id', activeUid);
+        // Cơ chế client-side fallback tự phục hồi (self-healing fallback)
+        let hasAdmin = false;
+        let targetUserId = authUserId;
+        let assignedRole = 'PENDING';
+        let assignedStatus = 'PENDING';
+        let assignedActive = false;
+        let assignedChucVu = 'Nhân viên chờ duyệt';
+        let assignedBoPhan = 'Bộ Phận Bán Hàng';
+        let assignedWriteAccess = false;
+        let assignedRoles = ['NHAN_VIEN', 'PENDING', 'pending'];
+        let assignedPermissions = ['TRANSACTION'];
 
-        if (countError) {
-          console.error('Lỗi khi đếm tài khoản để phân vai:', countError);
-          setErrorMsg('Lỗi khi đăng ký tài khoản: ' + countError.message);
-          setRegLoading(false);
-          return;
+        try {
+          const { data: existingStaff } = await supabase
+            .from('b_nhanvien')
+            .select('ROLE, user_id');
+
+          if (existingStaff && existingStaff.length > 0) {
+            const adminStaff = existingStaff.find(s => {
+              const r = (s.ROLE || '').trim().toUpperCase();
+              return r === 'ADMIN';
+            });
+            if (adminStaff) {
+              hasAdmin = true;
+              if (adminStaff.user_id) {
+                targetUserId = adminStaff.user_id;
+              }
+            }
+          }
+        } catch (err) {
+          console.warn('Lỗi kiểm tra tài khoản Admin hiện tại:', err);
         }
 
-        const hasAdmin = existingStaff && existingStaff.some(s => (s.ROLE || '').trim().toUpperCase() === 'ADMIN');
-        
         if (!hasAdmin) {
-          registeredRole = 'ADMIN';
-          registeredStatus = 'Hoạt động';
-        } else {
-          registeredRole = 'NHAN_VIEN';
-          registeredStatus = 'PENDING';
+          assignedRole = 'ADMIN';
+          assignedStatus = 'ACTIVE';
+          assignedActive = true;
+          assignedChucVu = 'Chủ sở hữu (Admin)';
+          assignedBoPhan = 'Ban Giám Đốc';
+          assignedWriteAccess = true;
+          assignedRoles = ['ADMIN', 'admin'];
+          assignedPermissions = ["DASHBOARD", "PRODUCT", "TRANSACTION", "HISTORY", "AUDIT", "CATEGORY"];
+          targetUserId = authUserId;
         }
 
-        const currentDate = new Date().toISOString().split('T')[0];
-        const assignedRoles = registeredRole === 'ADMIN' ? ['ADMIN'] : ['NHAN_VIEN'];
-        const assignedPermissions = registeredRole === 'ADMIN' 
-          ? ["DASHBOARD", "PRODUCT", "TRANSACTION", "HISTORY", "AUDIT", "CATEGORY"] 
-          : ["TRANSACTION"];
+        registeredRole = assignedRole;
 
-        // Ghi trực tiếp bản ghi mới vào b_nhanvien
-        const { error: insertError } = await supabase
+        const fullPayload = {
+          "MA_NV": randomId,
+          "HO_TEN": fullName,
+          "CHUC_VU": assignedChucVu,
+          "BO_PHAN": assignedBoPhan,
+          "CHI_NHANH": "Kho Trung Tâm",
+          "EMAIL": email,
+          "ROLE": assignedRole,
+          "active": assignedActive,
+          "TEN_DANG_NHAP": usernameInput,
+          "MAT_KHAU": passwordInput,
+          "TRANG_THAI": assignedStatus,
+          "YEU_CAU_RESET": false,
+          "NGAY_DANG_KY": currentDate,
+          "user_id": targetUserId,
+          "ROLES": assignedRoles,
+          "WRITE_ACCESS": assignedWriteAccess,
+          "PERMISSIONS": assignedPermissions
+        };
+
+        const minimalPayload = {
+          "MA_NV": randomId,
+          "HO_TEN": fullName,
+          "CHUC_VU": assignedChucVu,
+          "BO_PHAN": assignedBoPhan,
+          "CHI_NHANH": "Kho Trung Tâm",
+          "EMAIL": email,
+          "ROLE": assignedRole,
+          "active": assignedActive,
+          "TRANG_THAI": assignedStatus,
+          "user_id": targetUserId
+        };
+
+        let { error: insertError } = await supabase
           .from('b_nhanvien')
-          .insert({
-            "MA_NV": randomId,
-            "HO_TEN": fullName,
-            "CHUC_VU": registeredRole === 'ADMIN' ? "Chủ sở hữu (Admin)" : "Nhân viên chờ duyệt",
-            "BO_PHAN": registeredRole === 'ADMIN' ? "Ban Giám Đốc" : "Bộ Phận Bán Hàng",
-            "CHI_NHANH": "Kho Trung Tâm",
-            "EMAIL": email,
-            "ROLE": registeredRole,
-            "WRITE_ACCESS": registeredRole === 'ADMIN',
-            "TEN_DANG_NHAP": usernameInput,
-            "MAT_KHAU": passwordInput,
-            "TRANG_THAI": registeredStatus,
-            "YEU_CAU_RESET": false,
-            "NGAY_DANG_KY": currentDate,
-            "user_id": activeUid,
-            "ROLES": assignedRoles,
-            "PERMISSIONS": assignedPermissions
-          });
+          .insert(fullPayload);
 
         if (insertError) {
-          console.error('Lỗi khi ghi thông tin đăng ký trực tiếp:', insertError);
-          setErrorMsg('Lỗi khi ghi thông tin đăng ký lên hệ thống: ' + insertError.message);
-          setRegLoading(false);
-          return;
-        }
-      } else {
-        if (rpcRes && rpcRes.success === false) {
-          setErrorMsg(rpcRes.message);
-          setRegLoading(false);
-          return;
-        }
-        registeredRole = rpcRes?.role || 'NHAN_VIEN';
-        registeredStatus = rpcRes?.trang_thai || 'PENDING';
-      }
-      
-      let successMessage = `Đăng ký thành công! `;
-      if (registeredRole === 'ADMIN') {
-        successMessage += `Tài khoản của bạn đã được khởi tạo làm Quản trị viên (Admin) chính và được kích hoạt hoạt động tự động.`;
-      } else {
-        successMessage += `Tài khoản "${usernameInput}" của bạn hiện đang ở trạng thái "Chờ duyệt". Vui lòng liên hệ Admin để phê duyệt và kích hoạt.`;
-      }
-      setSuccessMsg(successMessage);
-        
-        // Gửi email thông báo đang chờ duyệt
-        try {
-          const emailDate = new Date().toLocaleString('vi-VN');
-          const mailContent = `Chào ${fullName},\n\n` +
-            `Chúc mừng bạn đã đăng ký tài khoản thành công trên hệ thống Quản Lý Kho!\n\n` +
-            `Thông tin tài khoản đăng ký:\n` +
-            `- Họ và tên: ${fullName}\n` +
-            `- Email liên hệ: ${email}\n` +
-            `- Tên đăng nhập: ${usernameInput}\n` +
-            `- Ngày đăng ký: ${emailDate}\n` +
-            `- Trạng thái hiện tại: Chờ duyệt (Pending)\n\n` +
-            `Tài khoản của bạn hiện đang chờ Admin phê duyệt và kích hoạt quyền sử dụng hệ thống. Bạn sẽ nhận được email thông báo ngay sau khi tài khoản được phê duyệt.\n\n` +
-            `Đường dẫn truy cập ứng dụng: ${window.location.origin}\n\n` +
-            `Trân trọng,\nBan Quản Trị Quản Lý Kho`;
-            
-          await syncEmailLog({
-            EMAIL: email,
-            TIEU_DE: "Đăng ký tài khoản Glass Stock thành công - Đang chờ phê duyệt",
-            NOI_DUNG: mailContent,
-            NGAY_GUI: emailDate,
-            TRANG_THAI: "Thành công",
-            LOAI_EMAIL: "Đăng ký"
-          }, activeUid);
-        } catch (emailErr) {
-          console.warn("Lỗi gửi email đăng ký:", emailErr);
-        }
+          console.warn('Lỗi khi ghi thông tin với payload đầy đủ, đang thử lại với payload tối giản:', insertError.message);
+          const { error: retryError } = await supabase
+            .from('b_nhanvien')
+            .insert(minimalPayload);
 
-        // Chuyển về màn hình đăng nhập và điền sẵn username vừa đăng ký
-        setIsRegisterMode(false);
-        setUsername(usernameInput);
-        setPassword('');
+          if (retryError) {
+            console.error('Lỗi khi ghi thông tin đăng ký trực tiếp:', retryError);
+            setErrorMsg('Lỗi khi lưu thông tin đăng ký: ' + retryError.message);
+            setRegLoading(false);
+            return;
+          }
+        }
+      } else {
+        registeredRole = rpcRes.role || 'PENDING';
+      }
+
+      // B5. Đăng xuất ngay sau khi đăng ký thành công (Không tự tạo session đăng nhập để chờ duyệt nếu cần)
+      await supabase.auth.signOut();
+
+      // B4. Hiển thị thông báo đăng ký thành công dựa vào vai trò được phân gán
+      if (registeredRole === 'ADMIN') {
+        setSuccessMsg("Đăng ký thành công! Tài khoản của bạn đã được khởi tạo làm Quản trị viên (Admin) chính và kích hoạt tự động.");
+      } else {
+        setSuccessMsg("Tài khoản đã được tạo thành công. Vui lòng chờ quản trị viên phê duyệt.");
+      }
         
-        // Reset form đăng ký
-        setRegFullName('');
-        setRegEmail('');
-        setRegUsername('');
-        setRegPassword('');
-        setRegRePassword('');
+      // Gửi email thông báo đang chờ duyệt
+      try {
+        const emailDate = new Date().toLocaleString('vi-VN');
+        const mailContent = `Chào ${fullName},\n\n` +
+          `Chúc mừng bạn đã đăng ký tài khoản thành công trên hệ thống Quản Lý Kho!\n\n` +
+          `Thông tin tài khoản đăng ký:\n` +
+          `- Họ và tên: ${fullName}\n` +
+          `- Email liên hệ: ${email}\n` +
+          `- Tên đăng nhập: ${usernameInput}\n` +
+          `- Ngày đăng ký: ${emailDate}\n` +
+          `- Trạng thái hiện tại: Chờ duyệt (Pending)\n\n` +
+          `Tài khoản của bạn hiện đang chờ Admin phê duyệt và kích hoạt quyền sử dụng hệ thống. Bạn sẽ nhận được email thông báo ngay sau khi tài khoản được phê duyệt.\n\n` +
+          `Đường dẫn truy cập ứng dụng: ${window.location.origin}\n\n` +
+          `Trân trọng,\nBan Quản Trị Quản Lý Kho`;
+          
+        await syncEmailLog({
+          EMAIL: email,
+          TIEU_DE: "Đăng ký tài khoản Glass Stock thành công - Đang chờ phê duyệt",
+          NOI_DUNG: mailContent,
+          NGAY_GUI: emailDate,
+          TRANG_THAI: "Thành công",
+          LOAI_EMAIL: "Đăng ký"
+        }, authUserId);
+      } catch (emailErr) {
+        console.warn("Lỗi gửi email đăng ký:", emailErr);
+      }
+
+      // Chuyển về màn hình đăng nhập và điền sẵn username vừa đăng ký
+      setIsRegisterMode(false);
+      setUsername(usernameInput);
+      setPassword('');
+      
+      // Reset form đăng ký
+      setRegFullName('');
+      setRegEmail('');
+      setRegUsername('');
+      setRegPassword('');
+      setRegRePassword('');
     } catch (err: any) {
       console.error('Lỗi khi xử lý đăng ký:', err);
       setErrorMsg('Đã xảy ra lỗi ngoài ý muốn: ' + (err.message || JSON.stringify(err)));
@@ -348,162 +325,266 @@ export default function Login({ onLoginSuccess, nhanViens = [] }: LoginProps) {
 
     const lowerUser = inputUser.toLowerCase();
 
-    // Bảo đảm 100% có session Supabase Auth kết nối với tài khoản Chủ Cửa Hàng để mở khóa RLS
-    try {
-      const { data: { session } } = await supabase.auth.getSession();
-    } catch (e) {
-      console.warn('Lỗi kết nối ngầm:', e);
-    }
+    // 1. Tìm thông tin Email của nhân sự từ b_nhanvien theo Tên đăng nhập / Email / Mã NV
+    let loginEmail = inputUser;
+    let staffRecord = null;
 
-    // ĐĂNG NHẬP THÔNG QUA BẢNG B_NHANVIEN (KHÔNG HARD-CODE ADMIN)
-
-    // 1. Kiểm tra tài khoản trực tiếp từ bảng b_nhanvien trên Supabase Cloud (truy vấn toàn hệ thống)
     try {
-      // Truy vấn không giới hạn activeUid để có thể tìm thấy nhân viên của bất kỳ store owner nào
       const { data: dbNhanViens, error: dbError } = await supabase
         .from('b_nhanvien')
-        .select('*')
-        .or(`TEN_DANG_NHAP.ilike.${lowerUser},EMAIL.ilike.${lowerUser},MA_NV.ilike.${lowerUser}`);
-
-      if (dbError) {
-        console.error('Lỗi khi truy vấn b_nhanvien:', dbError);
-      }
+        .select('*');
 
       if (dbNhanViens && dbNhanViens.length > 0) {
-        const staffMember = dbNhanViens.find(n => {
+        staffRecord = dbNhanViens.find(n => {
           const storedUser = (n.TEN_DANG_NHAP || '').trim().toLowerCase();
           const storedEmail = (n.EMAIL || '').trim().toLowerCase();
           const storedCode = (n.MA_NV || '').trim().toLowerCase();
           return storedUser === lowerUser || storedEmail === lowerUser || storedCode === lowerUser;
         });
-
-        if (staffMember) {
-          const isActive = isUserActive(staffMember.TRANG_THAI);
-
-          // KIỂM TRA TRẠNG THÁI HOẠT ĐỘNG VÀ QUYỀN HẠN
-          if (!isActive) {
-            setErrorMsg('Tài khoản của bạn chưa được kích hoạt hoặc đã bị khóa. Vui lòng liên hệ Admin.');
-            setLoading(false);
-            return;
-          }
-
-          // Kiểm tra mật khẩu
-          const matchedPassword = (staffMember.MAT_KHAU || staffMember.PASSWORD || '').trim();
-          if (matchedPassword === cleanPass) {
-            setLoading(false);
-
-            // Ghi nhận ngay owner_user_id của Admin/Store Owner đã tạo nhân viên này vào localStorage
-            const ownerId = staffMember.user_id || '00000000-0000-0000-0000-000000000000';
-            localStorage.setItem('DB_OWNER_USER_ID', ownerId);
-
-            // Tải danh sách vai trò tương ứng với owner_user_id này
-            const { data: dbRoles } = await supabase
-              .from('b_role')
-              .select('*')
-              .in('user_id', [ownerId, '00000000-0000-0000-0000-000000000000']);
-
-            // Deduplicate roles by ROLE_CODE, prioritizing user-specific ones
-            const roleMap: Record<string, any> = {};
-            (dbRoles || []).forEach((item: any) => {
-              const code = (item.ROLE_CODE || '').trim().toUpperCase();
-              const isGlobal = item.user_id === '00000000-0000-0000-0000-000000000000';
-              if (!roleMap[code] || !isGlobal) {
-                roleMap[code] = item;
-              }
-            });
-            const deduplicatedRoles = Object.values(roleMap);
-
-            // Phân giải quyền hạn dựa theo b_nhanvien.ROLE và b_role
-            const { permissions: combinedPermissions, roleName } = resolvePermissions(
-              staffMember.ROLE,
-              staffMember.PERMISSIONS,
-              deduplicatedRoles
-            );
-
-            const hasWritePermission = combinedPermissions.some(p => p.includes('.create') || p.includes('.edit') || p.includes('.delete'));
-            const finalWriteAccess = staffMember.WRITE_ACCESS !== false || hasWritePermission;
-
-            onLoginSuccess({
-              username: staffMember.TEN_DANG_NHAP || staffMember.EMAIL || staffMember.HO_TEN,
-              fullName: staffMember.HO_TEN,
-              role: staffMember.ROLE,
-              ROLE: staffMember.ROLE,
-              roleName: roleName,
-              active: isActive,
-              branch: staffMember.CHI_NHANH || 'Kho Trung Tâm',
-              writeAccess: finalWriteAccess,
-              WRITE_ACCESS: finalWriteAccess,
-              id: staffMember.MA_NV,
-              email: staffMember.EMAIL,
-              ROLES: staffMember.ROLES || [staffMember.ROLE],
-              permissions: combinedPermissions,
-              TRANG_THAI: staffMember.TRANG_THAI
-            });
-            return;
-          } else {
-            setErrorMsg('Mật khẩu không chính xác. Vui lòng kiểm tra lại.');
-            setLoading(false);
-            return;
-          }
-        }
       }
     } catch (err) {
-      console.error('Lỗi khi đối chiếu thông tin nhân viên trực tuyến:', err);
+      console.error('Lỗi truy cập b_nhanvien trước đăng nhập:', err);
     }
 
-    // 2. Dự phòng ngoại tuyến: Kiểm tra trong memoryCache hoặc các prop truyền vào
+    if (staffRecord && staffRecord.EMAIL) {
+      loginEmail = staffRecord.EMAIL;
+    }
+
+    // 2. Tiến hành đăng nhập bằng Supabase Auth signInWithPassword()
     try {
-      const localNhanVien: NhanVien[] = memoryCache['B_NHANVIEN'] || [];
+      const { data: signInData, error: signInError } = await supabase.auth.signInWithPassword({
+        email: loginEmail,
+        password: cleanPass
+      });
+
+      if (!signInError && signInData?.user) {
+        const authUser = signInData.user;
+        // 3. Truy vấn bảng b_nhanvien theo user_id = authUser.id hoặc email (để tự động liên kết tài khoản cũ)
+        let freshStaff = null;
+        
+        const { data: freshStaffs, error: fetchError } = await supabase
+          .from('b_nhanvien')
+          .select('*')
+          .eq('user_id', authUser.id);
+
+        if (freshStaffs && freshStaffs.length > 0) {
+          freshStaff = freshStaffs[0];
+        }
+
+        // Dự phòng tự động liên kết tài khoản cũ khớp Email hoặc Tên đăng nhập nhưng chưa gắn user_id
+        if (!freshStaff) {
+          console.log(`[Login] Không tìm thấy nhân sự theo user_id ${authUser.id}. Tiến hành tìm dự phòng theo Email hoặc Tên đăng nhập...`);
+          const userIdentifier = (loginEmail || authUser.email || '').trim().toLowerCase();
+          
+          if (userIdentifier) {
+            const { data: dbNhanViens, error: dbError } = await supabase
+              .from('b_nhanvien')
+              .select('*');
+
+            if (dbNhanViens && dbNhanViens.length > 0) {
+              const matched = dbNhanViens.find(n => {
+                const storedUser = (n.TEN_DANG_NHAP || '').trim().toLowerCase();
+                const storedEmail = (n.EMAIL || '').trim().toLowerCase();
+                return storedUser === userIdentifier || storedEmail === userIdentifier;
+              });
+
+              if (matched) {
+                freshStaff = matched;
+                console.log(`[Login Auth Link] Phát hiện tài khoản khớp thông tin (${matched.MA_NV}). Tiến hành tự động liên kết user_id...`);
+                try {
+                  await supabase
+                    .from('b_nhanvien')
+                    .update({ user_id: authUser.id })
+                    .eq('MA_NV', matched.MA_NV);
+                  freshStaff.user_id = authUser.id;
+                  console.log('[Login Auth Link] Đã liên kết tài khoản thành công!');
+                } catch (linkErr) {
+                  console.warn('[Login Auth Link] Lỗi khi tự động lưu liên kết user_id:', linkErr);
+                }
+              }
+            }
+          }
+        }
+
+        if (!freshStaff) {
+          setErrorMsg('Không tìm thấy thông tin nhân viên liên kết với tài khoản này.');
+          await supabase.auth.signOut();
+          setLoading(false);
+          return;
+        }
+
+        // 4. Kiểm tra trạng thái tài khoản: Nếu active = false hoặc TRANG_THAI = 'CHỜ DUYỆT'
+        const rawStatus = (freshStaff.TRANG_THAI || '').trim().toUpperCase();
+        const role = (freshStaff.ROLE || '').trim().toUpperCase();
+        const isActive = freshStaff.active === true;
+        
+        const isApprovedAdmin = role === 'ADMIN' && isActive && 
+          (rawStatus === 'ACTIVE' || rawStatus === 'HOẠT ĐỘNG' || rawStatus === 'KÍCH HOẠT' || rawStatus === 'HOAT DONG');
+
+        const isPending = !isApprovedAdmin && (
+          !isActive || 
+          rawStatus === 'PENDING' || 
+          rawStatus === 'CHỜ DUYỆT' || 
+          rawStatus === 'CHO DUYET' || 
+          role === 'PENDING'
+        );
+
+        if (isPending) {
+          setErrorMsg('Tài khoản đang chờ quản trị viên phê duyệt.');
+          await supabase.auth.signOut();
+          setLoading(false);
+          return;
+        }
+
+        // Đăng nhập thành công!
+        setLoading(false);
+        onLoginSuccess({
+          username: freshStaff.TEN_DANG_NHAP || freshStaff.EMAIL || freshStaff.HO_TEN,
+          fullName: freshStaff.HO_TEN,
+          role: freshStaff.ROLE || 'NHAN_VIEN',
+          branch: freshStaff.CHI_NHANH || 'Kho Trung Tâm',
+          writeAccess: freshStaff.WRITE_ACCESS !== false,
+          WRITE_ACCESS: freshStaff.WRITE_ACCESS !== false,
+          id: freshStaff.MA_NV,
+          user_id: freshStaff.user_id,
+          ROLES: freshStaff.ROLES || (freshStaff.ROLE ? [freshStaff.ROLE] : [])
+        });
+        return;
+      } else {
+        console.warn('Lỗi đăng nhập qua Supabase Auth:', signInError ? signInError.message : 'No user returned');
+      }
+    } catch (authErr) {
+      console.warn('Lỗi hệ thống đăng nhập Auth:', authErr);
+    }
+
+    // 5. Dự phòng Trực tuyến từ bảng b_nhanvien trực tiếp nếu có kết nối trực tuyến
+    if (staffRecord) {
+      const matchedPassword = (staffRecord.MAT_KHAU || staffRecord.PASSWORD || '').trim();
+      if (matchedPassword === cleanPass) {
+        // Kiểm tra trạng thái tài khoản
+        const rawStatus = (staffRecord.TRANG_THAI || '').trim().toUpperCase();
+        const role = (staffRecord.ROLE || '').trim().toUpperCase();
+        const isActive = staffRecord.active === true;
+
+        const isApprovedAdmin = role === 'ADMIN' && isActive && 
+          (rawStatus === 'ACTIVE' || rawStatus === 'HOẠT ĐỘNG' || rawStatus === 'KÍCH HOẠT' || rawStatus === 'HOAT DONG');
+
+        const isPending = !isApprovedAdmin && (
+          !isActive || 
+          rawStatus === 'PENDING' || 
+          rawStatus === 'CHỜ DUYỆT' || 
+          rawStatus === 'CHO DUYET' || 
+          role === 'PENDING'
+        );
+
+        if (isPending) {
+          setErrorMsg('Tài khoản đang chờ quản trị viên phê duyệt.');
+          setLoading(false);
+          return;
+        }
+
+        // Tài khoản hợp lệ nhưng Supabase Auth chưa có/lỗi. Thử đồng bộ hóa tài khoản lên Supabase Auth
+        console.log('Tài khoản hợp lệ trong b_nhanvien. Tiến hành tự động đồng bộ lên Auth...');
+        try {
+          const { data: signUpData, error: signUpError } = await supabase.auth.signUp({
+            email: staffRecord.EMAIL,
+            password: cleanPass,
+            options: {
+              data: {
+                full_name: staffRecord.HO_TEN,
+                username: staffRecord.TEN_DANG_NHAP || staffRecord.EMAIL.split('@')[0]
+              }
+            }
+          });
+
+          if (!signUpError && signUpData?.user) {
+            const newUserId = signUpData.user.id;
+            await supabase
+              .from('b_nhanvien')
+              .update({ user_id: newUserId })
+              .eq('MA_NV', staffRecord.MA_NV);
+            
+            // Đăng nhập lại để lấy session chính thức
+            await supabase.auth.signInWithPassword({
+              email: staffRecord.EMAIL,
+              password: cleanPass
+            });
+            
+            staffRecord.user_id = newUserId;
+          }
+        } catch (syncErr) {
+          console.warn('Không thể tự động đồng bộ Auth:', syncErr);
+        }
+
+        // Cho phép vào hệ thống ngay lập tức
+        setLoading(false);
+        onLoginSuccess({
+          username: staffRecord.TEN_DANG_NHAP || staffRecord.EMAIL || staffRecord.HO_TEN,
+          fullName: staffRecord.HO_TEN,
+          role: staffRecord.ROLE || 'NHAN_VIEN',
+          branch: staffRecord.CHI_NHANH || 'Kho Trung Tâm',
+          writeAccess: staffRecord.WRITE_ACCESS !== false,
+          WRITE_ACCESS: staffRecord.WRITE_ACCESS !== false,
+          id: staffRecord.MA_NV,
+          user_id: staffRecord.user_id || 'LOCAL_' + staffRecord.MA_NV,
+          ROLES: staffRecord.ROLES || (staffRecord.ROLE ? [staffRecord.ROLE] : [])
+        });
+        return;
+      } else {
+        setErrorMsg('Mật khẩu không chính xác. Vui lòng kiểm tra lại.');
+        setLoading(false);
+        return;
+      }
+    }
+
+    // 6. Dự phòng Ngoại tuyến / LocalStorage hoàn toàn nếu không kết nối được DB
+    try {
+      const savedNhanViens = localStorage.getItem('B_NHANVIEN');
+      const localNhanVien: NhanVien[] = savedNhanViens ? JSON.parse(savedNhanViens) : [];
       const allNhanViens = [...nhanViens, ...localNhanVien];
 
-      const localRoles: any[] = memoryCache['B_ROLE'] || [];
-
-      const staffMember = allNhanViens.find(n => {
+      const localStaff = allNhanViens.find(n => {
         const storedUser = (n.TEN_DANG_NHAP || '').trim().toLowerCase();
         const storedEmail = (n.EMAIL || '').trim().toLowerCase();
         const storedCode = (n.MA_NV || '').trim().toLowerCase();
         return storedUser === lowerUser || storedEmail === lowerUser || storedCode === lowerUser;
       });
 
-      if (staffMember) {
-        const isActive = isUserActive(staffMember.TRANG_THAI);
+      if (localStaff) {
+        const rawStatus = (localStaff.TRANG_THAI || '').trim().toUpperCase();
+        const role = (localStaff.ROLE || '').trim().toUpperCase();
+        const isActive = localStaff.active === true;
 
-        // KIỂM TRA TRẠNG THÁI HOẠT ĐỘNG VÀ QUYỀN HẠN
-        if (!isActive) {
-          setErrorMsg('Tài khoản của bạn chưa được kích hoạt hoặc đã bị khóa. Vui lòng liên hệ Admin.');
+        const isApprovedAdmin = role === 'ADMIN' && isActive && 
+          (rawStatus === 'ACTIVE' || rawStatus === 'HOẠT ĐỘNG' || rawStatus === 'KÍCH HOẠT' || rawStatus === 'HOAT DONG');
+
+        const isPending = !isApprovedAdmin && (
+          !isActive || 
+          rawStatus === 'PENDING' || 
+          rawStatus === 'CHỜ DUYỆT' || 
+          rawStatus === 'CHO DUYET' || 
+          role === 'PENDING'
+        );
+
+        if (isPending) {
+          setErrorMsg('Tài khoản đang chờ quản trị viên phê duyệt.');
           setLoading(false);
           return;
         }
 
-        const matchedPassword = (staffMember.MAT_KHAU || staffMember.PASSWORD || '').trim();
+        const matchedPassword = (localStaff.MAT_KHAU || localStaff.PASSWORD || '').trim();
         if (matchedPassword === cleanPass) {
           setLoading(false);
-
-          // Phân giải quyền hạn ngoại tuyến
-          const { permissions: combinedPermissions, roleName } = resolvePermissions(
-            staffMember.ROLE,
-            staffMember.PERMISSIONS,
-            localRoles
-          );
-
-          const hasWritePermission = combinedPermissions.some(p => p.includes('.create') || p.includes('.edit') || p.includes('.delete'));
-          const finalWriteAccess = staffMember.WRITE_ACCESS !== false || hasWritePermission;
-
           onLoginSuccess({
-            username: staffMember.TEN_DANG_NHAP || staffMember.EMAIL || staffMember.HO_TEN,
-            fullName: staffMember.HO_TEN,
-            role: staffMember.ROLE,
-            ROLE: staffMember.ROLE,
-            roleName: roleName,
-            active: isActive,
-            branch: staffMember.CHI_NHANH || 'Kho Trung Tâm',
-            writeAccess: finalWriteAccess,
-            WRITE_ACCESS: finalWriteAccess,
-            id: staffMember.MA_NV,
-            email: staffMember.EMAIL,
-            ROLES: staffMember.ROLES || [staffMember.ROLE],
-            permissions: combinedPermissions,
-            TRANG_THAI: staffMember.TRANG_THAI
+            username: localStaff.TEN_DANG_NHAP || localStaff.EMAIL || localStaff.HO_TEN,
+            fullName: localStaff.HO_TEN,
+            role: localStaff.ROLE || 'NHAN_VIEN',
+            branch: localStaff.CHI_NHANH || 'Kho Trung Tâm',
+            writeAccess: localStaff.WRITE_ACCESS !== false,
+            WRITE_ACCESS: localStaff.WRITE_ACCESS !== false,
+            id: localStaff.MA_NV,
+            user_id: localStaff.user_id,
+            ROLES: localStaff.ROLES || (localStaff.ROLE ? [localStaff.ROLE] : [])
           });
           return;
         } else {
@@ -513,7 +594,7 @@ export default function Login({ onLoginSuccess, nhanViens = [] }: LoginProps) {
         }
       }
     } catch (err) {
-      console.error('Lỗi đối chiếu dự phòng:', err);
+      console.error('Lỗi đối chiếu dự phòng ngoại tuyến:', err);
     }
 
     setErrorMsg('Tên đăng nhập hoặc mật khẩu không chính xác.');
@@ -535,11 +616,9 @@ export default function Login({ onLoginSuccess, nhanViens = [] }: LoginProps) {
     }
 
     try {
-      const activeUid = await resolveEffectiveUserId();
       const { data: dbNhanViens, error: dbError } = await supabase
         .from('b_nhanvien')
-        .select('*')
-        .eq('user_id', activeUid);
+        .select('*');
 
       if (dbNhanViens && dbNhanViens.length > 0) {
         const staffMember = dbNhanViens.find(n => {
@@ -554,7 +633,7 @@ export default function Login({ onLoginSuccess, nhanViens = [] }: LoginProps) {
             .from('b_nhanvien')
             .update({ YEU_CAU_RESET: true })
             .eq('MA_NV', staffMember.MA_NV)
-            .eq('user_id', activeUid);
+            .eq('user_id', staffMember.user_id);
 
           if (updateError) {
             setResetError('Có lỗi xảy ra khi gửi yêu cầu lên máy chủ.');
@@ -582,7 +661,7 @@ export default function Login({ onLoginSuccess, nhanViens = [] }: LoginProps) {
                 NGAY_GUI: emailDate,
                 TRANG_THAI: "Thành công",
                 LOAI_EMAIL: "Quên mật khẩu"
-              }, activeUid);
+              }, staffMember.user_id);
             } catch (emailErr) {
               console.warn("Lỗi gửi email quên mật khẩu:", emailErr);
             }

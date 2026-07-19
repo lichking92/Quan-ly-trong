@@ -45,6 +45,7 @@ interface InventoryAuditProps {
   thuongHieus: string[];
   brandList?: ThuongHieu[];
   chiNhanhs: string[];
+  hasPermission?: (permissionCode: string) => boolean;
 }
 
 interface AuditCartItem {
@@ -65,8 +66,14 @@ export default function InventoryAudit({
   onSaveAudit,
   thuongHieus,
   brandList,
-  chiNhanhs 
+  chiNhanhs,
+  hasPermission
 }: InventoryAuditProps) {
+
+  const hasPerm = (p: string) => {
+    if (hasPermission) return hasPermission(p);
+    return currentUser?.writeAccess !== false;
+  };
 
   // --- 1. THÔNG TIN CHỨNG TỪ ---
   const [selectedBranch, setSelectedBranch] = useState<string>('');
@@ -442,7 +449,7 @@ export default function InventoryAudit({
                 <select
                   value={selectedBranch}
                   onChange={(e) => setSelectedBranch(e.target.value)}
-                  disabled={!currentUser.writeAccess}
+                  disabled={!hasPerm('stocktake.read')}
                   className="w-full text-xs font-bold text-slate-700 bg-slate-50 border border-slate-150 p-2.5 rounded-lg focus:outline-hidden focus:ring-2 focus:ring-red-500/20"
                 >
                   <option value="">-- Chọn Chi Nhánh / Kho --</option>
@@ -736,7 +743,7 @@ export default function InventoryAudit({
               <button
                 type="button"
                 onClick={handleAddToAuditCart}
-                disabled={!matchedProduct || !currentUser.writeAccess}
+                disabled={!matchedProduct || !hasPerm('stocktake.read')}
                 className="flex items-center gap-2 bg-red-600 hover:bg-red-700 disabled:bg-slate-200 text-white disabled:text-slate-400 font-extrabold text-xs py-2.5 px-5 rounded-xl cursor-pointer disabled:cursor-not-allowed transition-colors shadow-xs"
               >
                 <Plus className="w-4 h-4" />

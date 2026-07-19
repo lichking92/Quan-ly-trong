@@ -69,6 +69,7 @@ interface TransactionHistoryProps {
     toDate: string;
   } | null;
   onClearDrillDownFilters?: () => void;
+  hasPermission?: (permissionCode: string) => boolean;
 }
 
 export default function TransactionHistory({
@@ -84,9 +85,21 @@ export default function TransactionHistory({
   chiNhanhs = [],
   thuongHieus = [],
   drillDownFilters = null,
-  onClearDrillDownFilters
+  onClearDrillDownFilters,
+  hasPermission
 }: TransactionHistoryProps) {
   
+  const hasPerm = (p: string) => {
+    if (hasPermission) return hasPermission(p);
+    if (p === 'history.delete') {
+      return currentUser?.role === 'ADMIN';
+    }
+    if (p === 'history.export') {
+      return currentUser?.role === 'ADMIN' || currentUser?.role === 'KHO';
+    }
+    return currentUser?.writeAccess !== false;
+  };
+
   // --- 1. QUẢN LÝ TRẠNG THÁI GIAO DIỆN ---
   const [selectedInvoice, setSelectedInvoice] = useState<string | null>(null);
 
@@ -1059,13 +1072,7 @@ export default function TransactionHistory({
   const handleHardDeleteEntireInvoice = async () => {
     if (!activeHeader) return;
 
-    const hasWriteAccess = currentUser.writeAccess !== false && currentUser.WRITE_ACCESS !== false;
-    const hasDeletePermission = hasWriteAccess && (
-      currentUser.permissions?.includes('export.delete') || 
-      currentUser.permissions?.includes('import.delete') || 
-      currentUser.permissions?.includes('transaction.delete')
-    );
-    if (!hasDeletePermission) {
+    if (!hasPerm('history.delete')) {
       setErrorMsg('Tài khoản không có quyền xóa vĩnh viễn phiếu.');
       return;
     }
@@ -1143,32 +1150,36 @@ export default function TransactionHistory({
           </div>
 
           <div className="flex items-center gap-2">
-            {currentUser.writeAccess !== false && currentUser.WRITE_ACCESS !== false && (
+            {(hasPerm('history.edit') || hasPerm('history.delete')) && (
               <>
-                <button
-                  onClick={handleStartEditInvoice}
-                  className="flex items-center gap-1 text-[11px] font-bold py-1.5 px-3 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 text-slate-600 cursor-pointer transition-all"
-                >
-                  <Edit2 className="w-3.5 h-3.5 text-indigo-500" /> Sửa Phiếu
-                </button>
+                {hasPerm('history.edit') && (
+                  <button
+                    onClick={handleStartEditInvoice}
+                    className="flex items-center gap-1 text-[11px] font-bold py-1.5 px-3 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 text-slate-600 cursor-pointer transition-all"
+                  >
+                    <Edit2 className="w-3.5 h-3.5 text-indigo-500" /> Sửa Phiếu
+                  </button>
+                )}
 
-                <button
-                  onClick={() => setShowAddRowForm(!showAddRowForm)}
-                  className="flex items-center gap-1 text-[11px] font-bold py-1.5 px-3 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 text-slate-600 cursor-pointer transition-all"
-                >
-                  <Plus className="w-3.5 h-3.5 text-blue-500" /> Thêm Dòng
-                </button>
+                {hasPerm('history.edit') && (
+                  <button
+                    onClick={() => setShowAddRowForm(!showAddRowForm)}
+                    className="flex items-center gap-1 text-[11px] font-bold py-1.5 px-3 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 text-slate-600 cursor-pointer transition-all"
+                  >
+                    <Plus className="w-3.5 h-3.5 text-blue-500" /> Thêm Dòng
+                  </button>
+                )}
 
-                <button
-                  onClick={handleDeleteEntireInvoice}
-                  className="flex items-center gap-1 text-[11px] font-bold py-1.5 px-3 rounded-lg bg-rose-50 text-rose-600 hover:bg-rose-100 cursor-pointer transition-all"
-                >
-                  <Trash2 className="w-3.5 h-3.5" /> Hủy Phiếu
-                </button>
+                {hasPerm('history.delete') && (
+                  <button
+                    onClick={handleDeleteEntireInvoice}
+                    className="flex items-center gap-1 text-[11px] font-bold py-1.5 px-3 rounded-lg bg-rose-50 text-rose-600 hover:bg-rose-100 cursor-pointer transition-all"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" /> Hủy Phiếu
+                  </button>
+                )}
 
-                {(currentUser.permissions?.includes('export.delete') || 
-                  currentUser.permissions?.includes('import.delete') || 
-                  currentUser.permissions?.includes('transaction.delete')) && (
+                {hasPerm('history.delete') && (
                   <button
                     onClick={handleHardDeleteEntireInvoice}
                     className="flex items-center gap-1 text-[11px] font-bold py-1.5 px-3 rounded-lg bg-rose-600 text-white hover:bg-rose-700 cursor-pointer transition-all"
@@ -1188,7 +1199,7 @@ export default function TransactionHistory({
 
         {/* Form bổ sung dòng hàng */}
         <AnimatePresence>
-          {showAddRowForm && currentUser.writeAccess !== false && currentUser.WRITE_ACCESS !== false && (
+          {showAddRowForm && hasPerm('history.edit') && (
             <motion.div
               initial={{ height: 0, opacity: 0 }}
               animate={{ height: 'auto', opacity: 1 }}
@@ -1265,7 +1276,7 @@ export default function TransactionHistory({
                 <th className="py-2.5 px-3">Thông tin Tròng kính (SKU)</th>
                 <th className="py-2.5 px-3 text-center w-28">Số Lượng</th>
                 <th className="py-2.5 px-3">Ghi Chú</th>
-                {currentUser.writeAccess !== false && currentUser.WRITE_ACCESS !== false && (
+                {hasPerm('history.edit') && (
                   <th className="py-2.5 px-3 text-center w-24">Tác vụ</th>
                 )}
               </tr>
@@ -1311,7 +1322,7 @@ export default function TransactionHistory({
                         </span>
                       )}
                     </td>
-                    {currentUser.writeAccess !== false && currentUser.WRITE_ACCESS !== false && (
+                    {hasPerm('history.edit') && (
                       <td className="py-3 px-3 text-center">
                         {isEditing ? (
                           <div className="flex items-center justify-center gap-1">
@@ -1974,41 +1985,49 @@ export default function TransactionHistory({
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
-          {currentUser.writeAccess !== false && currentUser.WRITE_ACCESS !== false && (
+          {(hasPerm('picking_nhap.create') || hasPerm('picking_xuat.create') || hasPerm('stocktake.read')) && (
             <div className="relative group">
               <button className="flex items-center gap-1.5 bg-red-650 hover:bg-red-700 text-white font-extrabold text-xs py-2 px-4 rounded-xl shadow-2xs transition-all cursor-pointer">
                 <Plus className="w-4 h-4" />
                 Lập Phiếu Mới
               </button>
               <div className="absolute right-0 mt-1.5 w-56 bg-white border border-slate-150 rounded-xl shadow-lg hidden group-hover:block hover:block z-45 py-1.5">
-                <button
-                  onClick={() => handleStartCreateInvoice('NHẬP')}
-                  className="w-full text-left px-4 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 flex items-center gap-2 cursor-pointer"
-                >
-                  <span className="w-2 h-2 rounded-full bg-emerald-500" />
-                  Phiếu Nhập Hàng (PN)
-                </button>
-                <button
-                  onClick={() => handleStartCreateInvoice('XUẤT')}
-                  className="w-full text-left px-4 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 flex items-center gap-2 cursor-pointer"
-                >
-                  <span className="w-2 h-2 rounded-full bg-amber-500" />
-                  Phiếu Xuất Hàng (PX)
-                </button>
-                <button
-                  onClick={() => handleStartCreateInvoice('NHẬP_KIEM_KHO')}
-                  className="w-full text-left px-4 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 flex items-center gap-2 cursor-pointer"
-                >
-                  <span className="w-2 h-2 rounded-full bg-blue-500" />
-                  Phiếu Nhập Kiểm Kho (PNK)
-                </button>
-                <button
-                  onClick={() => handleStartCreateInvoice('XUAT_KIEM_KHO')}
-                  className="w-full text-left px-4 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 flex items-center gap-2 cursor-pointer"
-                >
-                  <span className="w-2 h-2 rounded-full bg-purple-500" />
-                  Phiếu Xuất Kiểm Kho (PXK)
-                </button>
+                {hasPerm('picking_nhap.create') && (
+                  <button
+                    onClick={() => handleStartCreateInvoice('NHẬP')}
+                    className="w-full text-left px-4 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 flex items-center gap-2 cursor-pointer"
+                  >
+                    <span className="w-2 h-2 rounded-full bg-emerald-500" />
+                    Phiếu Nhập Hàng (PN)
+                  </button>
+                )}
+                {hasPerm('picking_xuat.create') && (
+                  <button
+                    onClick={() => handleStartCreateInvoice('XUẤT')}
+                    className="w-full text-left px-4 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 flex items-center gap-2 cursor-pointer"
+                  >
+                    <span className="w-2 h-2 rounded-full bg-amber-500" />
+                    Phiếu Xuất Hàng (PX)
+                  </button>
+                )}
+                {hasPerm('stocktake.read') && (
+                  <button
+                    onClick={() => handleStartCreateInvoice('NHẬP_KIEM_KHO')}
+                    className="w-full text-left px-4 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 flex items-center gap-2 cursor-pointer"
+                  >
+                    <span className="w-2 h-2 rounded-full bg-blue-500" />
+                    Phiếu Nhập Kiểm Kho (PNK)
+                  </button>
+                )}
+                {hasPerm('stocktake.read') && (
+                  <button
+                    onClick={() => handleStartCreateInvoice('XUAT_KIEM_KHO')}
+                    className="w-full text-left px-4 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 flex items-center gap-2 cursor-pointer"
+                  >
+                    <span className="w-2 h-2 rounded-full bg-purple-500" />
+                    Phiếu Xuất Kiểm Kho (PXK)
+                  </button>
+                )}
               </div>
             </div>
           )}

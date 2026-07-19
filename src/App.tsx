@@ -70,7 +70,7 @@ import {
 import { motion, AnimatePresence } from 'motion/react';
 
 // Import Types và Mock Data
-import { SanPham, NhapXuat, NhapXuatCT, KiemKho, UserRole, User, ThuongHieu, ChiNhanh, NhanVien, EmailLog, Role, safeParseArray } from './types';
+import { SanPham, NhapXuat, NhapXuatCT, KiemKho, UserRole, User, ThuongHieu, ChiNhanh, NhanVien, EmailLog, Role, safeParseArray, normalizeDbRole, PERMISSION_PARENT_MAP } from './types';
 import { 
   getVietnamDateString,
   getVietnamDateTimeString,
@@ -100,7 +100,8 @@ import {
   syncEmailLog,
   fetchEmailLogs,
   setOfflineMode,
-  resolveEffectiveUserId
+  resolveEffectiveUserId,
+  inMemoryCache
 } from './supabaseSync';
 
 // Import Components con (lazy loaded for optimal bundle size)
@@ -135,72 +136,50 @@ const DEFAULT_ROLES: Role[] = [
     ROLE_CODE: 'ADMIN',
     TEN_ROLE: 'Quản trị viên (Admin)',
     PERMISSIONS: [
-      'dashboard.view',
-      'product.view', 'product.create', 'product.edit', 'product.delete',
-      'import.view', 'import.create', 'import.edit', 'import.delete',
-      'export.view', 'export.create', 'export.edit', 'export.delete',
-      'inventory.view', 'inventory.edit',
-      'report.view',
-      'user.view', 'user.create', 'user.edit', 'user.delete',
-      'role.view', 'role.create', 'role.edit', 'role.delete'
+      'dashboard.view', 'dashboard.read', 'dashboard.export',
+      'ordercheck.view', 'ordercheck.read', 'ordercheck.analyze', 'ordercheck.save', 'ordercheck.export',
+      'picking_xuat.view', 'picking_xuat.read', 'picking_xuat.create', 'picking_xuat.edit', 'picking_xuat.delete', 'picking_xuat.export',
+      'picking_nhap.view', 'picking_nhap.read', 'picking_nhap.create', 'picking_nhap.edit', 'picking_nhap.delete',
+      'history.view', 'history.read', 'history.read_all', 'history.create', 'history.edit', 'history.delete', 'history.export',
+      'picking.view', 'picking.read', 'picking.create', 'picking.delete', 'picking.export',
+      'matrix.view', 'matrix.read',
+      'stocktake.view', 'stocktake.read',
+      'product.view', 'product.read', 'product.create', 'product.edit', 'product.delete',
+      'employee.view', 'employee.read', 'employee.create', 'employee.edit', 'employee.delete',
+      'role.view', 'role.read', 'role.create', 'role.edit', 'role.delete',
+      'settings.view', 'settings.read',
+      'inventory.view'
     ]
   },
   {
     ROLE_CODE: 'MANAGER',
     TEN_ROLE: 'Quản lý nghiệp vụ (Manager)',
     PERMISSIONS: [
-      'dashboard.view',
-      'product.view', 'product.create', 'product.edit',
-      'import.view', 'import.create', 'import.edit',
-      'export.view', 'export.create', 'export.edit',
-      'inventory.view', 'inventory.edit',
-      'report.view'
+      'dashboard.view', 'dashboard.read', 'dashboard.export',
+      'ordercheck.view', 'ordercheck.read', 'ordercheck.analyze', 'ordercheck.save',
+      'picking_xuat.view', 'picking_xuat.read', 'picking_xuat.create', 'picking_xuat.export',
+      'picking_nhap.view', 'picking_nhap.read', 'picking_nhap.create',
+      'history.view', 'history.read', 'history.read_all', 'history.create', 'history.edit', 'history.export',
+      'picking.view', 'picking.read', 'picking.create', 'picking.export',
+      'matrix.view', 'matrix.read',
+      'stocktake.view', 'stocktake.read',
+      'product.view', 'product.read', 'product.create', 'product.edit',
+      'inventory.view'
     ]
   },
   {
     ROLE_CODE: 'STAFF',
     TEN_ROLE: 'Nhân viên bán hàng (Staff)',
     PERMISSIONS: [
-      'product.view',
-      'export.view', 'export.create',
-      'import.view',
+      'picking_xuat.view', 'picking_xuat.read', 'picking_xuat.create',
+      'picking_nhap.view', 'picking_nhap.read', 'picking_nhap.create',
+      'history.view', 'history.read',
+      'picking.view', 'picking.read', 'picking.create',
+      'product.view', 'product.read',
       'inventory.view'
     ]
   }
 ];
-
-const isUserActive = (statusStr: string | null | undefined): boolean => {
-  const s = (statusStr || '').trim().toUpperCase();
-  return s === 'ACTIVE' || s === 'HOẠT ĐỘNG' || s === 'KÍCH HOẠT' || s === 'HOAT DONG';
-};
-
-const resolvePermissions = (
-  roleStr: string | null | undefined,
-  employeeDirectPermissions: any, // Ignored: b_nhanvien.PERMISSIONS is NOT used for checking permissions anymore.
-  dbRoles: any[]
-): { permissions: string[], roleName: string } => {
-  const upperRole = (roleStr || '').trim().toUpperCase();
-  
-  // Find role in dbRoles (b_role)
-  let matchedRole = dbRoles.find(r => (r.ROLE_CODE || '').trim().toUpperCase() === upperRole);
-  
-  let rolePermissions: string[] = [];
-  let roleName = '';
-  
-  if (matchedRole) {
-    rolePermissions = safeParseArray(matchedRole.PERMISSIONS);
-    roleName = matchedRole.TEN_ROLE || '';
-  } else {
-    // Fallback directly to DEFAULT_ROLES
-    const fallback = DEFAULT_ROLES.find(r => r.ROLE_CODE === upperRole);
-    if (fallback) {
-      rolePermissions = fallback.PERMISSIONS;
-      roleName = fallback.TEN_ROLE;
-    }
-  }
-  
-  return { permissions: rolePermissions, roleName: roleName || upperRole };
-};
 
 const deduplicateProducts = (products: SanPham[]): SanPham[] => {
   const seen = new Set<string>();
@@ -289,7 +268,10 @@ export default function App() {
   const lastSyncTimeRef = useRef<number>(0);
   const realtimeDebounceTimerRef = useRef<any>(null);
 
-  // --- 1. KHỞI TẠO STATE CƠ SỞ DỮ LIỆU ĐỒNG BỘ ---
+  // --- 1. KHỞI TẠO STATE CƠ SỞ DỮ LIỆU ĐỒNG BỘ LOCALSTATE (KHÔNG LƯU LOCALSTORAGE THEO YÊU CẦU BẢO MẬT) ---
+  const sessionStartTimeRef = useRef<number>(Date.now());
+  const sessionCreatedInvoiceIdsRef = useRef<Set<string>>(new Set());
+
   const [sanPhams, setSanPhams] = useState<SanPham[]>([]);
   const [nhapXuats, setNhapXuats] = useState<NhapXuat[]>([]);
   const [nhapXuatCTs, setNhapXuatCTs] = useState<NhapXuatCT[]>([]);
@@ -310,79 +292,50 @@ export default function App() {
   // --- 2B. QUẢN LÝ VAI TRÒ & QUYỀN HẠN (RBAC) ---
   const [roles, setRoles] = useState<Role[]>(DEFAULT_ROLES);
 
-  // Declarative effect: Automatically re-evaluate and update currentUser's permissions and role info when roles or nhanViens change
-  useEffect(() => {
-    if (!currentUser) return;
-    
-    // Find latest staff info for current user
-    const latestStaff = nhanViens.find(n => 
-      (n.MA_NV || '').trim().toLowerCase() === (currentUser.id || '').trim().toLowerCase() ||
-      (n.TEN_DANG_NHAP || '').trim().toLowerCase() === (currentUser.username || '').trim().toLowerCase() ||
-      (n.EMAIL || '').trim().toLowerCase() === (currentUser.username || '').trim().toLowerCase()
-    );
-
-    const activeRole = latestStaff ? latestStaff.ROLE : currentUser.role;
-    
-    const { permissions: combinedPermissions, roleName } = resolvePermissions(
-      activeRole || currentUser.role,
-      latestStaff ? latestStaff.PERMISSIONS : undefined,
-      roles
-    );
-
-    const hasWritePermission = combinedPermissions.some(p => p.includes('.create') || p.includes('.edit') || p.includes('.delete'));
-    const resolvedWriteAccess = latestStaff ? (latestStaff.WRITE_ACCESS !== false || hasWritePermission) : (currentUser.writeAccess !== false || hasWritePermission);
-
-    // Deep compare permissions and properties to avoid infinite loops
-    const hasChanged = 
-      JSON.stringify(currentUser.permissions) !== JSON.stringify(combinedPermissions) ||
-      currentUser.roleName !== roleName ||
-      currentUser.writeAccess !== resolvedWriteAccess ||
-      (latestStaff && (
-        currentUser.TRANG_THAI !== latestStaff.TRANG_THAI ||
-        currentUser.role !== latestStaff.ROLE
-      ));
-
-    if (hasChanged) {
-      console.log("[RBAC Sync] Phát hiện thay đổi vai trò hoặc quyền hạn. Tiến hành cập nhật currentUser...");
-      
-      // If user status changed to inactive, force logout
-      if (latestStaff) {
-        const isActive = isUserActive(latestStaff.TRANG_THAI);
-        if (!isActive) {
-          console.warn("[RBAC Sync] Tài khoản đã bị khóa hoặc không hoạt động. Đang đăng xuất...");
-          forceLogout();
-          return;
-        }
-      }
-
-      const updatedUser: User = {
-        ...currentUser,
-        role: activeRole || currentUser.role,
-        ROLE: activeRole || currentUser.role,
-        roleName: roleName,
-        writeAccess: resolvedWriteAccess,
-        WRITE_ACCESS: resolvedWriteAccess,
-        permissions: combinedPermissions,
-        TRANG_THAI: latestStaff ? latestStaff.TRANG_THAI : currentUser.TRANG_THAI,
-        ROLES: latestStaff ? (latestStaff.ROLES || [latestStaff.ROLE]) : currentUser.ROLES
-      };
-
-      setCurrentUser(updatedUser);
-      localStorage.setItem('CURRENT_USER', JSON.stringify(updatedUser));
-    }
-  }, [roles, nhanViens]);
-
   const hasPermission = useCallback((permissionCode: string): boolean => {
     if (!currentUser) return false;
 
-    if (Array.isArray(currentUser.permissions)) {
-      return currentUser.permissions.includes(permissionCode);
+    // Chuẩn hóa toàn bộ vai trò của user thành chữ in hoa
+    const rawRoles = safeParseArray(currentUser.ROLES).length > 0 
+      ? safeParseArray(currentUser.ROLES) 
+      : (currentUser.role ? [currentUser.role] : []);
+    const userRoles = rawRoles.map(r => String(r).trim().toUpperCase());
+
+    // Nguồn quyền duy nhất: Thu thập toàn bộ permission từ các role của user trong db/state (hoặc DEFAULT_ROLES làm fallback)
+    const userPermissions = new Set<string>();
+    userRoles.forEach(roleCode => {
+      const matchedRole = roles.find(r => r.ROLE_CODE.trim().toUpperCase() === roleCode)
+        || DEFAULT_ROLES.find(r => r.ROLE_CODE.trim().toUpperCase() === roleCode);
+      if (matchedRole && matchedRole.PERMISSIONS) {
+        matchedRole.PERMISSIONS.forEach(p => userPermissions.add(p));
+      } else {
+        // Tương thích ngược: Đối sánh với vai trò mặc định nếu mã vai trò không khớp trực tiếp
+        let fallbackRoleCode = roleCode;
+        if (roleCode === 'KHO') fallbackRoleCode = 'MANAGER';
+        if (roleCode === 'NHAN_VIEN') fallbackRoleCode = 'STAFF';
+
+        const matchedFallback = roles.find(r => r.ROLE_CODE.trim().toUpperCase() === fallbackRoleCode) 
+          || DEFAULT_ROLES.find(r => r.ROLE_CODE.trim().toUpperCase() === fallbackRoleCode);
+        if (matchedFallback && matchedFallback.PERMISSIONS) {
+          matchedFallback.PERMISSIONS.forEach(p => userPermissions.add(p));
+        }
+      }
+    });
+
+    // Hỗ trợ tương thích ngược cho sản phẩm (inventory.view / product.view)
+    if (permissionCode === 'inventory.view' || permissionCode === 'product.view') {
+      const hasL1 = userPermissions.has('product.view') || userPermissions.has('inventory.view');
+      return hasL1;
     }
 
-    // Fallback: dynamic lookup from roles/DEFAULT_ROLES
-    const userRole = (currentUser.ROLE || currentUser.role || '').trim().toUpperCase();
-    const { permissions } = resolvePermissions(userRole, undefined, roles);
-    return permissions.includes(permissionCode);
+    // Kiểm tra cấu trúc phân quyền: Nếu là quyền cấp 2, bắt buộc phải có cả quyền cấp 1 tương ứng
+    const parentCode = PERMISSION_PARENT_MAP[permissionCode];
+    if (parentCode) {
+      return userPermissions.has(parentCode) && userPermissions.has(permissionCode);
+    }
+
+    // Kiểm tra quyền cấp 1 trực tiếp
+    return userPermissions.has(permissionCode);
   }, [currentUser, roles]);
 
   const handleLogout = async () => {
@@ -399,11 +352,17 @@ export default function App() {
     }
     setCurrentUser(null);
     localStorage.removeItem('CURRENT_USER');
+    localStorage.removeItem('DB_OWNER_USER_ID');
     console.log("Đã đăng xuất người dùng trên giao diện. Giữ kết nối nền Supabase hoạt động.");
   };
 
   // --- TRẠNG THÁI KẾT NỐI ONLINE / OFFLINE CHẶT CHẼ ---
   const [isOffline, setIsOfflineState] = useState<boolean>(() => {
+    const rawUrl = ((import.meta as any).env.VITE_SUPABASE_URL || "").trim();
+    const rawKey = ((import.meta as any).env.VITE_SUPABASE_ANON_KEY || "").trim();
+    if (!rawUrl || !rawKey) {
+      return true;
+    }
     if (typeof window !== 'undefined' && window.navigator) {
       return !window.navigator.onLine;
     }
@@ -411,7 +370,6 @@ export default function App() {
   });
   const isOfflineRef = useRef<boolean>(isOffline);
   const wasOfflineRef = useRef<boolean>(isOffline);
-  const setupRealtimeRef = useRef<((userId: string) => void) | null>(null);
   const consecutiveFailuresRef = useRef<number>(0);
 
   const setIsOffline = (val: boolean) => {
@@ -572,66 +530,166 @@ export default function App() {
       return true;
     }
 
+    // Nếu không cấu hình Supabase (hoặc đang dùng dummy proxy), bỏ qua
+    if (!(import.meta as any).env.VITE_SUPABASE_URL || !(import.meta as any).env.VITE_SUPABASE_ANON_KEY) {
+      console.log("[Auth Guard] Supabase chưa cấu hình, bỏ qua xác thực phiên Auth.");
+      return true;
+    }
+
+    // Nếu user_id là cục bộ, bỏ qua
+    if (currentUser.user_id && currentUser.user_id.startsWith('LOCAL_')) {
+      console.log("[Auth Guard] Đang dùng tài khoản nội bộ cục bộ, bỏ qua xác thực phiên Auth.");
+      return true;
+    }
+
     try {
-      const activeUid = await resolveEffectiveUserId();
-      const { data: dbNhanViens, error } = await supabase
+      // Xác minh session thực tế từ Supabase Auth để đảm bảo hợp lệ
+      const { data: { user: authUser }, error: authError } = await supabase.auth.getUser();
+      
+      let targetUserId = authUser?.id;
+      let isAuthValid = !authError && authUser;
+
+      // Nếu không lấy được authUser từ Supabase Auth (có thể do iframe chặn cookie, lag session...)
+      if (!isAuthValid) {
+        console.warn("[Auth Guard] Không xác định được phiên Supabase Auth. Thử kiểm tra dữ liệu cục bộ...");
+        
+        // Thay vì log out ngay lập tức, ta kiểm tra xem user này có trong localStorage hoặc danh sách nhanViens không.
+        // Điều này cực kỳ quan trọng để chống logout cưỡng chế oan do lỗi iframe/cookie.
+        if (currentUser.id) {
+          const localNhanViensStr = localStorage.getItem('B_NHANVIEN');
+          let localList: NhanVien[] = [];
+          if (localNhanViensStr) {
+            try {
+              localList = JSON.parse(localNhanViensStr);
+            } catch (e) {}
+          }
+          if (!localList || localList.length === 0) {
+            localList = nhanViens || [];
+          }
+          if (!localList || localList.length === 0) {
+            localList = (inMemoryCache['B_NHANVIEN'] as NhanVien[]) || [];
+          }
+
+          const foundLocal = localList.find(n => 
+            (n.MA_NV || '').trim().toLowerCase() === (currentUser.id || '').trim().toLowerCase() ||
+            (n.TEN_DANG_NHAP || '').trim().toLowerCase() === (currentUser.username || '').trim().toLowerCase() ||
+            (n.EMAIL || '').trim().toLowerCase() === (currentUser.username || '').trim().toLowerCase()
+          );
+
+          if (foundLocal) {
+            const role = (foundLocal.ROLE || '').trim().toUpperCase();
+            const rawStatus = (foundLocal.TRANG_THAI || '').trim().toUpperCase();
+            const isActive = foundLocal.active === true;
+
+            const isApprovedAdmin = role === 'ADMIN' && isActive && 
+              (rawStatus === 'ACTIVE' || rawStatus === 'HOẠT ĐỘNG' || rawStatus === 'KÍCH HOẠT' || rawStatus === 'HOAT DONG');
+
+            const isPending = !isApprovedAdmin && (
+              !isActive || 
+              rawStatus === 'PENDING' || 
+              rawStatus === 'CHỜ DUYỆT' || 
+              rawStatus === 'CHO DUYET' || 
+              role === 'PENDING'
+            );
+
+            if (isPending) {
+              console.error("[Auth Guard] Tài khoản cục bộ ở trạng thái chờ duyệt hoặc bị khóa!");
+              forceLogout();
+              return false;
+            }
+            
+            // Nếu tài khoản cục bộ hoạt động tốt, cho phép tiếp tục sử dụng để tránh gián đoạn
+            console.log("[Auth Guard] Tài khoản cục bộ hoạt động tốt, bỏ qua lỗi Auth.");
+            return true;
+          }
+        }
+        
+        // Nếu không có cả cục bộ lẫn online, hoặc không thể xác thực gì, chỉ lúc đó mới forceLogout
+        console.error("[Auth Guard] Phiên đăng nhập Auth không hợp lệ và không thể đối chiếu cục bộ! Đăng xuất cưỡng chế.");
+        forceLogout();
+        return false;
+      }
+
+      // Truy vấn tài khoản theo user_id từ b_nhanvien (hoặc email tự động liên kết)
+      let { data: dbNhanViens, error } = await supabase
         .from('b_nhanvien')
         .select('*')
-        .eq('user_id', activeUid)
-        .eq('MA_NV', currentUser.id);
+        .eq('user_id', targetUserId);
 
       if (error) {
         console.warn("[Auth Guard] Lỗi truy vấn xác thực tài khoản:", error.message);
         return true;
       }
 
-      const staffMember = dbNhanViens && dbNhanViens[0];
+      let staffMember = dbNhanViens && dbNhanViens[0];
+
+      if (!staffMember && authUser?.email) {
+        console.log(`[Auth Guard] Thử tìm theo email: ${authUser.email}...`);
+        const { data: emailNhanViens } = await supabase
+          .from('b_nhanvien')
+          .select('*')
+          .ilike('EMAIL', authUser.email.trim());
+
+        if (emailNhanViens && emailNhanViens.length > 0) {
+          staffMember = emailNhanViens[0];
+          // Cập nhật liên kết user_id tự động
+          console.log(`[Auth Guard] Tự động cập nhật liên kết user_id cho: ${staffMember.MA_NV}`);
+          try {
+            await supabase
+              .from('b_nhanvien')
+              .update({ user_id: targetUserId })
+              .eq('MA_NV', staffMember.MA_NV);
+            staffMember.user_id = targetUserId;
+          } catch (linkErr) {
+            console.warn('[Auth Guard] Lỗi tự động cập nhật liên kết user_id:', linkErr);
+          }
+        }
+      }
       
       if (!staffMember) {
-        console.error(`[Auth Guard] Tài khoản ${currentUser.username} không tồn tại trong b_nhanvien! Đăng xuất cưỡng chế.`);
+        console.error(`[Auth Guard] Tài khoản không tồn tại trong b_nhanvien! Đăng xuất cưỡng chế.`);
         forceLogout();
         return false;
       }
 
-      const isActive = isUserActive(staffMember.TRANG_THAI);
+      const role = (staffMember.ROLE || '').trim().toUpperCase();
+      const rawStatus = (staffMember.TRANG_THAI || '').trim().toUpperCase();
+      const isActive = staffMember.active === true;
+      
+      const isApprovedAdmin = role === 'ADMIN' && isActive && 
+        (rawStatus === 'ACTIVE' || rawStatus === 'HOẠT ĐỘNG' || rawStatus === 'KÍCH HOẠT' || rawStatus === 'HOAT DONG');
 
-      if (!isActive) {
-        console.error(`[Auth Guard] Tài khoản ${currentUser.username} không hoạt động hoặc không được cấp quyền! Đăng xuất cưỡng chế.`);
-        forceLogout();
-        return false;
-      }
-
-      const { permissions: combinedPermissions, roleName } = resolvePermissions(
-        staffMember.ROLE,
-        staffMember.PERMISSIONS,
-        roles
+      const isPending = !isApprovedAdmin && (
+        !isActive || 
+        rawStatus === 'PENDING' || 
+        rawStatus === 'CHỜ DUYỆT' || 
+        rawStatus === 'CHO DUYET' || 
+        role === 'PENDING'
       );
 
-      const hasWritePermission = combinedPermissions.some(p => p.includes('.create') || p.includes('.edit') || p.includes('.delete'));
-      const finalWriteAccess = staffMember.WRITE_ACCESS !== false || hasWritePermission;
+      if (isPending) {
+        console.error(`[Auth Guard] Tài khoản ${currentUser.username} không hoạt động hoặc chưa duyệt! Đăng xuất cưỡng chế.`);
+        forceLogout();
+        return false;
+      }
 
       const updatedUser: User = {
         username: staffMember.TEN_DANG_NHAP || staffMember.EMAIL || staffMember.HO_TEN,
         fullName: staffMember.HO_TEN,
-        role: staffMember.ROLE,
-        ROLE: staffMember.ROLE,
-        roleName: roleName,
-        active: isActive,
+        role: normalizeDbRole(staffMember.ROLE || staffMember.VAI_TRO || 'NHAN_VIEN'),
         branch: staffMember.CHI_NHANH || 'Kho Trung Tâm',
-        writeAccess: finalWriteAccess,
-        WRITE_ACCESS: finalWriteAccess,
+        writeAccess: staffMember.WRITE_ACCESS !== false,
+        WRITE_ACCESS: staffMember.WRITE_ACCESS !== false,
         id: staffMember.MA_NV,
-        email: staffMember.EMAIL,
-        ROLES: staffMember.ROLES || [staffMember.ROLE],
-        permissions: combinedPermissions,
-        TRANG_THAI: staffMember.TRANG_THAI
+        user_id: staffMember.user_id,
+        ROLES: staffMember.ROLES || []
       };
 
       if (
         currentUser.role !== updatedUser.role ||
         currentUser.branch !== updatedUser.branch ||
         currentUser.writeAccess !== updatedUser.writeAccess ||
-        JSON.stringify(currentUser.permissions) !== JSON.stringify(updatedUser.permissions)
+        currentUser.user_id !== updatedUser.user_id
       ) {
         console.log("[Auth Guard] Cập nhật thông tin và quyền hạn của người dùng từ Supabase...");
         setCurrentUser(updatedUser);
@@ -786,8 +844,8 @@ export default function App() {
     setIsSyncing(true);
     setOfflineMode(false);
     try {
-      const ownerId = localStorage.getItem('DB_OWNER_USER_ID') || SHARED_USER_ID;
-      await syncAllDataFromSupabase(ownerId, currentUser.username);
+      const activeOwnerId = currentUser.user_id || currentUser.id || '00000000-0000-0000-0000-000000000000';
+      await syncAllDataFromSupabase(activeOwnerId, currentUser.username);
       setSuccessToast({ 
         message: "Đồng bộ dữ liệu trực tuyến thành công!", 
         type: "success", 
@@ -838,10 +896,30 @@ export default function App() {
       const mergedNhapXuats = [...dbNhapXuats];
       const mergedNhapXuatCTs = [...dbNhapXuatCTs];
 
+      // Định nghĩa ngưỡng thời gian cũ (quá 2 tiếng hoặc tạo trước khi phiên hiện tại bắt đầu)
+      const isTooOld = (tgTaoStr?: string) => {
+        if (!tgTaoStr) return true;
+        try {
+          const creationTime = new Date(tgTaoStr).getTime();
+          const sessionTime = sessionStartTimeRef.current;
+          return (sessionTime - creationTime) > 7200000 || creationTime < sessionTime;
+        } catch {
+          return true;
+        }
+      };
+
       nhapXuats.forEach(localNx => {
         if (localNx.HOA_DON && !localNx.HOA_DON.includes('_temp_')) {
           const exists = dbNhapXuats.some(dbNx => dbNx.HOA_DON === localNx.HOA_DON);
           if (!exists) {
+            const isCreatedInCurrentSession = sessionCreatedInvoiceIdsRef.current.has(localNx.HOA_DON);
+            const tooOld = isTooOld(localNx.TG_TAO);
+
+            if (!isCreatedInCurrentSession && tooOld) {
+              console.log(`[Sync] Bản ghi cũ phát hiện không tồn tại trên Supabase và có timestamp quá cũ, tự động loại bỏ khỏi hàng đợi đồng bộ: ${localNx.HOA_DON}`);
+              return; // Loại bỏ, không giữ lại
+            }
+
             console.log(`[Sync] Phát hiện phiếu mới tạo cục bộ chưa cập nhật kịp lên database, giữ lại: ${localNx.HOA_DON}`);
             mergedNhapXuats.push(localNx);
 
@@ -889,43 +967,80 @@ export default function App() {
             );
 
             if (latestStaff) {
-              const isActive = isUserActive(latestStaff.TRANG_THAI);
-
-              if (!isActive) {
-                console.error(`[Auth Guard] Tài khoản ${savedUser.username} ở trạng thái không hoạt động (${latestStaff.TRANG_THAI})! Tiến hành đăng xuất cưỡng chế.`);
-                forceLogout();
-                return;
+              if (latestStaff.user_id) {
+                localStorage.setItem('DB_OWNER_USER_ID', latestStaff.user_id);
               }
-
-              const { permissions: combinedPermissions, roleName } = resolvePermissions(
-                latestStaff.ROLE,
-                latestStaff.PERMISSIONS,
-                payload.roles || roles || []
-              );
-
-              const hasWritePermission = combinedPermissions.some(p => p.includes('.create') || p.includes('.edit') || p.includes('.delete'));
-              const finalWriteAccess = latestStaff.WRITE_ACCESS !== false || hasWritePermission;
 
               const u: User = {
                 username: latestStaff.TEN_DANG_NHAP || latestStaff.EMAIL || latestStaff.HO_TEN,
                 fullName: latestStaff.HO_TEN,
-                role: latestStaff.ROLE || 'NHAN_VIEN',
-                ROLE: latestStaff.ROLE || 'NHAN_VIEN',
-                roleName: roleName,
+                role: normalizeDbRole(latestStaff.ROLE || latestStaff.VAI_TRO || 'NHAN_VIEN'),
                 branch: latestStaff.CHI_NHANH || 'Kho Trung Tâm',
-                writeAccess: finalWriteAccess,
-                WRITE_ACCESS: finalWriteAccess,
+                writeAccess: latestStaff.WRITE_ACCESS !== false,
+                WRITE_ACCESS: latestStaff.WRITE_ACCESS !== false,
                 id: latestStaff.MA_NV,
-                email: latestStaff.EMAIL,
-                ROLES: latestStaff.ROLES || [latestStaff.ROLE],
-                permissions: combinedPermissions,
-                TRANG_THAI: latestStaff.TRANG_THAI
+                user_id: latestStaff.user_id,
+                ROLES: latestStaff.ROLES || []
               };
+
+              const role = (latestStaff.ROLE || '').trim().toUpperCase();
+              const rawStatus = (latestStaff.TRANG_THAI || '').trim().toUpperCase();
+              const isActive = latestStaff.active === true;
+              
+              const isApprovedAdmin = role === 'ADMIN' && isActive && 
+                (rawStatus === 'ACTIVE' || rawStatus === 'HOẠT ĐỘNG' || rawStatus === 'KÍCH HOẠT' || rawStatus === 'HOAT DONG');
+
+              const isPending = !isApprovedAdmin && (
+                !isActive || 
+                rawStatus === 'PENDING' || 
+                rawStatus === 'CHỜ DUYỆT' || 
+                rawStatus === 'CHO DUYET' || 
+                role === 'PENDING'
+              );
+
+              if (isPending) {
+                console.error(`[Auth Guard] Tài khoản ${savedUser.username} ở trạng thái không hoạt động hoặc chờ duyệt! Tiến hành đăng xuất cưỡng chế.`);
+                forceLogout();
+                return;
+              }
 
               setCurrentUser(u);
               localStorage.setItem('CURRENT_USER', JSON.stringify(u));
               return;
             } else {
+              // Bỏ qua nếu là tài khoản cục bộ / local
+              if (savedUser.user_id && savedUser.user_id.startsWith('LOCAL_')) {
+                console.log("[Auth Guard] Bỏ qua forceLogout cho tài khoản nội bộ cục bộ.");
+                return;
+              }
+              if (!(import.meta as any).env.VITE_SUPABASE_URL || !(import.meta as any).env.VITE_SUPABASE_ANON_KEY) {
+                console.log("[Auth Guard] Bỏ qua forceLogout do chưa cấu hình Supabase.");
+                return;
+              }
+              // Kiểm tra xem có trong danh sách cục bộ không để tránh ngắt quãng oan
+              let localList: NhanVien[] = [];
+              const localNhanViensStr = localStorage.getItem('B_NHANVIEN');
+              if (localNhanViensStr) {
+                try {
+                  localList = JSON.parse(localNhanViensStr);
+                } catch (e) {}
+              }
+              if (!localList || localList.length === 0) {
+                localList = nhanViens || [];
+              }
+              if (!localList || localList.length === 0) {
+                localList = (inMemoryCache['B_NHANVIEN'] as NhanVien[]) || [];
+              }
+
+              const foundLocal = localList.find(n => 
+                (n.MA_NV || '').trim().toLowerCase() === (savedUser.id || '').trim().toLowerCase() ||
+                (n.TEN_DANG_NHAP || '').trim().toLowerCase() === (savedUser.username || '').trim().toLowerCase() ||
+                (n.EMAIL || '').trim().toLowerCase() === (savedUser.username || '').trim().toLowerCase()
+              );
+              if (foundLocal) {
+                console.log("[Auth Guard] Tìm thấy tài khoản trong danh sách cục bộ, bỏ qua forceLogout.");
+                return;
+              }
               console.error(`[Auth Guard] Không tìm thấy tài khoản ${savedUser.username} (ID: ${savedUser.id}) trong b_nhanvien từ Supabase! Tiến hành đăng xuất cưỡng chế.`);
               forceLogout();
               return;
@@ -953,8 +1068,8 @@ export default function App() {
     if (!isOffline && wasOfflineRef.current) {
       console.log("Phát hiện có kết nối trở lại! Tự động đồng bộ mới nhất từ Supabase Cloud...");
       if (currentUser && currentUser.id) {
-        const ownerId = localStorage.getItem('DB_OWNER_USER_ID') || SHARED_USER_ID;
-        syncAllDataFromSupabase(ownerId, currentUser.username);
+        const activeOwnerId = currentUser.user_id || currentUser.id || '00000000-0000-0000-0000-000000000000';
+        syncAllDataFromSupabase(activeOwnerId, currentUser.username);
       }
     }
     wasOfflineRef.current = isOffline;
@@ -967,23 +1082,27 @@ export default function App() {
 
     // Hàm cập nhật gia tăng các state cục bộ từ sự kiện realtime mà không tải lại toàn bộ database từ xa
     const handleIncrementalRealtimeUpdate = (payload: any) => {
-      const isDebug = typeof window !== 'undefined' && ((window as any).__DEBUG_MODE__ || localStorage.getItem('DEBUG_MODE') === 'true');
-      if (isDebug) {
-        console.log('[Realtime Incremental] Nhận sự kiện thay đổi dữ liệu:', payload.table, payload.eventType, payload.new || payload.old);
-      }
-
       const { table, eventType, new: newRow, old: oldRow } = payload;
       if (!table) return;
+
+      // Log chi tiết sự kiện nhận được cho xác nhận hệ thống
+      console.log(`[REALTIME EVENT LOG - ${eventType}] Bảng: ${table}`, { newRow, oldRow });
 
       switch (table) {
         case 'b_sanpham': {
           if (eventType === 'DELETE') {
             const skuToDelete = oldRow?.SKU;
             if (skuToDelete) {
-              setSanPhams(prev => prev.filter(p => p.SKU !== skuToDelete));
+              console.log(`[REALTIME DELETE] Xóa sản phẩm SKU: ${skuToDelete}`);
+              setSanPhams(prev => {
+                const next = prev.filter(p => p.SKU !== skuToDelete);
+                inMemoryCache['B_SANPHAM'] = next;
+                return next;
+              });
             }
           } else if (newRow) {
             // INSERT or UPDATE
+            console.log(`[REALTIME ${eventType}] Cập nhật/Thêm sản phẩm SKU: ${newRow.SKU}`);
             const mappedItem: SanPham = {
               SKU: newRow.SKU,
               TEN_SAN_PHAM: newRow.TEN_SAN_PHAM,
@@ -1008,7 +1127,9 @@ export default function App() {
               } else {
                 next = [mappedItem, ...prev];
               }
-              return deduplicateProducts(next);
+              next = deduplicateProducts(next);
+              inMemoryCache['B_SANPHAM'] = next;
+              return next;
             });
           }
           break;
@@ -1018,10 +1139,22 @@ export default function App() {
           if (eventType === 'DELETE') {
             const hoaDonToDelete = oldRow?.HOA_DON;
             if (hoaDonToDelete) {
-              setNhapXuats(prev => prev.filter(nx => nx.HOA_DON !== hoaDonToDelete));
+              console.log(`[REALTIME DELETE] Xóa phiếu nhập xuất: ${hoaDonToDelete}`);
+              setNhapXuats(prev => {
+                const next = prev.filter(nx => nx.HOA_DON !== hoaDonToDelete);
+                inMemoryCache['B_NHAPXUAT'] = next;
+                return next;
+              });
+              // Tự động xóa sạch các chi tiết thuộc HOA_DON bị xóa
+              setNhapXuatCTs(prev => {
+                const next = prev.filter(d => d.HOA_DON !== hoaDonToDelete);
+                inMemoryCache['B_NHAPXUATCT'] = next;
+                return next;
+              });
             }
           } else if (newRow) {
             // INSERT or UPDATE
+            console.log(`[REALTIME ${eventType}] Cập nhật/Thêm phiếu nhập xuất: ${newRow.HOA_DON}`);
             const mappedItem: NhapXuat = {
               HOA_DON: newRow.HOA_DON,
               CHI_NHANH: newRow.CHI_NHANH,
@@ -1038,13 +1171,15 @@ export default function App() {
             };
             setNhapXuats(prev => {
               const index = prev.findIndex(nx => nx.HOA_DON === mappedItem.HOA_DON);
+              let next;
               if (index !== -1) {
-                const next = [...prev];
+                next = [...prev];
                 next[index] = mappedItem;
-                return next;
               } else {
-                return [mappedItem, ...prev];
+                next = [mappedItem, ...prev];
               }
+              inMemoryCache['B_NHAPXUAT'] = next;
+              return next;
             });
           }
           break;
@@ -1054,11 +1189,17 @@ export default function App() {
           if (eventType === 'DELETE') {
             const idToDelete = oldRow?.id !== undefined ? oldRow.id : oldRow?.ID;
             if (idToDelete !== undefined) {
-              setNhapXuatCTs(prev => prev.filter(d => d.ID !== idToDelete));
+              console.log(`[REALTIME DELETE] Xóa chi tiết phiếu nhập xuất ID: ${idToDelete}`);
+              setNhapXuatCTs(prev => {
+                const next = prev.filter(d => d.ID !== idToDelete);
+                inMemoryCache['B_NHAPXUATCT'] = next;
+                return next;
+              });
             }
           } else if (newRow) {
             // INSERT or UPDATE
             const mappedId = newRow.id !== undefined ? newRow.id : newRow.ID;
+            console.log(`[REALTIME ${eventType}] Cập nhật/Thêm chi tiết phiếu nhập xuất ID: ${mappedId}`);
             const mappedItem: NhapXuatCT = {
               ID: mappedId,
               HOA_DON: newRow.HOA_DON,
@@ -1077,13 +1218,15 @@ export default function App() {
             };
             setNhapXuatCTs(prev => {
               const index = prev.findIndex(d => d.ID === mappedItem.ID);
+              let next;
               if (index !== -1) {
-                const next = [...prev];
+                next = [...prev];
                 next[index] = mappedItem;
-                return next;
               } else {
-                return [mappedItem, ...prev];
+                next = [mappedItem, ...prev];
               }
+              inMemoryCache['B_NHAPXUATCT'] = next;
+              return next;
             });
           }
           break;
@@ -1092,9 +1235,15 @@ export default function App() {
         case 'b_kiemkho': {
           if (eventType === 'DELETE') {
             const keyMap = (oldRow?.MA_PHIEU || '') + '_' + (oldRow?.SKU || '');
-            setKiemKhos(prev => prev.filter(kk => ((kk.MA_PHIEU || '') + '_' + (kk.SKU || '')) !== keyMap));
+            console.log(`[REALTIME DELETE] Xóa phiếu kiểm kho: ${keyMap}`);
+            setKiemKhos(prev => {
+              const next = prev.filter(kk => ((kk.MA_PHIEU || '') + '_' + (kk.SKU || '')) !== keyMap);
+              inMemoryCache['B_KIEMKHO'] = next;
+              return next;
+            });
           } else if (newRow) {
             // INSERT or UPDATE
+            console.log(`[REALTIME ${eventType}] Cập nhật/Thêm phiếu kiểm kho: ${newRow.MA_PHIEU}`);
             const mappedItem: KiemKho = {
               MA_PHIEU: newRow.MA_PHIEU,
               SKU: newRow.SKU,
@@ -1108,13 +1257,15 @@ export default function App() {
             setKiemKhos(prev => {
               const keyMap = (mappedItem.MA_PHIEU || '') + '_' + (mappedItem.SKU || '');
               const index = prev.findIndex(kk => ((kk.MA_PHIEU || '') + '_' + (kk.SKU || '')) === keyMap);
+              let next;
               if (index !== -1) {
-                const next = [...prev];
+                next = [...prev];
                 next[index] = mappedItem;
-                return next;
               } else {
-                return [mappedItem, ...prev];
+                next = [mappedItem, ...prev];
               }
+              inMemoryCache['B_KIEMKHO'] = next;
+              return next;
             });
           }
           break;
@@ -1124,10 +1275,16 @@ export default function App() {
           if (eventType === 'DELETE') {
             const brandToDelete = oldRow?.THUONG_HIEU;
             if (brandToDelete) {
-              setThuongHieus(prev => prev.filter(th => th.THUONG_HIEU !== brandToDelete));
+              console.log(`[REALTIME DELETE] Xóa thương hiệu: ${brandToDelete}`);
+              setThuongHieus(prev => {
+                const next = prev.filter(th => th.THUONG_HIEU !== brandToDelete);
+                inMemoryCache['B_THUONGHIEU'] = next;
+                return next;
+              });
             }
           } else if (newRow) {
             // INSERT or UPDATE
+            console.log(`[REALTIME ${eventType}] Cập nhật/Thêm thương hiệu: ${newRow.THUONG_HIEU}`);
             const mappedItem: ThuongHieu = {
               THUONG_HIEU: newRow.THUONG_HIEU,
               CHIET_XUAT_MAC_DINH: newRow.CHIET_XUAT_MAC_DINH,
@@ -1141,13 +1298,15 @@ export default function App() {
             };
             setThuongHieus(prev => {
               const index = prev.findIndex(th => th.THUONG_HIEU === mappedItem.THUONG_HIEU);
+              let next;
               if (index !== -1) {
-                const next = [...prev];
+                next = [...prev];
                 next[index] = mappedItem;
-                return next;
               } else {
-                return [mappedItem, ...prev];
+                next = [mappedItem, ...prev];
               }
+              inMemoryCache['B_THUONGHIEU'] = next;
+              return next;
             });
           }
           break;
@@ -1157,10 +1316,16 @@ export default function App() {
           if (eventType === 'DELETE') {
             const branchToDelete = oldRow?.CHI_NHANH;
             if (branchToDelete) {
-              setChiNhanhs(prev => prev.filter(cn => cn.CHI_NHANH !== branchToDelete));
+              console.log(`[REALTIME DELETE] Xóa chi nhánh: ${branchToDelete}`);
+              setChiNhanhs(prev => {
+                const next = prev.filter(cn => cn.CHI_NHANH !== branchToDelete);
+                inMemoryCache['B_CHINHANH'] = next;
+                return next;
+              });
             }
           } else if (newRow) {
             // INSERT or UPDATE
+            console.log(`[REALTIME ${eventType}] Cập nhật/Thêm chi nhánh: ${newRow.CHI_NHANH}`);
             const mappedItem: ChiNhanh = {
               CHI_NHANH: newRow.CHI_NHANH,
               DIA_CHI: newRow.DIA_CHI,
@@ -1168,13 +1333,15 @@ export default function App() {
             };
             setChiNhanhs(prev => {
               const index = prev.findIndex(cn => cn.CHI_NHANH === mappedItem.CHI_NHANH);
+              let next;
               if (index !== -1) {
-                const next = [...prev];
+                next = [...prev];
                 next[index] = mappedItem;
-                return next;
               } else {
-                return [mappedItem, ...prev];
+                next = [mappedItem, ...prev];
               }
+              inMemoryCache['B_CHINHANH'] = next;
+              return next;
             });
           }
           break;
@@ -1184,10 +1351,16 @@ export default function App() {
           if (eventType === 'DELETE') {
             const staffToDelete = oldRow?.MA_NV;
             if (staffToDelete) {
-              setNhanViens(prev => prev.filter(nv => nv.MA_NV !== staffToDelete));
+              console.log(`[REALTIME DELETE] Xóa nhân viên: ${staffToDelete}`);
+              setNhanViens(prev => {
+                const next = prev.filter(nv => nv.MA_NV !== staffToDelete);
+                inMemoryCache['B_NHANVIEN'] = next;
+                return next;
+              });
             }
           } else if (newRow) {
             // INSERT or UPDATE
+            console.log(`[REALTIME ${eventType}] Cập nhật/Thêm nhân viên: ${newRow.MA_NV}`);
             const mappedItem: NhanVien = {
               MA_NV: newRow.MA_NV,
               HO_TEN: newRow.HO_TEN,
@@ -1203,17 +1376,21 @@ export default function App() {
               TRANG_THAI: newRow.TRANG_THAI || 'Hoạt động',
               YEU_CAU_RESET: newRow.YEU_CAU_RESET || false,
               NGAY_DANG_KY: newRow.NGAY_DANG_KY || '',
-              ROLES: safeParseArray(newRow.ROLES)
+              ROLES: safeParseArray(newRow.ROLES),
+              user_id: newRow.user_id,
+              active: newRow.active !== false
             };
             setNhanViens(prev => {
               const index = prev.findIndex(nv => nv.MA_NV === mappedItem.MA_NV);
+              let next;
               if (index !== -1) {
-                const next = [...prev];
+                next = [...prev];
                 next[index] = mappedItem;
-                return next;
               } else {
-                return [mappedItem, ...prev];
+                next = [mappedItem, ...prev];
               }
+              inMemoryCache['B_NHANVIEN'] = next;
+              return next;
             });
 
             // Cập nhật thông tin CURRENT_USER nếu khớp tài khoản đang đăng nhập
@@ -1228,34 +1405,25 @@ export default function App() {
                     (mappedItem.EMAIL || '').trim().toLowerCase() === (savedUser.username || '').trim().toLowerCase();
                   
                   if (matchesCurrentUser) {
-                    const isActive = isUserActive(mappedItem.TRANG_THAI);
-                    if (!isActive) {
+                    if (mappedItem.user_id) {
+                      localStorage.setItem('DB_OWNER_USER_ID', mappedItem.user_id);
+                    }
+                    const u: User = {
+                      username: mappedItem.TEN_DANG_NHAP || mappedItem.EMAIL || mappedItem.HO_TEN,
+                      fullName: mappedItem.HO_TEN,
+                      role: normalizeDbRole(mappedItem.ROLE || 'NHAN_VIEN'),
+                      branch: mappedItem.CHI_NHANH || 'Kho Trung Tâm',
+                      writeAccess: mappedItem.WRITE_ACCESS !== false,
+                      WRITE_ACCESS: mappedItem.WRITE_ACCESS !== false,
+                      id: mappedItem.MA_NV,
+                      user_id: mappedItem.user_id,
+                      ROLES: mappedItem.ROLES || []
+                    };
+                    const rawStatus = (mappedItem.TRANG_THAI || '').trim().toUpperCase();
+                    const isBlocked = rawStatus === 'BLOCKED' || rawStatus === 'KHÓA' || rawStatus === 'KHOA';
+                    if (isBlocked) {
                       handleLogout();
                     } else {
-                       const { permissions: combinedPermissions, roleName } = resolvePermissions(
-                        mappedItem.ROLE,
-                        mappedItem.PERMISSIONS,
-                        roles
-                      );
-
-                      const hasWritePermission = combinedPermissions.some(p => p.includes('.create') || p.includes('.edit') || p.includes('.delete'));
-                      const finalWriteAccess = mappedItem.WRITE_ACCESS !== false || hasWritePermission;
-
-                      const u: User = {
-                        username: mappedItem.TEN_DANG_NHAP || mappedItem.EMAIL || mappedItem.HO_TEN,
-                        fullName: mappedItem.HO_TEN,
-                        role: mappedItem.ROLE || 'NHAN_VIEN',
-                        ROLE: mappedItem.ROLE || 'NHAN_VIEN',
-                        roleName: roleName,
-                        branch: mappedItem.CHI_NHANH || 'Kho Trung Tâm',
-                        writeAccess: finalWriteAccess,
-                        WRITE_ACCESS: finalWriteAccess,
-                        id: mappedItem.MA_NV,
-                        email: mappedItem.EMAIL,
-                        ROLES: mappedItem.ROLES || [mappedItem.ROLE],
-                        permissions: combinedPermissions,
-                        TRANG_THAI: mappedItem.TRANG_THAI
-                      };
                       setCurrentUser(u);
                       localStorage.setItem('CURRENT_USER', JSON.stringify(u));
                     }
@@ -1271,10 +1439,15 @@ export default function App() {
           if (eventType === 'DELETE') {
             const idToDelete = oldRow?.id;
             if (idToDelete) {
-              setEmailLogs(prev => prev.filter(el => el.id !== idToDelete));
+              console.log(`[REALTIME DELETE] Xóa email log: ${idToDelete}`);
+              setEmailLogs(prev => {
+                const next = prev.filter(el => el.id !== idToDelete);
+                return next;
+              });
             }
           } else if (newRow) {
             // INSERT or UPDATE
+            console.log(`[REALTIME ${eventType}] Cập nhật/Thêm email log: ${newRow.id}`);
             const mappedItem: EmailLog = {
               id: newRow.id,
               EMAIL: newRow.EMAIL,
@@ -1286,13 +1459,14 @@ export default function App() {
             };
             setEmailLogs(prev => {
               const index = prev.findIndex(el => el.id === mappedItem.id);
+              let next;
               if (index !== -1) {
-                const next = [...prev];
+                next = [...prev];
                 next[index] = mappedItem;
-                return next;
               } else {
-                return [mappedItem, ...prev];
+                next = [mappedItem, ...prev];
               }
+              return next;
             });
           }
           break;
@@ -1302,10 +1476,16 @@ export default function App() {
           if (eventType === 'DELETE') {
             const roleToDelete = oldRow?.ROLE_CODE;
             if (roleToDelete) {
-              setRoles(prev => prev.filter(r => r.ROLE_CODE !== roleToDelete));
+              console.log(`[REALTIME DELETE] Xóa role: ${roleToDelete}`);
+              setRoles(prev => {
+                const next = prev.filter(r => r.ROLE_CODE !== roleToDelete);
+                inMemoryCache['B_ROLE'] = next;
+                return next;
+              });
             }
           } else if (newRow) {
             // INSERT or UPDATE
+            console.log(`[REALTIME ${eventType}] Cập nhật/Thêm role: ${newRow.ROLE_CODE}`);
             const mappedItem: Role = {
               ROLE_CODE: newRow.ROLE_CODE,
               TEN_ROLE: newRow.TEN_ROLE,
@@ -1313,13 +1493,15 @@ export default function App() {
             };
             setRoles(prev => {
               const index = prev.findIndex(r => r.ROLE_CODE === mappedItem.ROLE_CODE);
+              let next;
               if (index !== -1) {
-                const next = [...prev];
+                next = [...prev];
                 next[index] = mappedItem;
-                return next;
               } else {
-                return [mappedItem, ...prev];
+                next = [mappedItem, ...prev];
               }
+              inMemoryCache['B_ROLE'] = next;
+              return next;
             });
           }
           break;
@@ -1329,7 +1511,6 @@ export default function App() {
 
     // Hàm thiết lập kênh Realtime lắng nghe mọi thay đổi trên Supabase
     const setupRealtime = (userId: string) => {
-      setupRealtimeRef.current = setupRealtime;
       if (realtimeChannel) {
         console.log('Đang hủy và gỡ bỏ kênh Realtime cũ...');
         supabase.removeChannel(realtimeChannel);
@@ -1347,24 +1528,32 @@ export default function App() {
           'postgres_changes',
           { event: '*', schema: 'public' },
           async (payload: any) => {
-            console.log('Realtime Event nhận được từ Supabase:', payload);
             monitor.trackSupabaseQuery(payload.table || 'unknown_table', 'realtime_event');
+            
+            const eventType = payload.eventType;
+            const isDelete = eventType === 'DELETE';
             
             // Lấy user_id từ dữ liệu thay đổi
             const newRow = payload.new;
             const oldRow = payload.old;
             const rowUserId = (newRow && newRow.user_id) || (oldRow && oldRow.user_id);
 
-            // Nếu dữ liệu thay đổi thuộc về user hiện tại hoặc Owner, tự động cập nhật gia tăng tại chỗ
+            // Log chi tiết sự kiện nhận được
+            console.log(`[REALTIME LOG] Nhận sự kiện ${eventType} trên bảng ${payload.table}:`, payload);
+
+            // Nếu là sự kiện DELETE (không có user_id trong oldRow) hoặc dữ liệu thuộc về user hiện tại/Owner
             const ownerId = localStorage.getItem('DB_OWNER_USER_ID') || userId;
-            if (rowUserId === userId || rowUserId === ownerId || rowUserId === '00000000-0000-0000-0000-000000000000') {
+            if (isDelete || rowUserId === userId || rowUserId === ownerId || rowUserId === '00000000-0000-0000-0000-000000000000') {
               if (ignoreRealtimeRef.current) {
-                console.log('Đang bỏ qua sự kiện Realtime do cờ ignoreRealtime...');
+                console.log(`[REALTIME LOG] Đang bỏ qua sự kiện ${eventType} do cờ ignoreRealtime của tab hiện tại...`);
                 return;
               }
               
+              console.log(`[REALTIME LOG] Chấp nhận và xử lý sự kiện ${eventType} trên bảng ${payload.table}`);
               // Cập nhật gia tăng (Incremental update) tại chỗ, không reload lại toàn bộ dữ liệu từ xa
               handleIncrementalRealtimeUpdate(payload);
+            } else {
+              console.log(`[REALTIME LOG] Bỏ qua sự kiện ${eventType} trên bảng ${payload.table} vì không trùng user_id (rowUserId: ${rowUserId}, userId: ${userId}, ownerId: ${ownerId})`);
             }
           }
         )
@@ -1373,36 +1562,83 @@ export default function App() {
         });
     };
 
-    // 1. Kiểm tra session ngay khi trang web khởi chạy và tự động đăng nhập ngầm Admin để liên kết dữ liệu trực tuyến
+    // 1. Kiểm tra session ngay khi trang web khởi chạy và tự động tải dữ liệu
     const initializeAuth = async () => {
       try {
         const { data: { session } } = await supabase.auth.getSession();
         if (session?.user) {
           const userId = session.user.id;
           const email = session.user.email || '';
+
+          // Kiểm tra tính hợp lệ của nhân sự trong b_nhanvien (hoặc email tự động liên kết)
+          let { data: dbNhanViens, error } = await supabase
+            .from('b_nhanvien')
+            .select('*')
+            .eq('user_id', userId);
+
+          let staffMember = dbNhanViens && dbNhanViens[0];
+
+          if (!staffMember && email) {
+            console.log(`[Auth Init] Không tìm thấy theo user_id, thử tìm theo email: ${email}`);
+            const { data: emailNhanViens } = await supabase
+              .from('b_nhanvien')
+              .select('*')
+              .ilike('EMAIL', email.trim());
+
+            if (emailNhanViens && emailNhanViens.length > 0) {
+              staffMember = emailNhanViens[0];
+              console.log(`[Auth Init] Tìm thấy theo email! Tự động cập nhật liên kết user_id cho nhân viên: ${staffMember.MA_NV}`);
+              try {
+                await supabase
+                  .from('b_nhanvien')
+                  .update({ user_id: userId })
+                  .eq('MA_NV', staffMember.MA_NV);
+                staffMember.user_id = userId;
+              } catch (linkErr) {
+                console.warn('[Auth Init] Lỗi tự động cập nhật liên kết user_id:', linkErr);
+              }
+            }
+          }
+
+          if (!staffMember) {
+            console.warn('[Auth Guard] Không tìm thấy bản ghi nhân viên tương ứng. Đăng xuất.');
+            await supabase.auth.signOut();
+            setCurrentUser(null);
+            localStorage.removeItem('CURRENT_USER');
+            return;
+          }
+
+          const role = (staffMember.ROLE || '').trim().toUpperCase();
+          const rawStatus = (staffMember.TRANG_THAI || '').trim().toUpperCase();
+          const isActive = staffMember.active === true;
+          
+          const isApprovedAdmin = role === 'ADMIN' && isActive && 
+            (rawStatus === 'ACTIVE' || rawStatus === 'HOẠT ĐỘNG' || rawStatus === 'KÍCH HOẠT' || rawStatus === 'HOAT DONG');
+
+          const isPending = !isApprovedAdmin && (
+            !isActive || 
+            rawStatus === 'PENDING' || 
+            rawStatus === 'CHỜ DUYỆT' || 
+            rawStatus === 'CHO DUYET' || 
+            role === 'PENDING'
+          );
+
+          if (isPending) {
+            console.warn('[Auth Guard] Tài khoản chờ duyệt hoặc không hoạt động. Đăng xuất.');
+            await supabase.auth.signOut();
+            setCurrentUser(null);
+            localStorage.removeItem('CURRENT_USER');
+            return;
+          }
+
           currentUserId = userId;
           console.log('Phát hiện session hợp lệ khi khởi chạy. Thực hiện tải dữ liệu mới nhất từ Supabase Cloud...');
           syncAllDataFromSupabase(userId, email);
           setupRealtime(userId);
         } else {
-          console.log('Không phát hiện session hoạt động. Sử dụng cấu hình cục bộ hoặc dữ liệu chung...');
-          const savedUser = localStorage.getItem('CURRENT_USER');
-          if (savedUser) {
-            try {
-              const parsed = JSON.parse(savedUser);
-              if (parsed && parsed.id) {
-                const ownerId = localStorage.getItem('DB_OWNER_USER_ID') || SHARED_USER_ID;
-                syncAllDataFromSupabase(ownerId, parsed.username);
-                setupRealtime(ownerId);
-              }
-            } catch (e) {
-              console.warn("Lỗi đọc user cũ:", e);
-            }
-          } else {
-            const ownerId = localStorage.getItem('DB_OWNER_USER_ID') || SHARED_USER_ID;
-            syncAllDataFromSupabase(ownerId, '');
-            setupRealtime(ownerId);
-          }
+          console.log('Không phát hiện session hoạt động. Khôi phục trạng thái về màn hình đăng nhập...');
+          setCurrentUser(null);
+          localStorage.removeItem('CURRENT_USER');
         }
       } catch (e) {
         console.error("Lỗi trong quá trình khởi tạo Auth:", e);
@@ -1484,6 +1720,45 @@ export default function App() {
     fromDate: string;
     toDate: string;
   } | null>(null);
+
+  // Tự động chuyển đổi activeTab khi phân quyền thay đổi để tránh màn hình trắng
+  useEffect(() => {
+    if (!currentUser) return;
+    
+    // Kiểm tra xem tab hiện tại có được phép truy cập không
+    let isAllowed = false;
+    if (activeTab === 'DASHBOARD') isAllowed = hasPermission('dashboard.view');
+    else if (activeTab === 'ORDER_PARSER') isAllowed = hasPermission('ordercheck.view');
+    else if (activeTab === 'TRANSACTION_XUAT') isAllowed = hasPermission('picking_xuat.view');
+    else if (activeTab === 'TRANSACTION_NHAP') isAllowed = hasPermission('picking_nhap.view');
+    else if (activeTab === 'PRODUCT') isAllowed = hasPermission('product.view') || hasPermission('inventory.view');
+    else if (activeTab === 'MATRIX') isAllowed = hasPermission('matrix.view');
+    else if (activeTab === 'AUDIT') isAllowed = hasPermission('stocktake.view');
+    else if (activeTab === 'HISTORY') isAllowed = hasPermission('history.view');
+    else if (activeTab === 'CATEGORY') isAllowed = hasPermission('employee.view') || hasPermission('role.view') || hasPermission('product.view') || hasPermission('inventory.view');
+    else if (activeTab === 'SETTINGS') isAllowed = hasPermission('settings.view');
+
+    if (!isAllowed) {
+      // Tìm tab đầu tiên được phép truy cập
+      const allowedTabs = [
+        { id: 'DASHBOARD', isAllowed: hasPermission('dashboard.view') },
+        { id: 'ORDER_PARSER', isAllowed: hasPermission('ordercheck.view') },
+        { id: 'TRANSACTION_XUAT', isAllowed: hasPermission('picking_xuat.view') },
+        { id: 'TRANSACTION_NHAP', isAllowed: hasPermission('picking_nhap.view') },
+        { id: 'PRODUCT', isAllowed: hasPermission('product.view') || hasPermission('inventory.view') },
+        { id: 'MATRIX', isAllowed: hasPermission('matrix.view') },
+        { id: 'AUDIT', isAllowed: hasPermission('stocktake.view') },
+        { id: 'HISTORY', isAllowed: hasPermission('history.view') },
+        { id: 'CATEGORY', isAllowed: hasPermission('employee.view') || hasPermission('role.view') || hasPermission('product.view') || hasPermission('inventory.view') },
+        { id: 'SETTINGS', isAllowed: hasPermission('settings.view') }
+      ];
+      
+      const firstAllowed = allowedTabs.find(t => t.isAllowed);
+      if (firstAllowed) {
+        setActiveTab(firstAllowed.id);
+      }
+    }
+  }, [currentUser, hasPermission, activeTab]);
 
   useEffect(() => {
     if (typeof window !== 'undefined') {
@@ -1617,8 +1892,6 @@ export default function App() {
     setMobileMenuOpen(false);
   };
 
-
-
   // --- 4. CẢNH BÁO SẢN PHẨM SẮP HẾT HÀNG (DƯỚI TỒN TỐI THIỂU) ---
   const lowStockAlerts = useMemo(() => {
     return sanPhams.filter(p => p.TON_CUOI <= p.TON_TOI_THIEU);
@@ -1635,36 +1908,16 @@ export default function App() {
 
   // Trợ lý lấy User ID bảo mật chống clock-skew (F5 & JWT issued at future)
   const getUserId = async (): Promise<string | null> => {
-    const ownerId = localStorage.getItem('DB_OWNER_USER_ID');
-    if (ownerId && ownerId !== SHARED_USER_ID) return ownerId;
-
+    if (currentUser?.user_id) return currentUser.user_id;
+    if (currentUser?.id) return currentUser.id;
     const { data: { session } } = await supabase.auth.getSession();
-    if (session?.user?.id) {
-      localStorage.setItem('DB_OWNER_USER_ID', session.user.id);
-      return session.user.id;
-    }
+    if (session?.user?.id) return session.user.id;
     try {
       const { data: { user } } = await supabase.auth.getUser();
-      if (user?.id) {
-        localStorage.setItem('DB_OWNER_USER_ID', user.id);
-        return user.id;
-      }
-    } catch {}
-
-    // Dự phòng: Tìm từ danh sách nhân viên để lấy user_id của Store Owner tương ứng
-    if (currentUser) {
-      const latestStaff = nhanViens.find(n => 
-        (n.MA_NV || '').trim().toLowerCase() === (currentUser.id || '').trim().toLowerCase() ||
-        (n.TEN_DANG_NHAP || '').trim().toLowerCase() === (currentUser.username || '').trim().toLowerCase() ||
-        (n.EMAIL || '').trim().toLowerCase() === (currentUser.username || '').trim().toLowerCase()
-      );
-      if (latestStaff && latestStaff.user_id) {
-        localStorage.setItem('DB_OWNER_USER_ID', latestStaff.user_id);
-        return latestStaff.user_id;
-      }
+      return user?.id || null;
+    } catch {
+      return null;
     }
-
-    return SHARED_USER_ID;
   };
 
   const reloadRoles = async () => {
@@ -1674,26 +1927,16 @@ export default function App() {
       const { data, error } = await supabase
         .from('b_role')
         .select('*')
-        .in('user_id', [uId, '00000000-0000-0000-0000-000000000000']);
+        .eq('user_id', uId);
       if (error) throw error;
       if (data) {
-        // Deduplicate roles by ROLE_CODE, prioritizing user-specific ones
-        const roleMap: Record<string, any> = {};
-        data.forEach((item: any) => {
-          const code = (item.ROLE_CODE || '').trim().toUpperCase();
-          const isGlobal = item.user_id === '00000000-0000-0000-0000-000000000000';
-          if (!roleMap[code] || !isGlobal) {
-            roleMap[code] = item;
-          }
-        });
-        const deduplicatedData = Object.values(roleMap);
-
-        const parsedRoles = deduplicatedData.map((item: any) => ({
+        const parsedRoles = data.map((item: any) => ({
           ROLE_CODE: item.ROLE_CODE,
           TEN_ROLE: item.TEN_ROLE,
           PERMISSIONS: safeParseArray(item.PERMISSIONS)
         }));
         setRoles(parsedRoles);
+        localStorage.setItem('B_ROLE', JSON.stringify(parsedRoles));
         console.log("Đã tải lại danh sách vai trò từ Supabase thành công:", parsedRoles);
       }
     } catch (err) {
@@ -2163,6 +2406,9 @@ export default function App() {
     });
 
     const newInvoiceId = `${prefix}${String(maxNum + 1).padStart(6, '0')}`;
+    
+    // Ghi nhận hóa đơn mới tạo trong phiên hiện tại để bảo toàn trong hàng đợi đồng bộ
+    sessionCreatedInvoiceIdsRef.current.add(newInvoiceId);
     
     // Gán số phiếu chuẩn cho Header và tất cả Chi tiết
     const finalizedHeader: NhapXuat = {
@@ -3117,6 +3363,7 @@ export default function App() {
                   // Load lại danh sách logs email sau khi gửi thành công
                   const latestLogs = await fetchEmailLogs(uId);
                   setEmailLogs(latestLogs);
+                  localStorage.setItem('B_EMAILLOG', JSON.stringify(latestLogs));
                 } catch (logErr) {
                   console.warn("Lỗi ghi nhận log email khi phê duyệt:", logErr);
                 }
@@ -3173,44 +3420,25 @@ export default function App() {
   const handleSwitchUser = (email: string) => {
     const found = nhanViens.find(n => n.EMAIL === email);
     if (found) {
-      const isActive = isUserActive(found.TRANG_THAI);
-
-      if (!isActive) {
-        alert('Tài khoản này chưa được kích hoạt hoặc đã bị khóa.');
-        return;
-      }
-
-      const { permissions: combinedPermissions, roleName } = resolvePermissions(
-        found.ROLE,
-        found.PERMISSIONS,
-        roles
-      );
-
-      const hasWritePermission = combinedPermissions.some(p => p.includes('.create') || p.includes('.edit') || p.includes('.delete'));
-      const finalWriteAccess = found.WRITE_ACCESS !== false || hasWritePermission;
-
-      const switchedUser: User = {
+      const newUser: User = {
         username: found.TEN_DANG_NHAP || found.EMAIL || found.HO_TEN,
         fullName: found.HO_TEN,
-        role: found.ROLE,
-        ROLE: found.ROLE,
-        roleName: roleName,
-        active: isActive,
+        role: normalizeDbRole(found.ROLE || 'NHAN_VIEN'),
         branch: found.CHI_NHANH || 'Kho Trung Tâm',
-        writeAccess: finalWriteAccess,
-        WRITE_ACCESS: finalWriteAccess,
+        writeAccess: found.WRITE_ACCESS !== false,
+        WRITE_ACCESS: found.WRITE_ACCESS !== false,
         id: found.MA_NV,
-        email: found.EMAIL,
-        ROLES: found.ROLES || [found.ROLE],
-        permissions: combinedPermissions,
-        TRANG_THAI: found.TRANG_THAI
+        user_id: found.user_id,
+        ROLES: found.ROLES || []
       };
-
-      setCurrentUser(switchedUser);
-      localStorage.setItem('CURRENT_USER', JSON.stringify(switchedUser));
+      setCurrentUser(newUser);
+      localStorage.setItem('CURRENT_USER', JSON.stringify(newUser));
+      if (found.user_id) {
+        localStorage.setItem('DB_OWNER_USER_ID', found.user_id);
+      }
       
       // Tự động chuyển tab về trang sản phẩm/lịch sử nếu tab hiện tại bị khóa do phân quyền của vai trò mới
-      if (!combinedPermissions.includes('dashboard.view')) {
+      if (found.ROLE === 'NHAN_VIEN') {
         setActiveTab('TRANSACTION_XUAT');
       } else {
         setActiveTab('DASHBOARD');
@@ -3233,17 +3461,18 @@ export default function App() {
           onLoginSuccess={(user) => {
             setCurrentUser(user);
             localStorage.setItem('CURRENT_USER', JSON.stringify(user));
+            if (user.user_id) {
+              localStorage.setItem('DB_OWNER_USER_ID', user.user_id);
+            }
 
             // ĐỒNG BỘ DỮ LIỆU LẬP TỨC KHI ĐĂNG NHẬP THÀNH CÔNG!
-            const ownerId = localStorage.getItem('DB_OWNER_USER_ID') || SHARED_USER_ID;
-            syncAllDataFromSupabase(ownerId, user.username);
-            setupRealtimeRef.current?.(ownerId);
+            syncAllDataFromSupabase(user.user_id || user.id || '00000000-0000-0000-0000-000000000000', user.username);
             
-            // Tự động chuyển hướng tab phù hợp dựa trên quyền dashboard.view
-            if (user.permissions && user.permissions.includes('dashboard.view')) {
-              setActiveTab('DASHBOARD');
-            } else {
+            // Tự động chuyển hướng tab phù hợp
+            if (user.role === 'NHAN_VIEN') {
               setActiveTab('TRANSACTION_XUAT');
+            } else {
+              setActiveTab('DASHBOARD');
             }
           }} 
         />
@@ -3370,7 +3599,7 @@ export default function App() {
                 <div className="min-w-0 flex-1">
                   <p className={`text-xs font-bold truncate ${sidebarStyle.userText}`}>{currentUser.fullName}</p>
                   <p className={`text-[9px] font-mono font-bold uppercase tracking-wider truncate ${sidebarStyle.userSub}`}>
-                    {currentUser.roleName || currentUser.role || 'Nhân Viên'} | {currentUser.branch}
+                    {currentUser.role === 'ADMIN' ? 'Chủ Cửa Hàng' : currentUser.role === 'KHO' ? 'Thủ Kho' : 'Nhân Viên'} | {currentUser.branch}
                   </p>
                 </div>
               )}
@@ -3410,7 +3639,7 @@ export default function App() {
         <nav className="flex-1 px-3 space-y-1 overflow-y-auto">
           
           {/* TAB 0: KIỂM TRA ĐƠN TIN NHẮN */}
-          {(hasPermission('export.create') || hasPermission('export.view')) && (
+          {hasPermission('ordercheck.view') && (
             <button
               onClick={() => selectTabOnMobile('ORDER_PARSER')}
               className={`w-full py-2.5 px-3.5 text-xs font-bold rounded-xl transition-all flex items-center gap-2.5 cursor-pointer ${sidebarCollapsed ? 'justify-center px-0' : ''} ${
@@ -3424,7 +3653,7 @@ export default function App() {
           )}
 
           {/* TAB 1: LẬP PHIẾU XUẤT */}
-          {hasPermission('export.create') && (
+          {hasPermission('picking_xuat.view') && (
             <button
               onClick={() => selectTabOnMobile('TRANSACTION_XUAT')}
               className={`w-full py-2.5 px-3.5 text-xs font-bold rounded-xl transition-all flex items-center gap-2.5 cursor-pointer ${sidebarCollapsed ? 'justify-center px-0' : ''} ${
@@ -3438,7 +3667,7 @@ export default function App() {
           )}
 
           {/* TAB 2: LẬP PHIẾU NHẬP */}
-          {hasPermission('import.create') && (
+          {hasPermission('picking_nhap.view') && (
             <button
               onClick={() => selectTabOnMobile('TRANSACTION_NHAP')}
               className={`w-full py-2.5 px-3.5 text-xs font-bold rounded-xl transition-all flex items-center gap-2.5 cursor-pointer ${sidebarCollapsed ? 'justify-center px-0' : ''} ${
@@ -3466,7 +3695,7 @@ export default function App() {
           )}
 
           {/* TAB 4: QUẢN LÝ SẢN PHẨM */}
-          {hasPermission('product.view') && (
+          {(hasPermission('product.view') || hasPermission('inventory.view')) && (
             <button
               onClick={() => selectTabOnMobile('PRODUCT')}
               className={`w-full py-2.5 px-3.5 text-xs font-bold rounded-xl transition-all flex items-center gap-2.5 cursor-pointer ${sidebarCollapsed ? 'justify-center px-0' : ''} ${
@@ -3480,7 +3709,7 @@ export default function App() {
           )}
 
           {/* TAB 4B: BẢNG ĐỘ */}
-          {hasPermission('product.view') && (
+          {hasPermission('matrix.view') && (
             <button
               onClick={() => selectTabOnMobile('MATRIX')}
               className={`w-full py-2.5 px-3.5 text-xs font-bold rounded-xl transition-all flex items-center gap-2.5 cursor-pointer ${sidebarCollapsed ? 'justify-center px-0' : ''} ${
@@ -3494,7 +3723,7 @@ export default function App() {
           )}
 
           {/* TAB 5: KIỂM KHO */}
-          {hasPermission('inventory.view') && (
+          {hasPermission('stocktake.view') && (
             <button
               onClick={() => selectTabOnMobile('AUDIT')}
               className={`w-full py-2.5 px-3.5 text-xs font-bold rounded-xl transition-all flex items-center gap-2.5 cursor-pointer ${sidebarCollapsed ? 'justify-center px-0' : ''} ${
@@ -3508,7 +3737,7 @@ export default function App() {
           )}
 
           {/* TAB 6: LỊCH SỬ XUẤT NHẬP */}
-          {(hasPermission('import.view') || hasPermission('export.view')) && (
+          {hasPermission('history.view') && (
             <button
               onClick={() => selectTabOnMobile('HISTORY')}
               className={`w-full py-2.5 px-3.5 text-xs font-bold rounded-xl transition-all flex items-center gap-2.5 cursor-pointer ${sidebarCollapsed ? 'justify-center px-0' : ''} ${
@@ -3522,7 +3751,7 @@ export default function App() {
           )}
 
           {/* TAB 7: CÀI ĐẶT DANH MỤC */}
-          {(hasPermission('user.view') || hasPermission('role.view') || hasPermission('product.edit') || hasPermission('product.create')) && (
+          {(hasPermission('employee.view') || hasPermission('role.view') || hasPermission('product.view') || hasPermission('inventory.view')) && (
             <button
               onClick={() => selectTabOnMobile('CATEGORY')}
               className={`w-full py-2.5 px-3.5 text-xs font-bold rounded-xl transition-all flex items-center gap-2.5 cursor-pointer ${sidebarCollapsed ? 'justify-center px-0' : ''} ${
@@ -3536,20 +3765,22 @@ export default function App() {
           )}
 
           {/* TAB 8: CÀI ĐẶT GIAO DIỆN */}
-          <button
-            onClick={() => selectTabOnMobile('SETTINGS')}
-            className={`w-full py-2.5 px-3.5 text-xs font-bold rounded-xl transition-all flex items-center gap-2.5 cursor-pointer ${sidebarCollapsed ? 'justify-center px-0' : ''} ${
-              activeTab === 'SETTINGS' ? activeButtonClass : sidebarStyle.navDefault
-            }`}
-            title={sidebarCollapsed ? "Cài Đặt Giao Diện" : undefined}
-          >
-            <Palette className="w-4 h-4 shrink-0 text-fuchsia-400" /> 
-            {!sidebarCollapsed && <span>Cài Đặt Giao Diện</span>}
-          </button>
+          {hasPermission('settings.view') && (
+            <button
+              onClick={() => selectTabOnMobile('SETTINGS')}
+              className={`w-full py-2.5 px-3.5 text-xs font-bold rounded-xl transition-all flex items-center gap-2.5 cursor-pointer ${sidebarCollapsed ? 'justify-center px-0' : ''} ${
+                activeTab === 'SETTINGS' ? activeButtonClass : sidebarStyle.navDefault
+              }`}
+              title={sidebarCollapsed ? "Cài Đặt Giao Diện" : undefined}
+            >
+              <Palette className="w-4 h-4 shrink-0 text-fuchsia-400" /> 
+              {!sidebarCollapsed && <span>Cài Đặt Giao Diện</span>}
+            </button>
+          )}
         </nav>
 
-        {/* PHÂN VÙNG ĐỔI VAI NHANH - CHỈ HIỂN THỊ CHO TÀI KHOẢN CÓ QUYỀN CHỈNH SỬA VAI TRÒ KHI CHƯA COLLAPSED */}
-        {hasPermission('role.edit') && !sidebarCollapsed && (
+        {/* PHÂN VÙNG ĐỔI VAI NHANH - CHỈ HIỂN THỊ CHO TÀI KHOẢN ADMIN KHI CHƯA COLLAPSED */}
+        {currentUser.role === 'ADMIN' && !sidebarCollapsed && (
           <div className={`p-4 mx-3 my-2 rounded-xl border shrink-0 space-y-3.5 ${sidebarStyle.switchBox}`}>
             <div>
               <div className={`text-[9px] font-bold uppercase tracking-wider mb-1.5 ${sidebarStyle.switchText}`}>Mô phỏng đổi vai nhanh:</div>
@@ -3696,7 +3927,7 @@ export default function App() {
                     <p className="text-xs font-semibold uppercase tracking-wider opacity-75">Đang tải phân hệ...</p>
                   </div>
                 }>
-                  {activeTab === 'ORDER_PARSER' && (hasPermission('export.create') || hasPermission('export.view')) && (
+                  {activeTab === 'ORDER_PARSER' && hasPermission('ordercheck.view') && (
                   <OrderParser
                     sanPhams={sanPhams}
                     brandList={thuongHieus}
@@ -3715,9 +3946,10 @@ export default function App() {
                   />
                 )}
 
-                {activeTab === 'TRANSACTION_NHAP' && hasPermission('import.create') && (
+                {activeTab === 'TRANSACTION_NHAP' && hasPermission('picking_nhap.view') && (
                   <TransactionForm
                     currentUser={currentUser}
+                    hasPermission={hasPermission}
                     sanPhams={sanPhams}
                     chiNhanhs={listBranchNames}
                     thuongHieus={listBrandNames}
@@ -3736,9 +3968,10 @@ export default function App() {
                   />
                 )}
 
-                {activeTab === 'TRANSACTION_XUAT' && hasPermission('export.create') && (
+                {activeTab === 'TRANSACTION_XUAT' && hasPermission('picking_xuat.view') && (
                   <TransactionForm
                     currentUser={currentUser}
+                    hasPermission={hasPermission}
                     sanPhams={sanPhams}
                     chiNhanhs={listBranchNames}
                     thuongHieus={listBrandNames}
@@ -3764,6 +3997,7 @@ export default function App() {
                     nhapXuatCTs={nhapXuatCTs}
                     chiNhanhs={listBranchNames}
                     currentUser={currentUser}
+                    hasPermission={hasPermission}
                     onQuickRestock={(sku) => {
                       setPrefilledSku(sku);
                       setActiveTab('TRANSACTION_NHAP'); // Lập phiếu nhập kho trực tiếp
@@ -3778,9 +4012,10 @@ export default function App() {
                   />
                 )}
 
-                {activeTab === 'PRODUCT' && hasPermission('product.view') && (
+                {activeTab === 'PRODUCT' && (hasPermission('product.view') || hasPermission('inventory.view')) && (
                   <ProductManagement 
                     currentUser={currentUser}
+                    hasPermission={hasPermission}
                     sanPhams={sanPhams}
                     onAddProduct={handleAddProduct}
                     onUpdateProduct={handleUpdateProduct}
@@ -3789,9 +4024,10 @@ export default function App() {
                   />
                 )}
 
-                {activeTab === 'MATRIX' && hasPermission('product.view') && (
+                {activeTab === 'MATRIX' && hasPermission('matrix.view') && (
                   <DiopterMatrix 
                     currentUser={currentUser}
+                    hasPermission={hasPermission}
                     sanPhams={sanPhams}
                     nhapXuats={nhapXuats}
                     nhapXuatCTs={nhapXuatCTs}
@@ -3803,9 +4039,10 @@ export default function App() {
                   />
                 )}
 
-                {activeTab === 'AUDIT' && hasPermission('inventory.view') && (
+                {activeTab === 'AUDIT' && hasPermission('stocktake.view') && (
                   <InventoryAudit 
                     currentUser={currentUser}
+                    hasPermission={hasPermission}
                     sanPhams={sanPhams}
                     kiemKhos={kiemKhos}
                     onSaveAudit={handleSaveAudit}
@@ -3815,15 +4052,16 @@ export default function App() {
                   />
                 )}
 
-                {activeTab === 'HISTORY' && (hasPermission('import.view') || hasPermission('export.view')) && (
+                {activeTab === 'HISTORY' && hasPermission('history.view') && (
                   <TransactionHistory 
                     currentUser={currentUser}
+                    hasPermission={hasPermission}
                     sanPhams={sanPhams}
                     nhapXuats={
-                      // Nếu không có quyền view dashboard thì chỉ được xem lịch sử phiếu của chính mình tạo ra
-                      !hasPermission('dashboard.view')
-                        ? nhapXuats.filter(h => h.NGUOI_TAO === currentUser.username)
-                        : nhapXuats
+                      // Nhân viên có quyền history.read_all sẽ xem toàn bộ, nếu không thì chỉ xem phiếu do chính mình tạo
+                      hasPermission('history.read_all')
+                        ? nhapXuats
+                        : nhapXuats.filter(h => h.NGUOI_TAO === currentUser.username)
                     }
                     nhapXuatCTs={nhapXuatCTs}
                     kiemKhos={kiemKhos}
@@ -3838,7 +4076,7 @@ export default function App() {
                   />
                 )}
 
-                {activeTab === 'CATEGORY' && (hasPermission('user.view') || hasPermission('role.view') || hasPermission('product.edit') || hasPermission('product.create')) && (
+                {activeTab === 'CATEGORY' && (hasPermission('employee.view') || hasPermission('role.view') || hasPermission('product.view') || hasPermission('inventory.view')) && (
                   <CategoryManagement 
                     currentUser={currentUser}
                     hasPermission={hasPermission}

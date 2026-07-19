@@ -89,6 +89,7 @@ interface DashboardProps {
   onQuickRestock?: (sku: string) => void;
   onTriggerToast?: (message: string, type?: 'success' | 'warning' | 'error') => void;
   currentUser?: any;
+  hasPermission?: (permissionCode: string) => boolean;
   onDrillDown?: (filters: {
     historyTypeFilter: 'Tất cả' | 'NHẬP' | 'XUẤT' | 'KIỂM KHO' | 'NHẬP_KIEM_KHO' | 'XUAT_KIEM_KHO';
     branchFilter: string;
@@ -237,9 +238,15 @@ export default function Dashboard({
   onQuickRestock,
   onTriggerToast,
   currentUser,
+  hasPermission,
   onDrillDown
 }: DashboardProps) {
   monitor.trackRender('Dashboard');
+
+  const hasPerm = (p: string) => {
+    if (hasPermission) return hasPermission(p);
+    return true;
+  };
   const [dashboardSubTab, setDashboardSubTab] = useState<'ANALYTICS' | 'TEMPLATES'>('ANALYTICS');
   const [isMounted, setIsMounted] = useState<boolean>(false);
   
@@ -2779,8 +2786,9 @@ export default function Dashboard({
           <div className="space-y-3.5">
             <button
               onClick={() => handleExportData('EXCEL')}
-              disabled={isExporting}
-              className="w-full flex items-center justify-center gap-2.5 py-3 px-4 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 rounded-xl text-xs font-bold transition-all cursor-pointer disabled:opacity-50"
+              disabled={isExporting || !hasPerm('dashboard.export')}
+              className="w-full flex items-center justify-center gap-2.5 py-3 px-4 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 rounded-xl text-xs font-bold transition-all cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+              title={!hasPerm('dashboard.export') ? 'Bạn không có quyền xuất dữ liệu' : ''}
             >
               <FileSpreadsheet className="w-4.5 h-4.5" />
               {isExporting ? 'Đang trích xuất...' : 'Xuất Báo Cáo Excel (CSV)'}
@@ -2788,8 +2796,9 @@ export default function Dashboard({
 
             <button
               onClick={() => handleExportData('PDF')}
-              disabled={isExporting}
-              className="w-full flex items-center justify-center gap-2.5 py-3 px-4 bg-rose-50 text-rose-700 hover:bg-rose-100 rounded-xl text-xs font-bold transition-all cursor-pointer disabled:opacity-50"
+              disabled={isExporting || !hasPerm('dashboard.export')}
+              className="w-full flex items-center justify-center gap-2.5 py-3 px-4 bg-rose-50 text-rose-700 hover:bg-rose-100 rounded-xl text-xs font-bold transition-all cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+              title={!hasPerm('dashboard.export') ? 'Bạn không có quyền xuất dữ liệu' : ''}
             >
               <FileText className="w-4.5 h-4.5" />
               In Bản Báo Cáo PDF

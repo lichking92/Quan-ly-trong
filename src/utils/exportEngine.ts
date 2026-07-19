@@ -7,7 +7,7 @@ import { SanPham, NhapXuat, NhapXuatCT } from '../types';
 import { supabase, SUPABASE_STORAGE_BUCKET } from '../supabaseClient';
 import { getVietnamDateString } from '../data/mockData';
 import { compareChietXuat } from './chietXuatHelper';
-import { memoryCache } from '../supabaseSync';
+import { inMemoryCache } from '../supabaseSync';
 
 // Lazy loading helpers for ExcelJS and PDFDocument to minimize RAM/CPU and bundle overhead
 let cachedExcelJS: any = null;
@@ -1091,7 +1091,7 @@ export function getFilteredSourceData({
       });
     }
     case 'KIEM_KHO': {
-      const audits: any[] = memoryCache['B_KIEMKHO'] || [];
+      const audits: any[] = inMemoryCache['B_KIEMKHO'] || [];
       const filteredAudits = audits.filter(a => {
         const matchBranch = branch === 'Tất cả' || a.KHO === branch || a.CHI_NHANH === branch;
         const matchDate = a.THOI_DIEM && a.THOI_DIEM.substring(0, 10) >= startDate && a.THOI_DIEM.substring(0, 10) <= endDate;

@@ -34,6 +34,7 @@ interface DiopterMatrixProps {
   thuongHieus: string[];
   brandList?: ThuongHieu[];
   currentUser: any;
+  hasPermission?: (permissionCode: string) => boolean;
   onUpdateMatrixCell?: (
     sku: string,
     newTonToiThieu: number,
@@ -57,8 +58,13 @@ export default function DiopterMatrix({
   thuongHieus = [],
   brandList = [],
   currentUser,
+  hasPermission,
   onUpdateMatrixCell
 }: DiopterMatrixProps) {
+  const hasPerm = (p: string) => {
+    if (hasPermission) return hasPermission(p);
+    return currentUser?.writeAccess !== false;
+  };
   // --- 1. QUẢN LÝ BỘ LỌC CHUYÊN BIỆT ---
   const [selectedBrand, setSelectedBrand] = useState<string>(() => {
     return thuongHieus.length > 0 ? thuongHieus[0] : 'Blick';
@@ -109,15 +115,8 @@ export default function DiopterMatrix({
 
   // Đảm bảo chiết suất được chọn luôn hợp lệ khi đổi thương hiệu
   React.useEffect(() => {
-    if (availableChietXuats.length > 0) {
-      const matched = availableChietXuats.find(cx => normalizeChietXuat(cx) === normalizeChietXuat(selectedChietXuat));
-      if (matched) {
-        if (selectedChietXuat !== matched) {
-          setSelectedChietXuat(matched);
-        }
-      } else {
-        setSelectedChietXuat(availableChietXuats[0]);
-      }
+    if (availableChietXuats.length > 0 && !availableChietXuats.includes(selectedChietXuat)) {
+      setSelectedChietXuat(availableChietXuats[0]);
     }
   }, [availableChietXuats, selectedChietXuat]);
 
@@ -223,8 +222,7 @@ export default function DiopterMatrix({
     sanPhams.forEach(p => {
       const matchBrand = p.THUONG_HIEU.trim().toLowerCase() === selectedBrand.trim().toLowerCase();
       const matchFeature = p.TINH_NANG.trim().toLowerCase() === selectedFeature.trim().toLowerCase();
-      const productRawIndex = p.CHIET_XUAT || (p as any).CHIET_SUAT || (p as any).chiet_suat || (p as any).refractiveIndex || '';
-      const normalizedProductIdx = normalizeChietXuat(productRawIndex);
+      const normalizedProductIdx = normalizeChietXuat(p.CHIET_XUAT);
       const matchChietXuat = normalizedProductIdx === normalizedSelected;
       
       // Logging debug as requested to track down any misaligned values
@@ -232,7 +230,7 @@ export default function DiopterMatrix({
         console.log({
           selectedIndex: selectedChietXuat,
           normalizedSelectedIndex: normalizedSelected,
-          productIndex: productRawIndex,
+          productIndex: p.CHIET_XUAT,
           normalizedProductIndex: normalizedProductIdx,
           matched: matchChietXuat,
           sku: p.SKU
@@ -804,7 +802,7 @@ export default function DiopterMatrix({
                   </div>
 
                   {/* Ô nhập chỉnh sửa nếu có quyền */}
-                  {selectedCellDetail.exists && currentUser.writeAccess !== false ? (
+                  {selectedCellDetail.exists && hasPerm('product.edit') ? (
                     <div className="space-y-3.5 pt-1">
                       <div className="grid grid-cols-2 gap-3">
                         <div className="space-y-1">
@@ -875,7 +873,7 @@ export default function DiopterMatrix({
                 >
                   Đóng
                 </button>
-                {selectedCellDetail.exists && currentUser.writeAccess !== false && (
+                {selectedCellDetail.exists && hasPerm('product.edit') && (
                   <button
                     type="button"
                     onClick={handleSaveCellUpdate}

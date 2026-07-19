@@ -71,7 +71,9 @@ export const syncTimeWithSupabase = async () => {
 };
 
 // Chạy đồng bộ thời gian ngay lập tức khi ứng dụng khởi chạy
-syncTimeWithSupabase();
+if (SUPABASE_URL) {
+  syncTimeWithSupabase();
+}
 
 // -------------------------------------------------------------------------
 // THIẾT LẬP INTERCEPTOR CHO FETCH ĐỂ PHÁT HIỆN LỖI 401 (UNAUTHORIZED)
@@ -135,10 +137,54 @@ const customFetch = async function(input, init) {
   }
 };
 
-// Khởi tạo Supabase client / Initialize Supabase client
-export const supabase = createClient(SUPABASE_URL, SUPABASE_PUBLIC_KEY, {
-  global: {
-    fetch: customFetch
+// Hàm phụ trợ tạo Proxy thay thế an toàn cho Supabase Client khi cấu hình bị trống/lỗi
+const createDummyProxy = () => {
+  const dummyFn = () => {};
+  return new Proxy(dummyFn, {
+    get(target, prop) {
+      if (prop === 'auth') {
+        return {
+          onAuthStateChange: () => ({ data: { subscription: { unsubscribe: () => {} } } }),
+          getSession: async () => ({ data: { session: null }, error: null }),
+          getUser: async () => ({ data: { user: null }, error: null }),
+          signInWithPassword: async () => ({ data: {}, error: new Error("Supabase is not configured or in offline mode") }),
+          signOut: async () => ({ error: null }),
+        };
+      }
+      if (prop === 'storage') {
+        return {
+          from: () => ({
+            upload: async () => ({ data: null, error: new Error("Supabase is not configured or in offline mode") }),
+            getPublicUrl: () => ({ data: { publicUrl: "" } }),
+            list: async () => ({ data: [], error: null }),
+            remove: async () => ({ data: null, error: null }),
+          })
+        };
+      }
+      return createDummyProxy();
+    },
+    apply(target, thisArg, argumentsList) {
+      return createDummyProxy();
+    }
+  });
+};
+
+// Khởi tạo Supabase client / Initialize Supabase client an toàn
+let tempSupabase;
+if (!SUPABASE_URL || !SUPABASE_PUBLIC_KEY) {
+  tempSupabase = createDummyProxy();
+} else {
+  try {
+    tempSupabase = createClient(SUPABASE_URL, SUPABASE_PUBLIC_KEY, {
+      global: {
+        fetch: customFetch
+      }
+    });
+  } catch (err) {
+    console.error("❌ Lỗi khi khởi tạo Supabase Client:", err);
+    tempSupabase = createDummyProxy();
   }
-});
+}
+
+export const supabase = tempSupabase;
 

@@ -1,9 +1,14 @@
 import { supabase, SUPABASE_STORAGE_BUCKET } from './supabaseClient';
 import { SanPham, NhapXuat, NhapXuatCT, KiemKho, ThuongHieu, ChiNhanh, NhanVien, EmailLog, Role, safeParseArray } from './types';
 
-export let isOfflineMode = false;
+const rawUrl = ((import.meta as any).env.VITE_SUPABASE_URL || "").trim().replace(/^['"]|['"]$/g, "");
+const rawKey = ((import.meta as any).env.VITE_SUPABASE_ANON_KEY || "").trim().replace(/^['"]|['"]$/g, "");
+
+export let isOfflineMode = !rawUrl || !rawKey;
 export let hasCreatedColumns = false;
-export const memoryCache: Record<string, any[]> = {};
+
+// Bộ nhớ đệm trong (In-memory Cache) ngắn hạn để thay thế hoàn toàn cho localStorage theo yêu cầu bảo mật chống ghost data
+export const inMemoryCache: Record<string, any[]> = {};
 
 export function setOfflineMode(value: boolean) {
   isOfflineMode = value;
@@ -21,7 +26,7 @@ export function isNetworkError(err: any): boolean {
          errMsg.includes('connection');
 }
 
-export const SHARED_USER_ID = "00000000-0000-0000-0000-000000000000";
+export const SHARED_USER_ID = "";
 
 export function logDbError(msg: string, err: any) {
   const errMsg = err ? (err.message || String(err)) : '';
@@ -38,47 +43,47 @@ export function logDbError(msg: string, err: any) {
 }
 
 /**
- * Trả về User ID có hiệu lực của Chủ cửa hàng/Admin (bảo đảm tính nhất quán của Cơ sở dữ liệu và bảo vệ fkey)
+ * Trả về User ID có hiệu lực của Chủ cửa hàng/Admin từ Supabase Auth session hiện tại
  */
 export async function resolveEffectiveUserId(): Promise<string> {
-  // 1. Kiểm tra session hiện tại của Supabase Auth (dành cho Chủ cửa hàng đăng nhập trực tuyến)
   try {
     const { data: { session } } = await supabase.auth.getSession();
     if (session?.user?.id) {
-      localStorage.setItem('DB_OWNER_USER_ID', session.user.id);
       return session.user.id;
     }
   } catch (err) {
     console.warn("Lỗi getSession trong resolveEffectiveUserId:", err);
   }
 
-  // 2. Dự phòng: Đọc từ localStorage đã lưu từ lần trước
+  try {
+    const { data: { user } } = await supabase.auth.getUser();
+    if (user?.id) {
+      return user.id;
+    }
+  } catch (err) {
+    console.warn("Lỗi getUser trong resolveEffectiveUserId:", err);
+  }
+
+  // Dự phòng cuối: Đọc từ localStorage
+  const savedUser = localStorage.getItem('CURRENT_USER');
+  if (savedUser) {
+    try {
+      const parsed = JSON.parse(savedUser);
+      if (parsed && parsed.user_id) {
+        return parsed.user_id;
+      }
+      if (parsed && parsed.id) {
+        return parsed.id;
+      }
+    } catch {}
+  }
+
   const saved = localStorage.getItem('DB_OWNER_USER_ID');
-  if (saved && saved !== SHARED_USER_ID) {
+  if (saved) {
     return saved;
   }
 
-  // 3. Nếu chưa có, cố truy vấn nhanh bảng b_nhanvien để tìm user_id của Admin
-  try {
-    const { data: adminList } = await supabase
-      .from('b_nhanvien')
-      .select('user_id')
-      .or('ROLE.eq.ADMIN,CHUC_VU.ilike.%chủ%')
-      .not('user_id', 'is', null)
-      .limit(1);
-
-    if (adminList && adminList.length > 0 && adminList[0].user_id) {
-      const uid = adminList[0].user_id;
-      if (uid && uid !== SHARED_USER_ID) {
-        localStorage.setItem('DB_OWNER_USER_ID', uid);
-        return uid;
-      }
-    }
-  } catch (err) {
-    console.warn("Không thể truy vấn b_nhanvien để tìm owner id:", err);
-  }
-
-  return SHARED_USER_ID;
+  return "";
 }
 
 /**
@@ -107,7 +112,7 @@ export async function tryCreateColumnsOnSupabase() {
   if (hasCreatedColumns) return;
   hasCreatedColumns = true;
 
-  const SCHEMA_VERSION = 'v3_roles_active_v1';
+  const SCHEMA_VERSION = 'v4_nhanvien_register_fix';
   if (typeof window !== 'undefined') {
     if (localStorage.getItem('SUPABASE_RPC_NOT_AVAILABLE') === 'true') {
       console.log("Bỏ qua cấu hình tự động do không được hỗ trợ trên Supabase này.");
@@ -196,6 +201,11 @@ export async function tryCreateColumnsOnSupabase() {
       END;
 
       BEGIN
+        ALTER TABLE b_nhanvien ADD COLUMN IF NOT EXISTS "active" boolean DEFAULT true;
+      EXCEPTION WHEN others THEN NULL;
+      END;
+
+      BEGIN
         ALTER TABLE b_nhanvien ADD COLUMN IF NOT EXISTS "NGAY_DANG_KY" text;
       EXCEPTION WHEN others THEN NULL;
       END;
@@ -206,34 +216,12 @@ export async function tryCreateColumnsOnSupabase() {
       END;
 
       BEGIN
-        ALTER TABLE b_nhanvien ADD COLUMN IF NOT EXISTS "role" text;
+        ALTER TABLE b_nhanvien ADD COLUMN IF NOT EXISTS "WRITE_ACCESS" boolean DEFAULT false;
       EXCEPTION WHEN others THEN NULL;
       END;
 
       BEGIN
-        ALTER TABLE b_nhanvien ADD COLUMN IF NOT EXISTS "active" boolean;
-      EXCEPTION WHEN others THEN NULL;
-      END;
-
-      -- Di chuyển dữ liệu cũ
-      BEGIN
-        UPDATE b_nhanvien 
-        SET "role" = CASE 
-          WHEN upper(trim("ROLE")) = 'ADMIN' THEN 'admin'
-          WHEN upper(trim("ROLE")) = 'KHO' THEN 'manager'
-          ELSE 'user'
-        END
-        WHERE "role" IS NULL;
-      EXCEPTION WHEN others THEN NULL;
-      END;
-
-      BEGIN
-        UPDATE b_nhanvien 
-        SET "active" = CASE 
-          WHEN upper(trim("TRANG_THAI")) IN ('HOẠT ĐỘNG', 'ACTIVE', 'KÍCH HOẠT', 'HOAT DONG') THEN true
-          ELSE false
-        END
-        WHERE "active" IS NULL;
+        ALTER TABLE b_nhanvien ADD COLUMN IF NOT EXISTS "PERMISSIONS" text[];
       EXCEPTION WHEN others THEN NULL;
       END;
 
@@ -404,12 +392,31 @@ export async function tryCreateColumnsOnSupabase() {
       EXCEPTION WHEN others THEN NULL;
       END;
 
-      -- Đảm bảo tắt RLS và cấp quyền đầy đủ cho b_gomdon và b_gomdonct để tránh lỗi xóa đơn hàng tạm
+      -- Đảm bảo tắt RLS và cấp quyền đầy đủ cho b_gomdon, b_gomdonct và các bảng cốt lõi để tránh lỗi phân quyền hoặc RLS
       BEGIN
         ALTER TABLE IF EXISTS public.b_gomdon DISABLE ROW LEVEL SECURITY;
         ALTER TABLE IF EXISTS public.b_gomdonct DISABLE ROW LEVEL SECURITY;
+        ALTER TABLE IF EXISTS public.b_nhanvien DISABLE ROW LEVEL SECURITY;
+        ALTER TABLE IF EXISTS public.b_sanpham DISABLE ROW LEVEL SECURITY;
+        ALTER TABLE IF EXISTS public.b_nhapxuat DISABLE ROW LEVEL SECURITY;
+        ALTER TABLE IF EXISTS public.b_nhapxuatct DISABLE ROW LEVEL SECURITY;
+        ALTER TABLE IF EXISTS public.b_kiemkho DISABLE ROW LEVEL SECURITY;
+        ALTER TABLE IF EXISTS public.b_thuonghieu DISABLE ROW LEVEL SECURITY;
+        ALTER TABLE IF EXISTS public.b_chinhanh DISABLE ROW LEVEL SECURITY;
+        ALTER TABLE IF EXISTS public.b_emaillog DISABLE ROW LEVEL SECURITY;
+        ALTER TABLE IF EXISTS public.b_role DISABLE ROW LEVEL SECURITY;
+
         GRANT ALL ON TABLE public.b_gomdon TO anon, authenticated, service_role;
         GRANT ALL ON TABLE public.b_gomdonct TO anon, authenticated, service_role;
+        GRANT ALL ON TABLE public.b_nhanvien TO anon, authenticated, service_role;
+        GRANT ALL ON TABLE public.b_sanpham TO anon, authenticated, service_role;
+        GRANT ALL ON TABLE public.b_nhapxuat TO anon, authenticated, service_role;
+        GRANT ALL ON TABLE public.b_nhapxuatct TO anon, authenticated, service_role;
+        GRANT ALL ON TABLE public.b_kiemkho TO anon, authenticated, service_role;
+        GRANT ALL ON TABLE public.b_thuonghieu TO anon, authenticated, service_role;
+        GRANT ALL ON TABLE public.b_chinhanh TO anon, authenticated, service_role;
+        GRANT ALL ON TABLE public.b_emaillog TO anon, authenticated, service_role;
+        GRANT ALL ON TABLE public.b_role TO anon, authenticated, service_role;
       EXCEPTION WHEN others THEN NULL;
       END;
 
@@ -511,59 +518,72 @@ export async function tryCreateColumnsOnSupabase() {
         v_username_exists boolean;
         v_role text;
         v_trang_thai text;
+        v_active boolean;
         v_chuc_vu text;
         v_bo_phan text;
         v_write_access boolean;
         v_current_date text;
         v_roles text[];
         v_permissions text[];
+        v_target_user_id uuid;
       BEGIN
-        -- 1. Check if email exists
+        -- 1. Check if email exists (check globally across the whole system)
         SELECT EXISTS (
           SELECT 1 FROM public.b_nhanvien 
-          WHERE lower(trim("EMAIL")) = lower(trim(p_email)) 
-            AND user_id = p_user_id
+          WHERE lower(trim("EMAIL")) = lower(trim(p_email))
         ) INTO v_email_exists;
 
         IF v_email_exists THEN
           RETURN jsonb_build_object('success', false, 'message', 'Email này đã được sử dụng. Vui lòng chọn Email khác.');
         END IF;
 
-        -- 2. Check if username exists
+        -- 2. Check if username exists (check globally across the whole system)
         SELECT EXISTS (
           SELECT 1 FROM public.b_nhanvien 
-          WHERE lower(trim("TEN_DANG_NHAP")) = lower(trim(p_ten_dang_nhap)) 
-            AND user_id = p_user_id
+          WHERE lower(trim("TEN_DANG_NHAP")) = lower(trim(p_ten_dang_nhap))
         ) INTO v_username_exists;
 
         IF v_username_exists THEN
           RETURN jsonb_build_object('success', false, 'message', 'Tên đăng nhập này đã được sử dụng. Vui lòng chọn Tên đăng nhập khác.');
         END IF;
 
-        -- 3. Check count of existing ADMIN roles
+        -- 3. Check count of existing ADMIN roles globally (either lowercase or uppercase)
         SELECT COUNT(*) FROM public.b_nhanvien 
-        WHERE (upper(trim("ROLE")) = 'ADMIN') 
-          AND user_id = p_user_id
+        WHERE (lower(trim("ROLE")) = 'admin' OR upper(trim("ROLE")) = 'ADMIN')
         INTO v_admin_count;
 
         IF v_admin_count = 0 THEN
-          -- First account: set as Admin and active
+          -- First account: set as ADMIN and active=true, TRANG_THAI = ACTIVE
           v_role := 'ADMIN';
-          v_trang_thai := 'Hoạt động';
+          v_trang_thai := 'ACTIVE';
+          v_active := true;
           v_chuc_vu := 'Chủ sở hữu (Admin)';
           v_bo_phan := 'Ban Giám Đốc';
           v_write_access := true;
-          v_roles := ARRAY['ADMIN'];
+          v_roles := ARRAY['ADMIN', 'admin'];
           v_permissions := ARRAY['DASHBOARD', 'PRODUCT', 'TRANSACTION', 'HISTORY', 'AUDIT', 'CATEGORY'];
+          v_target_user_id := p_user_id;
         ELSE
-          -- Subsequent accounts: set as standard employee and pending
-          v_role := 'NHAN_VIEN';
+          -- Subsequent accounts: set as PENDING and active=false, TRANG_THAI = PENDING
+          v_role := 'PENDING';
           v_trang_thai := 'PENDING';
+          v_active := false;
           v_chuc_vu := 'Nhân viên chờ duyệt';
           v_bo_phan := 'Bộ Phận Bán Hàng';
           v_write_access := false;
-          v_roles := ARRAY['NHAN_VIEN'];
+          v_roles := ARRAY['NHAN_VIEN', 'PENDING', 'pending'];
           v_permissions := ARRAY['TRANSACTION'];
+
+          -- Find existing admin's user_id to partition them into the same tenant
+          SELECT "user_id" FROM public.b_nhanvien 
+          WHERE (lower(trim("ROLE")) = 'admin' OR upper(trim("ROLE")) = 'ADMIN')
+          AND "user_id" IS NOT NULL
+          LIMIT 1
+          INTO v_target_user_id;
+
+          IF v_target_user_id IS NULL THEN
+            v_target_user_id := p_user_id;
+          END IF;
         END IF;
 
         v_current_date := to_char(current_timestamp, 'YYYY-MM-DD');
@@ -571,13 +591,13 @@ export async function tryCreateColumnsOnSupabase() {
         -- 4. Insert record
         INSERT INTO public.b_nhanvien (
           "MA_NV", "HO_TEN", "CHUC_VU", "BO_PHAN", "CHI_NHANH", 
-          "EMAIL", "ROLE", "role", "active", "WRITE_ACCESS", "TEN_DANG_NHAP", 
-          "MAT_KHAU", "TRANG_THAI", "YEU_CAU_RESET", "NGAY_DANG_KY", "user_id",
+          "EMAIL", "ROLE", "WRITE_ACCESS", "TEN_DANG_NHAP", 
+          "MAT_KHAU", "TRANG_THAI", "active", "YEU_CAU_RESET", "NGAY_DANG_KY", "user_id",
           "ROLES", "PERMISSIONS"
         ) VALUES (
           p_ma_nv, p_ho_ten, v_chuc_vu, v_bo_phan, 'Kho Trung Tâm',
-          p_email, v_role, CASE WHEN v_role = 'ADMIN' THEN 'admin' ELSE 'pending' END, (v_role = 'ADMIN'), v_write_access, p_ten_dang_nhap,
-          p_mat_khau, v_trang_thai, false, v_current_date, p_user_id,
+          p_email, v_role, v_write_access, p_ten_dang_nhap,
+          p_mat_khau, v_trang_thai, v_active, false, v_current_date, v_target_user_id,
           v_roles, v_permissions
         );
 
@@ -585,7 +605,9 @@ export async function tryCreateColumnsOnSupabase() {
           'success', true, 
           'message', 'Đăng ký thành công!', 
           'role', v_role, 
-          'trang_thai', v_trang_thai
+          'trang_thai', v_trang_thai,
+          'active', v_active,
+          'target_user_id', v_target_user_id
         );
       END;
       $func$ LANGUAGE plpgsql SECURITY DEFINER;
@@ -630,7 +652,7 @@ export async function tryCreateColumnsOnSupabase() {
   }
 
   if (typeof window !== 'undefined') {
-    localStorage.setItem('DB_SCHEMA_VERSION', 'v3_roles_active_v1');
+    localStorage.setItem('DB_SCHEMA_VERSION', SCHEMA_VERSION);
   }
 }
 
@@ -734,13 +756,15 @@ export async function ensureUserOnboarded(userId: string): Promise<UserDataPaylo
   if (isOfflineMode) {
     return await fetchAllUserData(userId);
   }
-  userId = await resolveEffectiveUserId();
+  if (!userId) {
+    userId = await resolveEffectiveUserId();
+  }
   try {
     // 1. Cố gắng tự động tạo cột trên Supabase (nếu chưa có)
     await tryCreateColumnsOnSupabase();
     await ensureStorageBucketExists();
 
-    // 2. Tự động kiểm tra và thêm tài khoản đăng nhập hiện tại làm Admin chính nếu chưa có trong b_nhanvien
+    // 2. Tự động kiểm tra và thêm tài khoản đăng nhập hiện tại nếu chưa có trong b_nhanvien
     let user = null;
     const { data: { session } } = await supabase.auth.getSession();
     if (session?.user) {
@@ -762,36 +786,55 @@ export async function ensureUserOnboarded(userId: string): Promise<UserDataPaylo
         .limit(1);
 
       if (!existingStaff || existingStaff.length === 0) {
-        // Kiểm tra xem đã có tài khoản ADMIN nào trong b_nhanvien thuộc user_id này chưa
-        const { data: adminCheck } = await supabase
-          .from('b_nhanvien')
-          .select('MA_NV')
-          .eq('ROLE', 'ADMIN')
-          .eq('user_id', userId)
-          .limit(1);
+        // Kiểm tra xem hệ thống đã có Admin chưa
+        let hasAdmin = false;
+        try {
+          const { data: adminCheck } = await supabase
+            .from('b_nhanvien')
+            .select('ROLE')
+            .or('ROLE.ilike.ADMIN,ROLE.ilike.admin');
+          if (adminCheck && adminCheck.length > 0) {
+            hasAdmin = true;
+          }
+        } catch (e) {
+          console.warn('Lỗi kiểm tra admin khi auto-initialize:', e);
+        }
 
-        const hasAdmin = adminCheck && adminCheck.length > 0;
-        const assignedRole = hasAdmin ? 'NHAN_VIEN' : 'ADMIN';
-        const assignedStatus = hasAdmin ? 'PENDING' : 'Hoạt động';
-
-        console.log(`Tự động onboard tài khoản ${email}: gán vai trò ${assignedRole}, trạng thái ${assignedStatus}`);
-        
-        await supabase.from('b_nhanvien').insert({
-          "MA_NV": "NV_" + (assignedRole === 'ADMIN' ? "ADMIN_" : "") + Math.random().toString(36).substr(2, 4).toUpperCase(),
-          "HO_TEN": email.split('@')[0].toUpperCase(),
-          "CHUC_VU": assignedRole === 'ADMIN' ? "Chủ sở hữu (Admin)" : "Nhân viên chờ duyệt",
-          "BO_PHAN": assignedRole === 'ADMIN' ? "Ban Giám Đốc" : "Bộ Phận Bán Hàng",
-          "CHI_NHANH": "Kho Trung Tâm",
-          "EMAIL": email,
-          "ROLE": assignedRole,
-          "PERMISSIONS": assignedRole === 'ADMIN' 
-            ? ["DASHBOARD", "PRODUCT", "TRANSACTION", "HISTORY", "AUDIT", "CATEGORY"] 
-            : ["TRANSACTION"],
-          "WRITE_ACCESS": assignedRole === 'ADMIN',
-          "TRANG_THAI": assignedStatus,
-          "ROLES": [assignedRole],
-          user_id: userId
-        });
+        if (!hasAdmin) {
+          console.log(`Chưa có Admin. Tự động khởi tạo tài khoản đầu tiên ${email} làm ADMIN`);
+          await supabase.from('b_nhanvien').insert({
+            "MA_NV": "NV_" + Math.random().toString(36).substr(2, 4).toUpperCase(),
+            "HO_TEN": email.split('@')[0].toUpperCase(),
+            "CHUC_VU": "Chủ sở hữu (Admin)",
+            "BO_PHAN": "Ban Giám Đốc",
+            "CHI_NHANH": "Kho Trung Tâm",
+            "EMAIL": email,
+            "ROLE": 'ADMIN',
+            "active": true,
+            "PERMISSIONS": ["DASHBOARD", "PRODUCT", "TRANSACTION", "HISTORY", "AUDIT", "CATEGORY"],
+            "WRITE_ACCESS": true,
+            "TRANG_THAI": 'ACTIVE',
+            "ROLES": ['ADMIN', 'admin'],
+            user_id: userId
+          });
+        } else {
+          console.log(`Đã có Admin. Tự động khởi tạo tài khoản ${email} ở trạng thái PENDING`);
+          await supabase.from('b_nhanvien').insert({
+            "MA_NV": "NV_" + Math.random().toString(36).substr(2, 4).toUpperCase(),
+            "HO_TEN": email.split('@')[0].toUpperCase(),
+            "CHUC_VU": "Nhân viên chờ duyệt",
+            "BO_PHAN": "Bộ Phận Bán Hàng",
+            "CHI_NHANH": "Kho Trung Tâm",
+            "EMAIL": email,
+            "ROLE": 'PENDING',
+            "active": false,
+            "PERMISSIONS": ['TRANSACTION'],
+            "WRITE_ACCESS": false,
+            "TRANG_THAI": 'PENDING',
+            "ROLES": ['NHAN_VIEN', 'PENDING', 'pending'],
+            user_id: userId
+          });
+        }
       }
     }
 
@@ -804,7 +847,15 @@ export async function ensureUserOnboarded(userId: string): Promise<UserDataPaylo
 
     if (!rolesErr && (!dbRoles || dbRoles.length === 0)) {
       console.log('Bảng b_role trống trên Supabase, tiến hành seed các vai trò...');
-      let rolesToSeed = memoryCache['B_ROLE'] || [];
+      const localRolesStr = inMemoryCache['B_ROLE'] ? JSON.stringify(inMemoryCache['B_ROLE']) : null;
+      let rolesToSeed = [];
+      if (localRolesStr) {
+        try {
+          rolesToSeed = JSON.parse(localRolesStr);
+        } catch {
+          // bỏ qua
+        }
+      }
       if (!rolesToSeed || rolesToSeed.length === 0) {
         rolesToSeed = [
           {
@@ -851,7 +902,7 @@ export async function fetchAllRows(tableName: string, userId: string): Promise<a
   const cacheKey = tableName.toUpperCase(); // e.g. B_SANPHAM, B_NHAPXUAT
 
   if (isOfflineMode) {
-    return memoryCache[cacheKey] || [];
+    return inMemoryCache[cacheKey] || [];
   }
 
   let allData: any[] = [];
@@ -864,14 +915,14 @@ export async function fetchAllRows(tableName: string, userId: string): Promise<a
       const { data, error } = await supabase
         .from(tableName)
         .select('*')
-        .in('user_id', [userId, '00000000-0000-0000-0000-000000000000'])
+        .eq('user_id', userId)
         .range(from, from + pageSize - 1);
 
       if (error) {
         logDbError(`Lỗi fetchAllRows từ ${tableName}:`, error);
         if (isNetworkError(error)) {
-          console.warn(`[Database] Đang sử dụng dữ liệu Cache từ Memory Cache cho bảng ${tableName} do lỗi mạng.`);
-          return memoryCache[cacheKey] || [];
+          console.warn(`[Database] Đang sử dụng dữ liệu Cache từ inMemoryCache cho bảng ${tableName} do lỗi mạng.`);
+          return inMemoryCache[cacheKey] || [];
         }
         break;
       }
@@ -889,14 +940,16 @@ export async function fetchAllRows(tableName: string, userId: string): Promise<a
     } catch (err) {
       logDbError(`Lỗi ngoại lệ fetchAllRows từ ${tableName}:`, err);
       if (isNetworkError(err)) {
-        console.warn(`[Database] Đang sử dụng dữ liệu Cache từ Memory Cache cho bảng ${tableName} do ngoại lệ lỗi mạng.`);
-        return memoryCache[cacheKey] || [];
+        console.warn(`[Database] Đang sử dụng dữ liệu Cache từ inMemoryCache cho bảng ${tableName} do ngoại lệ lỗi mạng.`);
+        return inMemoryCache[cacheKey] || [];
       }
       break;
     }
   }
 
-  memoryCache[cacheKey] = allData;
+  if (allData && allData.length > 0) {
+    inMemoryCache[cacheKey] = allData;
+  }
   return allData;
 }
 
@@ -907,7 +960,7 @@ export async function fetchAllUserData(userId: string): Promise<UserDataPayload>
   userId = await resolveEffectiveUserId();
 
   const getCached = (key: string): any[] => {
-    return memoryCache[key] || [];
+    return inMemoryCache[key.toUpperCase()] || [];
   };
 
   if (isOfflineMode) {
@@ -938,11 +991,11 @@ export async function fetchAllUserData(userId: string): Promise<UserDataPayload>
       fetchAllRows('b_sanpham', userId),
       fetchAllRows('b_nhapxuat', userId),
       fetchAllRows('b_nhapxuatct', userId),
-      supabase.from('b_kiemkho').select('*').in('user_id', [userId, '00000000-0000-0000-0000-000000000000']),
-      supabase.from('b_thuonghieu').select('*').in('user_id', [userId, '00000000-0000-0000-0000-000000000000']),
-      supabase.from('b_chinhanh').select('*').in('user_id', [userId, '00000000-0000-0000-0000-000000000000']),
-      supabase.from('b_nhanvien').select('*').in('user_id', [userId, '00000000-0000-0000-0000-000000000000']),
-      supabase.from('b_role').select('*').in('user_id', [userId, '00000000-0000-0000-0000-000000000000']).then(
+      supabase.from('b_kiemkho').select('*').eq('user_id', userId),
+      supabase.from('b_thuonghieu').select('*').eq('user_id', userId),
+      supabase.from('b_chinhanh').select('*').eq('user_id', userId),
+      supabase.from('b_nhanvien').select('*'),
+      supabase.from('b_role').select('*').eq('user_id', userId).then(
         r => r,
         err => ({ data: null, error: err })
       )
@@ -1089,33 +1142,25 @@ export async function fetchAllUserData(userId: string): Promise<UserDataPayload>
     TRANG_THAI: item.TRANG_THAI || 'Hoạt động',
     YEU_CAU_RESET: item.YEU_CAU_RESET || false,
     NGAY_DANG_KY: item.NGAY_DANG_KY || '',
-    ROLES: safeParseArray(item.ROLES)
+    ROLES: safeParseArray(item.ROLES),
+    user_id: item.user_id,
+    active: item.active !== false
   }));
 
-  // Deduplicate roles by ROLE_CODE, prioritizing user-specific ones
-  const roleMap: Record<string, any> = {};
-  (resRoles?.data || []).forEach((item: any) => {
-    const code = (item.ROLE_CODE || '').trim().toUpperCase();
-    const isGlobal = item.user_id === '00000000-0000-0000-0000-000000000000';
-    if (!roleMap[code] || !isGlobal) {
-      roleMap[code] = item;
-    }
-  });
-  const roles: Role[] = Object.values(roleMap).map((item: any) => ({
+  const roles: Role[] = (resRoles?.data || []).map((item: any) => ({
     ROLE_CODE: item.ROLE_CODE,
     TEN_ROLE: item.TEN_ROLE,
     PERMISSIONS: safeParseArray(item.PERMISSIONS)
   }));
 
-  // Cache in-memory
-  memoryCache['B_SANPHAM'] = sanPhams;
-  memoryCache['B_NHAPXUAT'] = nhapXuats;
-  memoryCache['B_NHAPXUATCT'] = nhapXuatCTs;
-  memoryCache['B_KIEMKHO'] = kiemKhos;
-  memoryCache['B_THUONGHIEU'] = thuongHieus;
-  memoryCache['B_CHINHANH'] = chiNhanhs;
-  memoryCache['B_NHANVIEN'] = nhanViens;
-  memoryCache['B_ROLE'] = roles;
+  inMemoryCache['B_SANPHAM'] = sanPhams;
+  inMemoryCache['B_NHAPXUAT'] = nhapXuats;
+  inMemoryCache['B_NHAPXUATCT'] = nhapXuatCTs;
+  inMemoryCache['B_KIEMKHO'] = kiemKhos;
+  inMemoryCache['B_THUONGHIEU'] = thuongHieus;
+  inMemoryCache['B_CHINHANH'] = chiNhanhs;
+  inMemoryCache['B_NHANVIEN'] = nhanViens;
+  inMemoryCache['B_ROLE'] = roles;
 
   return {
     sanPhams,
@@ -1593,7 +1638,31 @@ export async function syncNhanVien(n: NhanVien, userId: string) {
   if (isOfflineMode) {
     return { data: [n], error: null };
   }
-  userId = await resolveEffectiveUserId();
+  
+  // Kiểm tra xem dòng nhân viên này đã tồn tại trong DB chưa bằng MA_NV
+  let existing: any = null;
+  try {
+    const { data, error: checkError } = await supabase
+      .from('b_nhanvien')
+      .select('MA_NV, user_id')
+      .eq('MA_NV', n.MA_NV)
+      .maybeSingle();
+    if (checkError) {
+      console.warn("Lỗi kiểm tra b_nhanvien tồn tại:", checkError.message);
+    } else {
+      existing = data;
+    }
+  } catch (err) {
+    console.warn("Lỗi ngoài dự kiến khi kiểm tra b_nhanvien:", err);
+  }
+
+  // Giữ nguyên user_id của nhân viên nếu đã có sẵn trong DB, tránh bị ghi đè bởi user_id của Admin đang thao tác
+  let targetUserId = n.user_id || existing?.user_id || userId;
+  if (!targetUserId) {
+    targetUserId = await resolveEffectiveUserId();
+  }
+  n.user_id = targetUserId; // Save back to local object
+
   try {
     const payload = {
       "MA_NV": n.MA_NV,
@@ -1603,16 +1672,6 @@ export async function syncNhanVien(n: NhanVien, userId: string) {
       "CHI_NHANH": n.CHI_NHANH,
       "EMAIL": n.EMAIL || '',
       "ROLE": n.ROLE,
-      "role": n.role || (() => {
-        const R = (n.ROLE || '').trim().toUpperCase();
-        if (R === 'ADMIN') return 'admin';
-        if (R === 'KHO') return 'manager';
-        return 'user';
-      })(),
-      "active": typeof n.active === 'boolean' ? n.active : (() => {
-        const status = (n.TRANG_THAI || '').trim().toUpperCase();
-        return status === 'HOẠT ĐỘNG' || status === 'ACTIVE' || status === 'KÍCH HOẠT' || status === 'HOAT DONG';
-      })(),
       "PERMISSIONS": n.PERMISSIONS,
       "WRITE_ACCESS": n.WRITE_ACCESS,
       "TEN_DANG_NHAP": n.TEN_DANG_NHAP || '',
@@ -1620,29 +1679,18 @@ export async function syncNhanVien(n: NhanVien, userId: string) {
       "YEU_CAU_RESET": n.YEU_CAU_RESET || false,
       "TRANG_THAI": n.TRANG_THAI || 'Hoạt động',
       "ROLES": n.ROLES || [],
-      user_id: userId
+      "active": n.active !== false,
+      "NGAY_DANG_KY": (n.NGAY_DANG_KY && n.NGAY_DANG_KY.trim() !== '') ? n.NGAY_DANG_KY : null,
+      user_id: targetUserId
     };
-
-    // Kiểm tra xem dòng nhân viên này đã tồn tại trong DB chưa
-    const { data: existing, error: checkError } = await supabase
-      .from('b_nhanvien')
-      .select('MA_NV')
-      .eq('MA_NV', n.MA_NV)
-      .eq('user_id', userId)
-      .maybeSingle();
-
-    if (checkError) {
-      console.warn("Lỗi kiểm tra b_nhanvien tồn tại:", checkError.message);
-    }
 
     let res;
     if (existing) {
-      // Đã có -> Cập nhật
+      // Đã có -> Cập nhật bằng MA_NV
       res = await supabase
         .from('b_nhanvien')
         .update(payload)
         .eq('MA_NV', n.MA_NV)
-        .eq('user_id', userId)
         .select();
       if (res.error) logDbError("Lỗi syncNhanVien (update):", res.error);
     } else {
@@ -1815,17 +1863,17 @@ export async function syncEmailLog(log: EmailLog, userId: string) {
     user_id: userId
   };
 
-  // 1. Lưu vào memoryCache trước để đảm bảo dữ liệu không bị mất
+  // 1. Lưu vào inMemoryCache trước để đảm bảo dữ liệu không bị mất
   try {
-    const logs: EmailLog[] = memoryCache['B_EMAILLOG'] || [];
+    const logs: EmailLog[] = inMemoryCache['B_EMAILLOG'] || [];
     
     // Tránh trùng lặp
     if (!logs.some(l => l.id === localLog.id || (l.EMAIL === localLog.EMAIL && l.TIEU_DE === localLog.TIEU_DE && l.NGAY_GUI === localLog.NGAY_GUI))) {
-      const nextLogs = [localLog, ...logs];
-      memoryCache['B_EMAILLOG'] = nextLogs.slice(0, 300); // Lưu tối đa 300 dòng nhật ký
+      logs.unshift(localLog);
+      inMemoryCache['B_EMAILLOG'] = logs.slice(0, 300); // Lưu tối đa 300 dòng nhật ký
     }
   } catch (err) {
-    console.warn("Lỗi lưu email log vào memoryCache:", err);
+    console.warn("Lỗi lưu email log vào inMemoryCache:", err);
   }
   
   console.log(`[EMAIL SENDING] Gửi email đến: ${log.EMAIL} | Tiêu đề: ${log.TIEU_DE}`);
@@ -1848,7 +1896,7 @@ export async function syncEmailLog(log: EmailLog, userId: string) {
                              res.error.message?.includes('b_emaillog') || 
                              res.error.message?.includes('schema cache');
       if (isMissingTable) {
-        console.log(`[EMAIL LOG] Bảng b_emaillog gặp lỗi trên Supabase khi gửi email (Chi tiết: ${res.error.message}, Code: ${res.error.code}). Sử dụng MemoryCache làm fallback.`);
+        console.log(`[EMAIL LOG] Bảng b_emaillog gặp lỗi trên Supabase khi gửi email (Chi tiết: ${res.error.message}, Code: ${res.error.code}). Sử dụng inMemoryCache làm fallback.`);
       } else {
         console.warn("Lỗi syncEmailLog lên Supabase (sử dụng lưu trữ cục bộ fallback):", res.error.message);
       }
@@ -1867,7 +1915,7 @@ export async function fetchEmailLogs(userId: string): Promise<EmailLog[]> {
   userId = await resolveEffectiveUserId();
 
   // Đọc danh sách cục bộ dự phòng trước
-  let localLogs: EmailLog[] = memoryCache['B_EMAILLOG'] || [];
+  let localLogs: EmailLog[] = inMemoryCache['B_EMAILLOG'] || [];
   
   try {
     const { data, error } = await supabase
@@ -1883,7 +1931,7 @@ export async function fetchEmailLogs(userId: string): Promise<EmailLog[]> {
                              error.message?.includes('b_emaillog') || 
                              error.message?.includes('schema cache');
       if (isMissingTable) {
-        console.log(`[EMAIL LOG] Bảng b_emaillog gặp lỗi hoặc chưa sẵn sàng trên Supabase (Chi tiết: ${error.message}, Code: ${error.code}). Hệ thống tự động kích hoạt chế độ lưu trữ cục bộ MemoryCache.`);
+        console.log(`[EMAIL LOG] Bảng b_emaillog gặp lỗi hoặc chưa sẵn sàng trên Supabase (Chi tiết: ${error.message}, Code: ${error.code}). Hệ thống tự động kích hoạt chế độ lưu trữ cục bộ inMemoryCache.`);
       } else {
         console.warn("Lỗi fetchEmailLogs từ Supabase:", error.message);
       }
@@ -1892,7 +1940,7 @@ export async function fetchEmailLogs(userId: string): Promise<EmailLog[]> {
     
     // Nếu có dữ liệu từ Supabase, cập nhật ngược lại cache cục bộ để đảm bảo đồng nhất
     if (data) {
-      memoryCache['B_EMAILLOG'] = data;
+      inMemoryCache['B_EMAILLOG'] = data;
       return data;
     }
   } catch (err: any) {

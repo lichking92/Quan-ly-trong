@@ -21,7 +21,7 @@ import {
   Key
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { ThuongHieu, ChiNhanh, NhanVien, UserRole, EmailLog, Role, safeParseArray } from '../types';
+import { ThuongHieu, ChiNhanh, NhanVien, UserRole, EmailLog, Role, safeParseArray, HIERARCHICAL_PERMISSIONS, PERMISSION_PARENT_MAP } from '../types';
 import { formatDop } from '../data/mockData';
 
 /**
@@ -56,70 +56,73 @@ interface CategoryManagementProps {
 }
 
 const PERMISSION_MAP: Record<string, string> = {
-  'dashboard.view': 'Xem Dashboard',
-  'product.view': 'Xem danh sách sản phẩm',
-  'product.create': 'Thêm sản phẩm',
-  'product.edit': 'Sửa sản phẩm',
-  'product.delete': 'Xóa sản phẩm',
-  'import.view': 'Xem phiếu nhập',
-  'import.create': 'Tạo phiếu nhập',
-  'import.edit': 'Sửa phiếu nhập',
-  'import.delete': 'Xóa phiếu nhập',
-  'export.view': 'Xem phiếu xuất',
-  'export.create': 'Tạo phiếu xuất',
-  'export.edit': 'Sửa phiếu xuất',
-  'export.delete': 'Xóa phiếu xuất',
-  'inventory.view': 'Xem kiểm kê kho',
-  'inventory.edit': 'Thực hiện kiểm kê kho',
-  'report.view': 'Xem báo cáo',
-  'user.view': 'Xem người dùng',
-  'user.create': 'Thêm người dùng',
-  'user.edit': 'Sửa người dùng',
-  'user.delete': 'Xóa người dùng',
-  'role.view': 'Xem vai trò',
-  'role.create': 'Thêm vai trò',
-  'role.edit': 'Sửa vai trò',
-  'role.delete': 'Xóa vai trò'
-};
+  // Level 1 Modules
+  'dashboard.view': 'Dashboard',
+  'ordercheck.view': 'Kiểm tra đơn',
+  'picking_xuat.view': 'Lập phiếu xuất',
+  'picking_nhap.view': 'Lập phiếu nhập',
+  'history.view': 'Lịch sử nhập xuất',
+  'picking.view': 'Gom đơn',
+  'matrix.view': 'Bảng độ',
+  'stocktake.view': 'Kiểm kho',
+  'product.view': 'Sản phẩm',
+  'employee.view': 'Nhân viên',
+  'role.view': 'Vai trò',
+  'settings.view': 'Cài đặt',
+  'inventory.view': 'Sản phẩm (Tương thích cũ)',
 
-const DEFAULT_ROLES = [
-  {
-    ROLE_CODE: 'ADMIN',
-    TEN_ROLE: 'Quản trị viên (Admin)',
-    PERMISSIONS: [
-      'dashboard.view',
-      'product.view', 'product.create', 'product.edit', 'product.delete',
-      'import.view', 'import.create', 'import.edit', 'import.delete',
-      'export.view', 'export.create', 'export.edit', 'export.delete',
-      'inventory.view', 'inventory.edit',
-      'report.view',
-      'user.view', 'user.create', 'user.edit', 'user.delete',
-      'role.view', 'role.create', 'role.edit', 'role.delete'
-    ]
-  },
-  {
-    ROLE_CODE: 'MANAGER',
-    TEN_ROLE: 'Quản lý nghiệp vụ (Manager)',
-    PERMISSIONS: [
-      'dashboard.view',
-      'product.view', 'product.create', 'product.edit',
-      'import.view', 'import.create', 'import.edit',
-      'export.view', 'export.create', 'export.edit',
-      'inventory.view', 'inventory.edit',
-      'report.view'
-    ]
-  },
-  {
-    ROLE_CODE: 'STAFF',
-    TEN_ROLE: 'Nhân viên bán hàng (Staff)',
-    PERMISSIONS: [
-      'product.view',
-      'export.view', 'export.create',
-      'import.view',
-      'inventory.view'
-    ]
-  }
-];
+  // Level 2 Functions
+  'dashboard.read': 'Xem Dashboard',
+  'dashboard.export': 'Xuất báo cáo Dashboard',
+  
+  'ordercheck.read': 'Xem Kiểm tra đơn',
+  'ordercheck.analyze': 'Phân tích đơn hàng',
+  'ordercheck.save': 'Lưu đơn hàng',
+  'ordercheck.export': 'Xuất kết quả',
+  
+  'picking_xuat.read': 'Xem phiếu xuất',
+  'picking_xuat.create': 'Tạo phiếu xuất',
+  'picking_xuat.edit': 'Sửa phiếu xuất',
+  'picking_xuat.delete': 'Xóa phiếu xuất',
+  'picking_xuat.export': 'Xuất Excel/PDF',
+  
+  'picking_nhap.read': 'Xem phiếu nhập',
+  'picking_nhap.create': 'Tạo phiếu nhập',
+  'picking_nhap.edit': 'Sửa phiếu nhập',
+  'picking_nhap.delete': 'Xóa phiếu nhập',
+  
+  'history.read': 'Xem Lịch sử nhập xuất',
+  'history.create': 'Tạo phiếu nhập xuất',
+  'history.edit': 'Sửa phiếu nhập xuất',
+  'history.delete': 'Xóa phiếu nhập xuất',
+  'history.export': 'Xuất Excel/PDF',
+  
+  'picking.read': 'Xem Gom đơn',
+  'picking.create': 'Tạo Gom đơn',
+  'picking.delete': 'Xóa Gom đơn',
+  'picking.export': 'Xuất phiếu Gom đơn',
+  
+  'matrix.read': 'Xem Bảng độ',
+  
+  'stocktake.read': 'Xem Kiểm kho',
+  
+  'product.read': 'Xem Sản phẩm',
+  'product.create': 'Thêm Sản phẩm',
+  'product.edit': 'Sửa Sản phẩm',
+  'product.delete': 'Xóa Sản phẩm',
+  
+  'employee.read': 'Xem Nhân viên',
+  'employee.create': 'Thêm Nhân viên',
+  'employee.edit': 'Sửa Nhân viên',
+  'employee.delete': 'Xóa Nhân viên',
+  
+  'role.read': 'Xem Vai trò',
+  'role.create': 'Thêm Vai trò',
+  'role.edit': 'Sửa Vai trò',
+  'role.delete': 'Xóa Vai trò',
+  
+  'settings.read': 'Xem Cài đặt'
+};
 
 export default function CategoryManagement({
   thuongHieus,
@@ -145,21 +148,27 @@ export default function CategoryManagement({
 }: CategoryManagementProps) {
   
   const hasPerm = (p: string) => {
-    const isWrite = p.endsWith('.create') || p.endsWith('.edit') || p.endsWith('.delete') || p.includes('.create') || p.includes('.edit') || p.includes('.delete');
-    if (isWrite && (currentUser?.writeAccess === false || currentUser?.WRITE_ACCESS === false)) {
-      return false;
-    }
     if (hasPermission) return hasPermission(p);
-    return currentUser?.writeAccess !== false && currentUser?.WRITE_ACCESS !== false;
+    return currentUser?.writeAccess !== false;
   };
 
   // --- 1. QUẢN LÝ TAB DANH MỤC HIỆN TẠI ---
   const [activeSubTab, setActiveSubTab] = useState<'BRAND' | 'BRANCH' | 'STAFF' | 'ROLE' | 'EMAILLOG'>('BRAND');
 
+  React.useEffect(() => {
+    if (!hasPerm('inventory.view')) {
+      if (hasPerm('employee.view')) {
+        setActiveSubTab('STAFF');
+      } else if (hasPerm('role.view')) {
+        setActiveSubTab('ROLE');
+      }
+    }
+  }, [currentUser]);
+
   const canWriteCurrentTab = () => {
-    if (activeSubTab === 'BRAND') return hasPerm('product.create') || hasPerm('product.edit');
-    if (activeSubTab === 'BRANCH') return hasPerm('user.create') || hasPerm('user.edit');
-    if (activeSubTab === 'STAFF') return hasPerm('user.create') || hasPerm('user.edit');
+    if (activeSubTab === 'BRAND') return hasPerm('inventory.view'); // Brands are editable under inventory.view
+    if (activeSubTab === 'BRANCH') return hasPerm('inventory.view'); // Branches are editable under inventory.view
+    if (activeSubTab === 'STAFF') return hasPerm('employee.create') || hasPerm('employee.edit');
     if (activeSubTab === 'ROLE') return hasPerm('role.create') || hasPerm('role.edit');
     return false;
   };
@@ -217,18 +226,48 @@ export default function CategoryManagement({
   // Các trạng thái Form và Edit
   const [successMsg, setSuccessMsg] = useState<string>('');
   const [errorMsg, setErrorMsg] = useState<string>('');
+  const [selectedApprovalRoles, setSelectedApprovalRoles] = useState<Record<string, string>>({});
 
   const pendingStaffs = useMemo(() => {
     return nhanViens.filter(n => {
-      const status = (n.TRANG_THAI || 'ACTIVE').trim().toUpperCase();
-      return status === 'PENDING' || status === 'CHỜ DUYỆT' || status === 'CHO DUYET';
+      const role = (n.ROLE || '').trim().toUpperCase();
+      const status = (n.TRANG_THAI || '').trim().toUpperCase();
+      const isActive = n.active === true;
+      
+      const isApprovedAdmin = role === 'ADMIN' && isActive && 
+        (status === 'ACTIVE' || status === 'HOẠT ĐỘNG' || status === 'KÍCH HOẠT' || status === 'HOAT DONG');
+
+      if (isApprovedAdmin) {
+        return false;
+      }
+
+      return !isActive || 
+             status === 'PENDING' || 
+             status === 'CHỜ DUYỆT' || 
+             status === 'CHO DUYET' || 
+             role === 'PENDING';
     });
   }, [nhanViens]);
 
   const activeStaffs = useMemo(() => {
     return nhanViens.filter(n => {
-      const status = (n.TRANG_THAI || 'ACTIVE').trim().toUpperCase();
-      return status !== 'PENDING' && status !== 'CHỜ DUYỆT' && status !== 'CHO DUYET';
+      const role = (n.ROLE || '').trim().toUpperCase();
+      const status = (n.TRANG_THAI || '').trim().toUpperCase();
+      const isActive = n.active === true;
+      
+      const isApprovedAdmin = role === 'ADMIN' && isActive && 
+        (status === 'ACTIVE' || status === 'HOẠT ĐỘNG' || status === 'KÍCH HOẠT' || status === 'HOAT DONG');
+
+      if (isApprovedAdmin) {
+        return true;
+      }
+
+      const isPending = !isActive || 
+                        status === 'PENDING' || 
+                        status === 'CHỜ DUYỆT' || 
+                        status === 'CHO DUYET' || 
+                        role === 'PENDING';
+      return !isPending;
     });
   }, [nhanViens]);
 
@@ -280,13 +319,14 @@ export default function CategoryManagement({
 
   // Form Nhân viên
   const [newStaffName, setNewStaffName] = useState<string>('');
-  const [newStaffRole, setNewStaffRole] = useState<string>('STAFF');
+  const [newStaffRole, setNewStaffRole] = useState<UserRole>('NHAN_VIEN');
   const [newStaffEmail, setNewStaffEmail] = useState<string>('');
   const [newStaffBranch, setNewStaffBranch] = useState<string>('Kho Trung Tâm');
   const [newStaffChucVu, setNewStaffChucVu] = useState<string>('Nhân viên bán kính');
   const [newStaffUsername, setNewStaffUsername] = useState<string>('');
   const [newStaffPassword, setNewStaffPassword] = useState<string>('');
   const [newStaffStatus, setNewStaffStatus] = useState<string>('ACTIVE');
+  const [newStaffRoles, setNewStaffRoles] = useState<string[]>([]);
 
   // States cho RBAC Role Management
   const [editingRole, setEditingRole] = useState<Role | null>(null);
@@ -557,36 +597,22 @@ export default function CategoryManagement({
     // Tự sinh email ẩn để đảm bảo tính đồng bộ và không lỗi schema DB cũ
     const generatedEmail = `${newStaffUsername.trim().toLowerCase()}@glassstock.com`;
 
-    const primaryRole = newStaffRole || 'STAFF';
-    const isPrimaryAdmin = primaryRole === 'ADMIN';
-    const isPrimaryKho = primaryRole === 'KHO' || primaryRole === 'MANAGER';
-    const boPhan = isPrimaryAdmin ? 'Ban Giám Đốc' : isPrimaryKho ? 'Bộ Phận Kho' : 'Bộ Phận Bán Hàng';
-
-    const matched = roles.find(r => (r.ROLE_CODE || '').trim().toUpperCase() === primaryRole.toUpperCase());
-    let perms: string[] = [];
-    if (matched) {
-      perms = safeParseArray(matched.PERMISSIONS);
-    }
-    const hasWritePermission = primaryRole === 'ADMIN' || perms.some(p => p.includes('.create') || p.includes('.edit') || p.includes('.delete'));
-
-    const isActive = newStaffStatus === 'ACTIVE' || newStaffStatus === 'HOẠT ĐỘNG' || newStaffStatus === 'KÍCH HOẠT';
+    const derivedRole = newStaffRoles.includes('ADMIN') ? 'ADMIN' : newStaffRoles.includes('MANAGER') ? 'KHO' : 'NHAN_VIEN';
 
     const staffRecord: NhanVien = {
       MA_NV: `NV${String(nhanViens.length + 1).padStart(4, '0')}`,
       HO_TEN: newStaffName.trim(),
       CHUC_VU: newStaffChucVu,
-      BO_PHAN: boPhan,
+      BO_PHAN: derivedRole === 'ADMIN' ? 'Ban Giám Đốc' : derivedRole === 'KHO' ? 'Bộ Phận Kho' : 'Bộ Phận Bán Hàng',
       CHI_NHANH: newStaffBranch,
       EMAIL: generatedEmail,
-      ROLE: primaryRole,
-      role: primaryRole.toLowerCase(),
-      active: isActive,
-      WRITE_ACCESS: hasWritePermission,
+      ROLE: derivedRole,
+      WRITE_ACCESS: derivedRole === 'ADMIN' || derivedRole === 'KHO',
       TEN_DANG_NHAP: newStaffUsername.trim(),
       MAT_KHAU: newStaffPassword.trim(),
       TRANG_THAI: newStaffStatus,
       YEU_CAU_RESET: false,
-      ROLES: [primaryRole]
+      ROLES: newStaffRoles.length > 0 ? newStaffRoles : ['STAFF']
     };
 
     onAddNhanVien(staffRecord);
@@ -596,7 +622,7 @@ export default function CategoryManagement({
     setNewStaffPassword('');
     setNewStaffChucVu('Nhân viên bán kính');
     setNewStaffStatus('ACTIVE');
-    setNewStaffRole('STAFF');
+    setNewStaffRoles([]);
     setTimeout(() => setSuccessMsg(''), 3000);
   };
 
@@ -607,8 +633,10 @@ export default function CategoryManagement({
     setNewStaffPassword(staff.MAT_KHAU || '');
     setNewStaffBranch(staff.CHI_NHANH);
     setNewStaffChucVu(staff.CHUC_VU);
-    setNewStaffRole(staff.ROLE || 'STAFF');
+    setNewStaffRole(staff.ROLE);
     setNewStaffStatus(staff.TRANG_THAI || 'ACTIVE');
+    const parsedRoles = safeParseArray(staff.ROLES);
+    setNewStaffRoles(parsedRoles.length > 0 ? parsedRoles : [staff.ROLE === 'ADMIN' ? 'ADMIN' : staff.ROLE === 'KHO' ? 'MANAGER' : 'STAFF']);
   };
 
   const handleSaveEditStaff = (e: React.FormEvent) => {
@@ -622,36 +650,26 @@ export default function CategoryManagement({
       return;
     }
 
-    const primaryRole = newStaffRole || 'STAFF';
-    const isPrimaryAdmin = primaryRole === 'ADMIN';
-    const isPrimaryKho = primaryRole === 'KHO' || primaryRole === 'MANAGER';
-    const boPhan = isPrimaryAdmin ? 'Ban Giám Đốc' : isPrimaryKho ? 'Bộ Phận Kho' : 'Bộ Phận Bán Hàng';
-
-    const matched = roles.find(r => (r.ROLE_CODE || '').trim().toUpperCase() === primaryRole.toUpperCase());
-    let perms: string[] = [];
-    if (matched) {
-      perms = safeParseArray(matched.PERMISSIONS);
-    }
-    const hasWritePermission = primaryRole === 'ADMIN' || perms.some(p => p.includes('.create') || p.includes('.edit') || p.includes('.delete'));
-
-    const isActive = newStaffStatus === 'ACTIVE' || newStaffStatus === 'HOẠT ĐỘNG' || newStaffStatus === 'KÍCH HOẠT';
+    const derivedRole = newStaffRoles.includes('ADMIN') ? 'ADMIN' : newStaffRoles.includes('MANAGER') ? 'KHO' : 'NHAN_VIEN';
+    const isStatusActive = newStaffStatus === 'ACTIVE' || newStaffStatus === 'HOẠT ĐỘNG' || newStaffStatus === 'KÍCH HOẠT' || newStaffStatus === 'HOAT DONG';
 
     const updatedStaff: NhanVien = {
       MA_NV: editingStaff.staff.MA_NV,
       HO_TEN: newStaffName.trim(),
       CHUC_VU: newStaffChucVu,
-      BO_PHAN: boPhan,
+      BO_PHAN: derivedRole === 'ADMIN' ? 'Ban Giám Đốc' : derivedRole === 'KHO' ? 'Bộ Phận Kho' : 'Bộ Phận Bán Hàng',
       CHI_NHANH: newStaffBranch,
       EMAIL: editingStaff.staff.EMAIL, // Giữ nguyên Email cũ làm khóa duy nhất cho các logic đồng bộ cũ
-      ROLE: primaryRole,
-      role: primaryRole.toLowerCase(),
-      active: isActive,
-      WRITE_ACCESS: hasWritePermission,
+      ROLE: derivedRole,
+      WRITE_ACCESS: derivedRole === 'ADMIN' || derivedRole === 'KHO',
       TEN_DANG_NHAP: newStaffUsername.trim(),
       MAT_KHAU: newStaffPassword.trim(),
       TRANG_THAI: newStaffStatus,
+      active: isStatusActive,
       YEU_CAU_RESET: false, // Tự động tắt yêu cầu reset khi Admin đổi/lưu lại mật khẩu mới!
-      ROLES: [primaryRole]
+      ROLES: newStaffRoles.length > 0 ? newStaffRoles : ['STAFF'],
+      PERMISSIONS: editingStaff.staff.PERMISSIONS,
+      user_id: editingStaff.staff.user_id
     };
 
     onUpdateNhanVien(editingStaff.oldEmail, updatedStaff);
@@ -662,7 +680,7 @@ export default function CategoryManagement({
     setNewStaffPassword('');
     setNewStaffChucVu('Nhân viên bán kính');
     setNewStaffStatus('ACTIVE');
-    setNewStaffRole('STAFF');
+    setNewStaffRoles([]);
     setTimeout(() => setSuccessMsg(''), 3000);
   };
 
@@ -673,7 +691,7 @@ export default function CategoryManagement({
     setNewStaffPassword('');
     setNewStaffChucVu('Nhân viên bán kính');
     setNewStaffStatus('ACTIVE');
-    setNewStaffRole('STAFF');
+    setNewStaffRoles([]);
   };
 
   const handleDeleteStaffItem = (email: string) => {
@@ -830,46 +848,56 @@ export default function CategoryManagement({
 
         {/* Chuyển đổi tab */}
         <div className="flex bg-slate-100 p-1 rounded-xl">
-          <button
-            onClick={() => { setActiveSubTab('BRAND'); setErrorMsg(''); setSuccessMsg(''); handleCancelEditBrand(); }}
-            className={`flex items-center gap-1.5 py-1.5 px-3.5 text-xs font-bold rounded-lg transition-all cursor-pointer ${
-              activeSubTab === 'BRAND' ? 'bg-red-600 text-white shadow-xs' : 'text-slate-500 hover:text-slate-700'
-            }`}
-          >
-            <Tag className="w-3.5 h-3.5" /> Thương Hiệu
-          </button>
-          <button
-            onClick={() => { setActiveSubTab('BRANCH'); setErrorMsg(''); setSuccessMsg(''); handleCancelEditBranch(); }}
-            className={`flex items-center gap-1.5 py-1.5 px-3.5 text-xs font-bold rounded-lg transition-all cursor-pointer ${
-              activeSubTab === 'BRANCH' ? 'bg-red-600 text-white shadow-xs' : 'text-slate-500 hover:text-slate-700'
-            }`}
-          >
-            <MapPin className="w-3.5 h-3.5" /> Chi Nhánh
-          </button>
-          <button
-            onClick={() => { setActiveSubTab('STAFF'); setErrorMsg(''); setSuccessMsg(''); handleCancelEditStaff(); }}
-            className={`flex items-center gap-1.5 py-1.5 px-3.5 text-xs font-bold rounded-lg transition-all cursor-pointer ${
-              activeSubTab === 'STAFF' ? 'bg-red-600 text-white shadow-xs' : 'text-slate-500 hover:text-slate-700'
-            }`}
-          >
-            <Users className="w-3.5 h-3.5" /> Nhân Viên & Quyền
-          </button>
-          <button
-            onClick={() => { setActiveSubTab('ROLE'); setErrorMsg(''); setSuccessMsg(''); setEditingRole(null); setNewRoleCode(''); setNewRoleName(''); setNewRolePermissions([]); }}
-            className={`flex items-center gap-1.5 py-1.5 px-3.5 text-xs font-bold rounded-lg transition-all cursor-pointer ${
-              activeSubTab === 'ROLE' ? 'bg-red-600 text-white shadow-xs' : 'text-slate-500 hover:text-slate-700'
-            }`}
-          >
-            <Shield className="w-3.5 h-3.5" /> Quyền hạn & Vai trò
-          </button>
-          <button
-            onClick={() => { setActiveSubTab('EMAILLOG'); setErrorMsg(''); setSuccessMsg(''); }}
-            className={`flex items-center gap-1.5 py-1.5 px-3.5 text-xs font-bold rounded-lg transition-all cursor-pointer ${
-              activeSubTab === 'EMAILLOG' ? 'bg-red-600 text-white shadow-xs' : 'text-slate-500 hover:text-slate-700'
-            }`}
-          >
-            <Mail className="w-3.5 h-3.5" /> Nhật Ký Email
-          </button>
+          {hasPerm('inventory.view') && (
+            <button
+              onClick={() => { setActiveSubTab('BRAND'); setErrorMsg(''); setSuccessMsg(''); handleCancelEditBrand(); }}
+              className={`flex items-center gap-1.5 py-1.5 px-3.5 text-xs font-bold rounded-lg transition-all cursor-pointer ${
+                activeSubTab === 'BRAND' ? 'bg-red-600 text-white shadow-xs' : 'text-slate-500 hover:text-slate-700'
+              }`}
+            >
+              <Tag className="w-3.5 h-3.5" /> Thương Hiệu
+            </button>
+          )}
+          {hasPerm('inventory.view') && (
+            <button
+              onClick={() => { setActiveSubTab('BRANCH'); setErrorMsg(''); setSuccessMsg(''); handleCancelEditBranch(); }}
+              className={`flex items-center gap-1.5 py-1.5 px-3.5 text-xs font-bold rounded-lg transition-all cursor-pointer ${
+                activeSubTab === 'BRANCH' ? 'bg-red-600 text-white shadow-xs' : 'text-slate-500 hover:text-slate-700'
+              }`}
+            >
+              <MapPin className="w-3.5 h-3.5" /> Chi Nhánh
+            </button>
+          )}
+          {hasPerm('employee.view') && (
+            <button
+              onClick={() => { setActiveSubTab('STAFF'); setErrorMsg(''); setSuccessMsg(''); handleCancelEditStaff(); }}
+              className={`flex items-center gap-1.5 py-1.5 px-3.5 text-xs font-bold rounded-lg transition-all cursor-pointer ${
+                activeSubTab === 'STAFF' ? 'bg-red-600 text-white shadow-xs' : 'text-slate-500 hover:text-slate-700'
+              }`}
+            >
+              <Users className="w-3.5 h-3.5" /> Nhân Viên & Quyền
+            </button>
+          )}
+          {hasPerm('role.view') && (
+            <button
+              onClick={() => { setActiveSubTab('ROLE'); setErrorMsg(''); setSuccessMsg(''); setEditingRole(null); setNewRoleCode(''); setNewRoleName(''); setNewRolePermissions([]); }}
+              className={`flex items-center gap-1.5 py-1.5 px-3.5 text-xs font-bold rounded-lg transition-all cursor-pointer ${
+                activeSubTab === 'ROLE' ? 'bg-red-600 text-white shadow-xs' : 'text-slate-500 hover:text-slate-700'
+              }`}
+            >
+              <Shield className="w-3.5 h-3.5" /> Quyền hạn & Vai trò
+            </button>
+          )}
+          {hasPerm('employee.view') && (
+            <button
+              onClick={() => { setActiveSubTab('EMAILLOG'); setErrorMsg(''); setSuccessMsg(''); }}
+              className={`flex items-center gap-1.5 py-1.5 px-3.5 text-xs font-bold rounded-lg transition-all cursor-pointer ${
+                activeSubTab === 'EMAILLOG' ? 'bg-red-600 text-white shadow-xs' : 'text-slate-500 hover:text-slate-700'
+              }`}
+            >
+              <Mail className="w-3.5 h-3.5" /> Nhật Ký Email
+            </button>
+          )}
         </div>
       </div>
 
@@ -1428,18 +1456,23 @@ export default function CategoryManagement({
 
                   {roles && roles.length > 0 && (
                     <div className="space-y-1.5 border-t border-slate-100 pt-2">
-                      <label className="text-[10px] uppercase font-bold text-slate-400 block mb-1">Vai trò hệ thống (ROLE)</label>
+                      <label className="text-[10px] uppercase font-bold text-slate-400 block mb-1">Vai trò RBAC được gán</label>
                       <div className="flex flex-wrap gap-2.5 p-2 bg-slate-50 rounded-lg border border-slate-100">
                         {roles.map(r => {
-                          const isChecked = newStaffRole === r.ROLE_CODE;
+                          const isChecked = newStaffRoles.includes(r.ROLE_CODE);
                           return (
                             <label key={r.ROLE_CODE} className="inline-flex items-center gap-1.5 text-[11px] font-bold text-slate-600 cursor-pointer select-none">
                               <input
-                                type="radio"
-                                name="new_staff_role"
+                                type="checkbox"
                                 checked={isChecked}
-                                onChange={() => setNewStaffRole(r.ROLE_CODE)}
-                                className="text-red-600 focus:ring-red-500 w-3.5 h-3.5 border-slate-200"
+                                onChange={(e) => {
+                                  if (e.target.checked) {
+                                    setNewStaffRoles(prev => [...prev, r.ROLE_CODE]);
+                                  } else {
+                                    setNewStaffRoles(prev => prev.filter(code => code !== r.ROLE_CODE));
+                                  }
+                                }}
+                                className="rounded text-red-600 focus:ring-red-500 w-3.5 h-3.5 border-slate-200"
                               />
                               <span>{r.TEN_ROLE}</span>
                             </label>
@@ -1508,16 +1541,36 @@ export default function CategoryManagement({
 
                         <div className="flex items-center gap-2 shrink-0">
                           {canWriteCurrentTab() && (
-                            <div className="flex items-center gap-1.5">
+                            <div className="flex items-center gap-1.5 flex-wrap">
+                              <select
+                                value={selectedApprovalRoles[n.EMAIL] || 'NHAN_VIEN'}
+                                onChange={(e) => setSelectedApprovalRoles(prev => ({ ...prev, [n.EMAIL]: e.target.value }))}
+                                className="text-[10px] font-bold text-slate-700 bg-white border border-slate-200 rounded-lg py-1 px-2 focus:outline-hidden cursor-pointer"
+                              >
+                                <option value="NHAN_VIEN">Nhân Viên Bán Hàng</option>
+                                <option value="KHO">Thủ Kho</option>
+                                <option value="ADMIN">Admin</option>
+                              </select>
                               <button
                                 onClick={() => {
+                                  const chosenRole = selectedApprovalRoles[n.EMAIL] || 'NHAN_VIEN';
                                   const updatedStaff: NhanVien = {
                                     ...n,
+                                    ROLE: chosenRole,
                                     TRANG_THAI: 'ACTIVE',
-                                    CHUC_VU: n.CHUC_VU === 'Nhân viên chờ duyệt' ? 'Nhân viên bán kính' : n.CHUC_VU
+                                    active: true,
+                                    WRITE_ACCESS: true,
+                                    CHUC_VU: chosenRole === 'ADMIN' ? 'Chủ sở hữu (Admin)' : chosenRole === 'KHO' ? 'Thủ Kho' : 'Nhân Viên Bán Hàng',
+                                    BO_PHAN: chosenRole === 'ADMIN' ? 'Ban Giám Đốc' : chosenRole === 'KHO' ? 'Bộ Phận Kho' : 'Bộ Phận Bán Hàng',
+                                    ROLES: [chosenRole, chosenRole.toLowerCase()],
+                                    PERMISSIONS: chosenRole === 'ADMIN' 
+                                      ? ["DASHBOARD", "PRODUCT", "TRANSACTION", "HISTORY", "AUDIT", "CATEGORY"] 
+                                      : chosenRole === 'KHO'
+                                        ? ["PRODUCT", "TRANSACTION", "HISTORY"]
+                                        : ["TRANSACTION"]
                                   };
                                   onUpdateNhanVien(n.EMAIL, updatedStaff);
-                                  setSuccessMsg(`Đã phê duyệt & kích hoạt tài khoản cho [${n.HO_TEN}]. Email thông báo đã gửi.`);
+                                  setSuccessMsg(`Đã phê duyệt & kích hoạt tài khoản vai trò ${chosenRole} cho [${n.HO_TEN}]. Email thông báo đã gửi.`);
                                   setTimeout(() => setSuccessMsg(''), 4000);
                                 }}
                                 className="py-1.5 px-3 bg-emerald-600 hover:bg-emerald-500 text-white text-[10px] font-bold rounded-lg cursor-pointer transition-all shrink-0 flex items-center gap-1 shadow-2xs"
@@ -1529,7 +1582,8 @@ export default function CategoryManagement({
                                 onClick={() => {
                                   const updatedStaff: NhanVien = {
                                     ...n,
-                                    TRANG_THAI: 'Từ chối'
+                                    TRANG_THAI: 'Từ chối',
+                                    active: false
                                   };
                                   onUpdateNhanVien(n.EMAIL, updatedStaff);
                                   setSuccessMsg(`Đã từ chối tài khoản cho [${n.HO_TEN}]. Email thông báo đã gửi.`);
@@ -1619,14 +1673,9 @@ export default function CategoryManagement({
                                 );
                               });
                             }
-                            const r = roles.find(item => item.ROLE_CODE === n.ROLE) || DEFAULT_ROLES.find(item => item.ROLE_CODE === n.ROLE);
-                            const label = r ? r.TEN_ROLE : n.ROLE;
-                            let badgeColor = 'bg-slate-50 text-slate-500 border-slate-200';
-                            if (n.ROLE === 'ADMIN') badgeColor = 'bg-rose-50 text-rose-700 border-rose-100';
-                            if (n.ROLE === 'MANAGER' || n.ROLE === 'KHO') badgeColor = 'bg-emerald-50 text-emerald-700 border-emerald-100';
                             return (
-                              <span className={`inline-flex items-center gap-1 font-sans font-bold text-[10px] py-1 px-3 rounded-full border ${badgeColor}`}>
-                                <Shield className="w-3 h-3 text-slate-400" /> {label}
+                              <span className="inline-flex items-center gap-1 font-sans font-bold text-[10px] py-1 px-3 rounded-full border bg-slate-50 text-slate-500 border-slate-200">
+                                <Shield className="w-3 h-3 text-slate-400" /> {n.ROLE === 'ADMIN' ? 'Quản trị viên (Admin)' : n.ROLE === 'KHO' ? 'Thủ kho' : 'Bán hàng'}
                               </span>
                             );
                           })()}
@@ -1667,30 +1716,36 @@ export default function CategoryManagement({
                                 </button>
                               )}
 
-                              <button
-                                onClick={() => {
-                                  setResetStaff(n);
-                                  setResetPasswordInput('');
-                                }}
-                                className="p-1 text-amber-600 hover:bg-amber-50 rounded-md cursor-pointer transition-colors inline-flex"
-                                title="Đặt lại mật khẩu"
-                              >
-                                <Key className="w-3.5 h-3.5" />
-                              </button>
-                              <button
-                                onClick={() => handleStartEditStaff(n)}
-                                className="p-1 text-blue-600 hover:bg-blue-50 rounded-md cursor-pointer transition-colors inline-flex"
-                                title="Sửa"
-                              >
-                                <Edit className="w-3.5 h-3.5" />
-                              </button>
-                              <button
-                                onClick={() => handleDeleteStaffItem(n.EMAIL)}
-                                className="p-1 text-red-600 hover:bg-red-50 rounded-md cursor-pointer transition-colors inline-flex"
-                                title="Xóa"
-                              >
-                                <Trash2 className="w-3.5 h-3.5" />
-                              </button>
+                              {hasPerm('employee.edit') && (
+                                <button
+                                  onClick={() => {
+                                    setResetStaff(n);
+                                    setResetPasswordInput('');
+                                  }}
+                                  className="p-1 text-amber-600 hover:bg-amber-50 rounded-md cursor-pointer transition-colors inline-flex"
+                                  title="Đặt lại mật khẩu"
+                                >
+                                  <Key className="w-3.5 h-3.5" />
+                                </button>
+                              )}
+                              {hasPerm('employee.edit') && (
+                                <button
+                                  onClick={() => handleStartEditStaff(n)}
+                                  className="p-1 text-blue-600 hover:bg-blue-50 rounded-md cursor-pointer transition-colors inline-flex"
+                                  title="Sửa"
+                                >
+                                  <Edit className="w-3.5 h-3.5" />
+                                </button>
+                              )}
+                              {hasPerm('employee.delete') && (
+                                <button
+                                  onClick={() => handleDeleteStaffItem(n.EMAIL)}
+                                  className="p-1 text-red-600 hover:bg-red-50 rounded-md cursor-pointer transition-colors inline-flex"
+                                  title="Xóa"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </button>
+                              )}
                             </div>
                           )}
                         </div>
@@ -1748,89 +1803,102 @@ export default function CategoryManagement({
                   <div className="space-y-2 border-t border-slate-50 pt-3">
                     <label className="text-[10px] uppercase font-bold text-slate-400 block">Danh Sách Quyền Hạn (Permissions)</label>
                     
-                    <div className="space-y-3.5 max-h-[320px] overflow-y-auto pr-1.5 scrollbar-thin">
-                      {[
-                        {
-                          groupName: 'Tổng quan & Thống kê',
-                          permissions: [
-                            { code: 'dashboard.view', desc: 'Xem Dashboard tổng hợp' }
-                          ]
-                        },
-                        {
-                          groupName: 'Quản lý Sản phẩm',
-                          permissions: [
-                            { code: 'product.view', desc: 'Xem danh sách sản phẩm' },
-                            { code: 'product.create', desc: 'Khai báo/Thêm sản phẩm' },
-                            { code: 'product.edit', desc: 'Sửa thông tin sản phẩm' },
-                            { code: 'product.delete', desc: 'Xóa vĩnh viễn sản phẩm' }
-                          ]
-                        },
-                        {
-                          groupName: 'Nhập kho',
-                          permissions: [
-                            { code: 'import.view', desc: 'Xem lịch sử nhập kho' },
-                            { code: 'import.create', desc: 'Tạo phiếu nhập kho' },
-                            { code: 'import.edit', desc: 'Sửa phiếu nhập kho' },
-                            { code: 'import.delete', desc: 'Xóa phiếu nhập kho' }
-                          ]
-                        },
-                        {
-                          groupName: 'Xuất kho',
-                          permissions: [
-                            { code: 'export.view', desc: 'Xem lịch sử xuất kho' },
-                            { code: 'export.create', desc: 'Tạo phiếu xuất kho' },
-                            { code: 'export.edit', desc: 'Sửa phiếu xuất kho' },
-                            { code: 'export.delete', desc: 'Xóa phiếu xuất kho' }
-                          ]
-                        },
-                        {
-                          groupName: 'Kiểm kho & Báo cáo',
-                          permissions: [
-                            { code: 'inventory.view', desc: 'Xem kết quả kiểm kê' },
-                            { code: 'inventory.edit', desc: 'Cân bằng/Chốt chênh lệch tồn' },
-                            { code: 'report.view', desc: 'Xem báo cáo kinh doanh/lợi nhuận' }
-                          ]
-                        },
-                        {
-                          groupName: 'Nhân sự & Vai trò',
-                          permissions: [
-                            { code: 'user.view', desc: 'Xem danh sách nhân viên' },
-                            { code: 'user.create', desc: 'Thêm tài khoản nhân sự mới' },
-                            { code: 'user.edit', desc: 'Cập nhật tài khoản nhân sự' },
-                            { code: 'user.delete', desc: 'Khóa/Xóa nhân sự' },
-                            { code: 'role.view', desc: 'Xem vai trò & quyền hạn (RBAC)' },
-                            { code: 'role.create', desc: 'Khai báo vai trò mới' },
-                            { code: 'role.edit', desc: 'Sửa quyền của vai trò' },
-                            { code: 'role.delete', desc: 'Xóa vai trò' }
-                          ]
-                        }
-                      ].map(group => (
-                        <div key={group.groupName} className="space-y-1.5 border border-slate-50 bg-slate-50/20 p-2.5 rounded-lg">
-                          <h4 className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">{group.groupName}</h4>
-                          <div className="grid grid-cols-1 gap-1.5">
-                            {group.permissions.map(p => {
-                              const isChecked = newRolePermissions.includes(p.code);
-                              return (
-                                <label key={p.code} className="flex items-center gap-2 cursor-pointer select-none text-[11px] font-medium text-slate-600 hover:text-slate-800">
-                                  <input
-                                    type="checkbox"
-                                    checked={isChecked}
-                                    onChange={(e) => {
-                                      if (e.target.checked) {
-                                        setNewRolePermissions(prev => [...prev, p.code]);
-                                      } else {
-                                        setNewRolePermissions(prev => prev.filter(code => code !== p.code));
-                                      }
-                                    }}
-                                    className="rounded text-red-600 focus:ring-red-500 w-3.5 h-3.5 border-slate-200"
-                                  />
-                                  <span>{p.desc}</span>
-                                </label>
-                              );
-                            })}
+                    <div className="space-y-4 max-h-[350px] overflow-y-auto pr-1.5 scrollbar-thin">
+                      {HIERARCHICAL_PERMISSIONS.map(parent => {
+                        const isL1Checked = newRolePermissions.includes(parent.code);
+                        const hasChildren = parent.children && parent.children.length > 0;
+                        
+                        return (
+                          <div key={parent.code} className="border border-slate-100 dark:border-slate-800 bg-white dark:bg-slate-950 rounded-xl overflow-hidden shadow-xs transition-all duration-300">
+                            {/* LEVEL 1: TAB / MODULE */}
+                            <div className={`p-2.5 flex items-center justify-between border-b border-slate-50 dark:border-slate-800/50 transition-colors ${
+                              isL1Checked 
+                                ? 'bg-red-50/30 dark:bg-red-950/10' 
+                                : 'bg-slate-50/50 dark:bg-slate-900/50'
+                            }`}>
+                              <label className="flex items-center gap-2.5 cursor-pointer select-none text-[11px] font-bold text-slate-700 dark:text-slate-300 w-full">
+                                <input
+                                  type="checkbox"
+                                  checked={isL1Checked}
+                                  onChange={(e) => {
+                                    if (e.target.checked) {
+                                      setNewRolePermissions(prev => [...prev, parent.code]);
+                                    } else {
+                                      const childrenCodes = parent.children?.map(c => c.code) || [];
+                                      setNewRolePermissions(prev => prev.filter(code => code !== parent.code && !childrenCodes.includes(code)));
+                                    }
+                                  }}
+                                  className="rounded text-red-600 focus:ring-red-500 w-4 h-4 border-slate-300 dark:border-slate-700 dark:bg-slate-800 cursor-pointer transition-all"
+                                />
+                                <span className="flex items-center gap-1.5 uppercase tracking-wide">
+                                  <Shield className="w-3.5 h-3.5 text-red-500 shrink-0" />
+                                  {parent.desc}
+                                </span>
+                              </label>
+                              
+                              {hasChildren && (
+                                <span className={`text-[9px] px-2 py-0.5 rounded-full font-semibold transition-all ${
+                                  isL1Checked
+                                    ? 'bg-red-100 text-red-700 dark:bg-red-950/30 dark:text-red-400'
+                                    : 'bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-400'
+                                }`}>
+                                  {isL1Checked ? 'Đã bật' : 'Chưa bật'}
+                                </span>
+                              )}
+                            </div>
+
+                            {/* LEVEL 2: CHỨC NĂNG TRONG TAB */}
+                            {hasChildren && (
+                              <AnimatePresence initial={false}>
+                                {isL1Checked ? (
+                                  <motion.div
+                                    initial={{ height: 0, opacity: 0 }}
+                                    animate={{ height: 'auto', opacity: 1 }}
+                                    exit={{ height: 0, opacity: 0 }}
+                                    transition={{ duration: 0.2 }}
+                                    className="overflow-hidden bg-slate-50/10 dark:bg-slate-950/10"
+                                  >
+                                    <div className="p-2.5 pl-8 space-y-2 border-t border-slate-100/50 dark:border-slate-800/30 relative">
+                                      {/* Tree branch line decorations */}
+                                      <div className="absolute left-5 top-0 bottom-4 w-0.5 bg-slate-200 dark:bg-slate-800" />
+                                      
+                                      {parent.children?.map(child => {
+                                        const isL2Checked = newRolePermissions.includes(child.code);
+                                        return (
+                                          <div key={child.code} className="flex items-center gap-2 relative">
+                                            {/* Horizontal connector line */}
+                                            <div className="absolute -left-3.5 top-2.5 w-3 h-0.5 bg-slate-200 dark:bg-slate-800" />
+                                            
+                                            <label className="flex items-center gap-2 cursor-pointer select-none text-[11px] font-medium text-slate-600 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200 transition-colors py-0.5 pl-1 w-full">
+                                              <input
+                                                type="checkbox"
+                                                checked={isL2Checked}
+                                                onChange={(e) => {
+                                                  if (e.target.checked) {
+                                                    setNewRolePermissions(prev => [...prev, child.code]);
+                                                  } else {
+                                                    setNewRolePermissions(prev => prev.filter(code => code !== child.code));
+                                                  }
+                                                }}
+                                                className="rounded text-red-600 focus:ring-red-500 w-3.5 h-3.5 border-slate-300 dark:border-slate-700 dark:bg-slate-800 cursor-pointer"
+                                              />
+                                              <span>{child.desc}</span>
+                                            </label>
+                                          </div>
+                                        );
+                                      })}
+                                    </div>
+                                  </motion.div>
+                                ) : (
+                                  <div className="p-2.5 pl-8 text-[10px] text-slate-400 dark:text-slate-500 italic flex items-center gap-1.5">
+                                    <span>Bật tab để tùy chỉnh quyền hạn chức năng</span>
+                                  </div>
+                                )}
+                              </AnimatePresence>
+                            )}
                           </div>
-                        </div>
-                      ))}
+                        );
+                      })}
                     </div>
                   </div>
 
@@ -2431,18 +2499,23 @@ export default function CategoryManagement({
 
                 {roles && roles.length > 0 && (
                   <div className="space-y-1.5 border-t border-slate-100 pt-2">
-                    <label className="text-[10px] uppercase font-bold text-slate-400 block mb-1">Vai trò hệ thống (ROLE)</label>
+                    <label className="text-[10px] uppercase font-bold text-slate-400 block mb-1">Vai trò RBAC được gán</label>
                     <div className="flex flex-wrap gap-2.5 p-2 bg-slate-50 rounded-lg border border-slate-100">
                       {roles.map(r => {
-                        const isChecked = newStaffRole === r.ROLE_CODE;
+                        const isChecked = newStaffRoles.includes(r.ROLE_CODE);
                         return (
                           <label key={r.ROLE_CODE} className="inline-flex items-center gap-1.5 text-[11px] font-bold text-slate-600 cursor-pointer select-none">
                             <input
-                              type="radio"
-                              name="edit_staff_role"
+                              type="checkbox"
                               checked={isChecked}
-                              onChange={() => setNewStaffRole(r.ROLE_CODE)}
-                              className="text-red-600 focus:ring-red-500 w-3.5 h-3.5 border-slate-200"
+                              onChange={(e) => {
+                                if (e.target.checked) {
+                                  setNewStaffRoles(prev => [...prev, r.ROLE_CODE]);
+                                } else {
+                                  setNewStaffRoles(prev => prev.filter(code => code !== r.ROLE_CODE));
+                                }
+                              }}
+                              className="rounded text-red-600 focus:ring-red-500 w-3.5 h-3.5 border-slate-200"
                             />
                             <span>{r.TEN_ROLE}</span>
                           </label>

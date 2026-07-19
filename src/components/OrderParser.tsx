@@ -278,7 +278,6 @@ export default function OrderParser({
         }
 
         if (!headers || headers.length === 0) {
-          setTempOrders([]);
           return;
         }
 
@@ -1385,9 +1384,6 @@ export default function OrderParser({
     setDeleteConfirm(null);
 
     if (type === 'single' && id) {
-      const backupTempOrders = [...tempOrders];
-      const backupSelectedIds = [...selectedTempOrderIds];
-
       // Optimistic UI update immediately
       setTempOrders(prev => prev.filter(o => o.id !== id));
       setSelectedTempOrderIds(prev => prev.filter(orderId => orderId !== id));
@@ -1413,16 +1409,12 @@ export default function OrderParser({
 
         if (headerErr) {
           console.error('Lỗi khi xóa b_gomdon trên Supabase:', headerErr);
-          setTempOrders(backupTempOrders);
-          setSelectedTempOrderIds(backupSelectedIds);
           if (onTriggerToast) onTriggerToast('Lỗi khi xóa đơn hàng tạm trên cơ sở dữ liệu!', 'error');
         } else {
           if (onTriggerToast) onTriggerToast('Đã xóa đơn hàng tạm', 'success');
         }
       } catch (err) {
         console.error('Lỗi khi thực hiện xóa trên Supabase:', err);
-        setTempOrders(backupTempOrders);
-        setSelectedTempOrderIds(backupSelectedIds);
         if (onTriggerToast) onTriggerToast('Lỗi kết nối khi xóa đơn hàng tạm!', 'error');
       }
     } else if (type === 'all') {

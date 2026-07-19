@@ -37,9 +37,22 @@ interface ProductManagementProps {
   thuongHieus: string[];
   brandList?: ThuongHieu[];
   currentUser: any;
+  hasPermission?: (permissionCode: string) => boolean;
 }
 
-export default function ProductManagement({ sanPhams = [], onAddProduct, onUpdateProduct, thuongHieus = [], brandList = [], currentUser }: ProductManagementProps) {
+export default function ProductManagement({
+  sanPhams = [],
+  onAddProduct,
+  onUpdateProduct,
+  thuongHieus = [],
+  brandList = [],
+  currentUser,
+  hasPermission
+}: ProductManagementProps) {
+  const hasPerm = (p: string) => {
+    if (hasPermission) return hasPermission(p);
+    return currentUser?.WRITE_ACCESS !== false && currentUser?.writeAccess !== false;
+  };
   // --- 1. QUẢN LÝ TRẠNG THÁI HIỂN THỊ & TÌM KIẾM ---
   const [searchTerm, setSearchTerm] = useState<string>('');
   const [filterBrand, setFilterBrand] = useState<string>('Tất cả');
@@ -462,11 +475,11 @@ export default function ProductManagement({ sanPhams = [], onAddProduct, onUpdat
   return (
     <div className="space-y-6">
       
-      {currentUser.WRITE_ACCESS === false && (
+      {(!hasPerm('product.create') && !hasPerm('product.edit')) && (
         <div className="p-4 bg-amber-50 border border-amber-100 text-amber-800 rounded-xl text-xs flex items-center gap-3 shadow-2xs">
           <AlertCircle className="w-5 h-5 shrink-0 text-amber-500" />
           <span className="font-semibold">
-            Tài khoản của bạn <strong>({currentUser.fullName} - {currentUser.role})</strong> được phân quyền <strong>Chỉ Xem</strong>. Chức năng khởi tạo, chỉnh sửa sản phẩm tròng kính đã bị khóa.
+            Tài khoản của bạn <strong>({currentUser.fullName} - {currentUser.role})</strong> không có quyền Thêm hoặc Sửa sản phẩm. Chức năng khởi tạo, chỉnh sửa sản phẩm tròng kính đã bị khóa.
           </span>
         </div>
       )}
@@ -518,7 +531,7 @@ export default function ProductManagement({ sanPhams = [], onAddProduct, onUpdat
           </select>
 
           {/* Nút thêm mới - Chỉ hiện nếu có quyền ghi */}
-          {currentUser.WRITE_ACCESS !== false && (
+          {hasPerm('product.create') && (
             <button
               onClick={() => setShowAddModal(true)}
               className="flex items-center gap-1.5 bg-red-600 hover:bg-red-700 text-white font-bold text-xs py-2 px-4 rounded-xl cursor-pointer transition-all shadow-xs shrink-0"
@@ -729,7 +742,7 @@ export default function ProductManagement({ sanPhams = [], onAddProduct, onUpdat
                           min={0}
                           key={`${p.SKU}-${p.TON_TOI_THIEU}`}
                           defaultValue={p.TON_TOI_THIEU ?? 0}
-                          disabled={currentUser.WRITE_ACCESS === false || currentUser.writeAccess === false}
+                          disabled={!hasPerm('product.edit')}
                           onBlur={(e) => {
                             const val = Math.max(0, parseInt(e.target.value) || 0);
                             if (val !== (p.TON_TOI_THIEU ?? 0) && onUpdateProduct) {
