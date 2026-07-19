@@ -710,8 +710,8 @@ export default function Dashboard({
     let totalXuat = 0;
 
     filteredDetails.forEach(d => {
-      if (d.LOAI === 'NHẬP' && !d.HOA_DON.startsWith('PNK')) totalNhap += d.SO_LUONG;
-      if (d.LOAI === 'XUẤT' && !d.HOA_DON.startsWith('PXK')) totalXuat += d.SO_LUONG;
+      if (d.LOAI === 'NHẬP') totalNhap += d.SO_LUONG;
+      if (d.LOAI === 'XUẤT') totalXuat += d.SO_LUONG;
     });
 
     const lowStockCount = sanPhams.filter(p => p.TON_CUOI <= p.TON_TOI_THIEU).length;
@@ -733,7 +733,7 @@ export default function Dashboard({
     const mapXuat: Record<string, { sku: string; qty: number; name: string }> = {};
 
     filteredDetails.forEach(d => {
-      if (d.LOAI === 'XUẤT' && !d.HOA_DON.startsWith('PXK')) {
+      if (d.LOAI === 'XUẤT') {
         if (!mapXuat[d.SKU]) {
           mapXuat[d.SKU] = { sku: d.SKU, qty: 0, name: d.TEN_SP };
         }
@@ -764,7 +764,7 @@ export default function Dashboard({
     const mapBranch: Record<string, { branch: string; qty: number }> = {};
 
     filteredHeaders.forEach(h => {
-      if (h.LOAI === 'XUẤT' && !h.HOA_DON.startsWith('PXK')) {
+      if (h.LOAI === 'XUẤT') {
         if (!mapBranch[h.CHI_NHANH]) {
           mapBranch[h.CHI_NHANH] = { branch: h.CHI_NHANH, qty: 0 };
         }
@@ -789,8 +789,8 @@ export default function Dashboard({
       if (!mapDate[dateStr]) {
         mapDate[dateStr] = { date: dateStr, nhap: 0, xuất: 0 };
       }
-      if (d.LOAI === 'NHẬP' && !d.HOA_DON.startsWith('PNK')) mapDate[dateStr].nhap += d.SO_LUONG;
-      if (d.LOAI === 'XUẤT' && !d.HOA_DON.startsWith('PXK')) mapDate[dateStr].xuất += d.SO_LUONG;
+      if (d.LOAI === 'NHẬP') mapDate[dateStr].nhap += d.SO_LUONG;
+      if (d.LOAI === 'XUẤT') mapDate[dateStr].xuất += d.SO_LUONG;
     });
 
     return Object.values(mapDate)
