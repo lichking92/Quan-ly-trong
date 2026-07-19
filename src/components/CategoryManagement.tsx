@@ -70,6 +70,10 @@ const PERMISSION_MAP: Record<string, string> = {
   'role.view': 'Vai trò',
   'settings.view': 'Cài đặt',
   'inventory.view': 'Sản phẩm (Tương thích cũ)',
+  'import.view': 'Xem Nhập kho',
+  'export.view': 'Xem Xuất kho',
+  'report.view': 'Xem Báo cáo',
+  'user.view': 'Xem Người dùng',
 
   // Level 2 Functions
   'dashboard.read': 'Xem Dashboard',
@@ -92,6 +96,7 @@ const PERMISSION_MAP: Record<string, string> = {
   'picking_nhap.delete': 'Xóa phiếu nhập',
   
   'history.read': 'Xem Lịch sử nhập xuất',
+  'history.read_all': 'Xem toàn bộ Lịch sử nhập xuất (Tất cả)',
   'history.create': 'Tạo phiếu nhập xuất',
   'history.edit': 'Sửa phiếu nhập xuất',
   'history.delete': 'Xóa phiếu nhập xuất',
@@ -121,7 +126,21 @@ const PERMISSION_MAP: Record<string, string> = {
   'role.edit': 'Sửa Vai trò',
   'role.delete': 'Xóa Vai trò',
   
-  'settings.read': 'Xem Cài đặt'
+  'settings.read': 'Xem Cài đặt',
+
+  'import.create': 'Tạo phiếu Nhập kho',
+  'import.edit': 'Sửa phiếu Nhập kho',
+  'import.delete': 'Xóa phiếu Nhập kho',
+
+  'export.create': 'Tạo phiếu Xuất kho',
+  'export.edit': 'Sửa phiếu Xuất kho',
+  'export.delete': 'Xóa phiếu Xuất kho',
+
+  'inventory.edit': 'Sửa sản phẩm (Tương thích cũ)',
+
+  'user.create': 'Tạo Người dùng',
+  'user.edit': 'Sửa Người dùng',
+  'user.delete': 'Xóa Người dùng'
 };
 
 export default function CategoryManagement({

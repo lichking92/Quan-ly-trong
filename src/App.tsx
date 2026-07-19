@@ -496,11 +496,6 @@ export default function App() {
 
   const forceLogout = () => {
     console.warn("[Auth Guard] Bắt đầu xóa toàn bộ cache, session và thông tin đăng nhập...");
-    try {
-      supabase.auth.signOut();
-    } catch (e) {
-      console.warn("Lỗi khi signOut Supabase:", e);
-    }
     localStorage.clear();
     sessionStorage.clear();
     setCurrentUser(null);
@@ -530,91 +525,12 @@ export default function App() {
       return true;
     }
 
-    // Nếu không cấu hình Supabase (hoặc đang dùng dummy proxy), bỏ qua
-    if (!(import.meta as any).env.VITE_SUPABASE_URL || !(import.meta as any).env.VITE_SUPABASE_ANON_KEY) {
-      console.log("[Auth Guard] Supabase chưa cấu hình, bỏ qua xác thực phiên Auth.");
-      return true;
-    }
-
-    // Nếu user_id là cục bộ, bỏ qua
-    if (currentUser.user_id && currentUser.user_id.startsWith('LOCAL_')) {
-      console.log("[Auth Guard] Đang dùng tài khoản nội bộ cục bộ, bỏ qua xác thực phiên Auth.");
-      return true;
-    }
-
     try {
-      // Xác minh session thực tế từ Supabase Auth để đảm bảo hợp lệ
-      const { data: { user: authUser }, error: authError } = await supabase.auth.getUser();
-      
-      let targetUserId = authUser?.id;
-      let isAuthValid = !authError && authUser;
-
-      // Nếu không lấy được authUser từ Supabase Auth (có thể do iframe chặn cookie, lag session...)
-      if (!isAuthValid) {
-        console.warn("[Auth Guard] Không xác định được phiên Supabase Auth. Thử kiểm tra dữ liệu cục bộ...");
-        
-        // Thay vì log out ngay lập tức, ta kiểm tra xem user này có trong localStorage hoặc danh sách nhanViens không.
-        // Điều này cực kỳ quan trọng để chống logout cưỡng chế oan do lỗi iframe/cookie.
-        if (currentUser.id) {
-          const localNhanViensStr = localStorage.getItem('B_NHANVIEN');
-          let localList: NhanVien[] = [];
-          if (localNhanViensStr) {
-            try {
-              localList = JSON.parse(localNhanViensStr);
-            } catch (e) {}
-          }
-          if (!localList || localList.length === 0) {
-            localList = nhanViens || [];
-          }
-          if (!localList || localList.length === 0) {
-            localList = (inMemoryCache['B_NHANVIEN'] as NhanVien[]) || [];
-          }
-
-          const foundLocal = localList.find(n => 
-            (n.MA_NV || '').trim().toLowerCase() === (currentUser.id || '').trim().toLowerCase() ||
-            (n.TEN_DANG_NHAP || '').trim().toLowerCase() === (currentUser.username || '').trim().toLowerCase() ||
-            (n.EMAIL || '').trim().toLowerCase() === (currentUser.username || '').trim().toLowerCase()
-          );
-
-          if (foundLocal) {
-            const role = (foundLocal.ROLE || '').trim().toUpperCase();
-            const rawStatus = (foundLocal.TRANG_THAI || '').trim().toUpperCase();
-            const isActive = foundLocal.active === true;
-
-            const isApprovedAdmin = role === 'ADMIN' && isActive && 
-              (rawStatus === 'ACTIVE' || rawStatus === 'HOẠT ĐỘNG' || rawStatus === 'KÍCH HOẠT' || rawStatus === 'HOAT DONG');
-
-            const isPending = !isApprovedAdmin && (
-              !isActive || 
-              rawStatus === 'PENDING' || 
-              rawStatus === 'CHỜ DUYỆT' || 
-              rawStatus === 'CHO DUYET' || 
-              role === 'PENDING'
-            );
-
-            if (isPending) {
-              console.error("[Auth Guard] Tài khoản cục bộ ở trạng thái chờ duyệt hoặc bị khóa!");
-              forceLogout();
-              return false;
-            }
-            
-            // Nếu tài khoản cục bộ hoạt động tốt, cho phép tiếp tục sử dụng để tránh gián đoạn
-            console.log("[Auth Guard] Tài khoản cục bộ hoạt động tốt, bỏ qua lỗi Auth.");
-            return true;
-          }
-        }
-        
-        // Nếu không có cả cục bộ lẫn online, hoặc không thể xác thực gì, chỉ lúc đó mới forceLogout
-        console.error("[Auth Guard] Phiên đăng nhập Auth không hợp lệ và không thể đối chiếu cục bộ! Đăng xuất cưỡng chế.");
-        forceLogout();
-        return false;
-      }
-
-      // Truy vấn tài khoản theo user_id từ b_nhanvien (hoặc email tự động liên kết)
+      // Truy vấn tài khoản theo MA_NV (currentUser.id) từ b_nhanvien (hoặc TEN_DANG_NHAP)
       let { data: dbNhanViens, error } = await supabase
         .from('b_nhanvien')
         .select('*')
-        .eq('user_id', targetUserId);
+        .eq('MA_NV', currentUser.id);
 
       if (error) {
         console.warn("[Auth Guard] Lỗi truy vấn xác thực tài khoản:", error.message);
@@ -623,26 +539,15 @@ export default function App() {
 
       let staffMember = dbNhanViens && dbNhanViens[0];
 
-      if (!staffMember && authUser?.email) {
-        console.log(`[Auth Guard] Thử tìm theo email: ${authUser.email}...`);
-        const { data: emailNhanViens } = await supabase
+      if (!staffMember) {
+        // Dự phòng tìm theo Tên đăng nhập nếu không khớp MA_NV
+        const { data: fallbackStaffs } = await supabase
           .from('b_nhanvien')
           .select('*')
-          .ilike('EMAIL', authUser.email.trim());
-
-        if (emailNhanViens && emailNhanViens.length > 0) {
-          staffMember = emailNhanViens[0];
-          // Cập nhật liên kết user_id tự động
-          console.log(`[Auth Guard] Tự động cập nhật liên kết user_id cho: ${staffMember.MA_NV}`);
-          try {
-            await supabase
-              .from('b_nhanvien')
-              .update({ user_id: targetUserId })
-              .eq('MA_NV', staffMember.MA_NV);
-            staffMember.user_id = targetUserId;
-          } catch (linkErr) {
-            console.warn('[Auth Guard] Lỗi tự động cập nhật liên kết user_id:', linkErr);
-          }
+          .eq('TEN_DANG_NHAP', currentUser.username);
+        
+        if (fallbackStaffs && fallbackStaffs.length > 0) {
+          staffMember = fallbackStaffs[0];
         }
       }
       
@@ -1565,76 +1470,55 @@ export default function App() {
     // 1. Kiểm tra session ngay khi trang web khởi chạy và tự động tải dữ liệu
     const initializeAuth = async () => {
       try {
-        const { data: { session } } = await supabase.auth.getSession();
-        if (session?.user) {
-          const userId = session.user.id;
-          const email = session.user.email || '';
+        const savedUserStr = localStorage.getItem('CURRENT_USER');
+        if (savedUserStr) {
+          const savedUser = JSON.parse(savedUserStr);
+          const userId = savedUser.user_id || savedUser.id;
+          const email = savedUser.username || '';
 
-          // Kiểm tra tính hợp lệ của nhân sự trong b_nhanvien (hoặc email tự động liên kết)
-          let { data: dbNhanViens, error } = await supabase
-            .from('b_nhanvien')
-            .select('*')
-            .eq('user_id', userId);
-
-          let staffMember = dbNhanViens && dbNhanViens[0];
-
-          if (!staffMember && email) {
-            console.log(`[Auth Init] Không tìm thấy theo user_id, thử tìm theo email: ${email}`);
-            const { data: emailNhanViens } = await supabase
+          if (userId) {
+            // Kiểm tra tính hợp lệ của nhân sự trong b_nhanvien bằng MA_NV
+            let { data: dbNhanViens, error } = await supabase
               .from('b_nhanvien')
               .select('*')
-              .ilike('EMAIL', email.trim());
+              .eq('MA_NV', savedUser.id);
 
-            if (emailNhanViens && emailNhanViens.length > 0) {
-              staffMember = emailNhanViens[0];
-              console.log(`[Auth Init] Tìm thấy theo email! Tự động cập nhật liên kết user_id cho nhân viên: ${staffMember.MA_NV}`);
-              try {
-                await supabase
-                  .from('b_nhanvien')
-                  .update({ user_id: userId })
-                  .eq('MA_NV', staffMember.MA_NV);
-                staffMember.user_id = userId;
-              } catch (linkErr) {
-                console.warn('[Auth Init] Lỗi tự động cập nhật liên kết user_id:', linkErr);
-              }
+            let staffMember = dbNhanViens && dbNhanViens[0];
+
+            if (!staffMember) {
+              console.warn('[Auth Guard] Không tìm thấy bản ghi nhân viên tương ứng. Đăng xuất.');
+              setCurrentUser(null);
+              localStorage.removeItem('CURRENT_USER');
+              return;
             }
+
+            const role = (staffMember.ROLE || '').trim().toUpperCase();
+            const rawStatus = (staffMember.TRANG_THAI || '').trim().toUpperCase();
+            const isActive = staffMember.active === true;
+            
+            const isApprovedAdmin = role === 'ADMIN' && isActive && 
+              (rawStatus === 'ACTIVE' || rawStatus === 'HOẠT ĐỘNG' || rawStatus === 'KÍCH HOẠT' || rawStatus === 'HOAT DONG');
+
+            const isPending = !isApprovedAdmin && (
+              !isActive || 
+              rawStatus === 'PENDING' || 
+              rawStatus === 'CHỜ DUYỆT' || 
+              rawStatus === 'CHO DUYET' || 
+              role === 'PENDING'
+            );
+
+            if (isPending) {
+              console.warn('[Auth Guard] Tài khoản chờ duyệt hoặc không hoạt động. Đăng xuất.');
+              setCurrentUser(null);
+              localStorage.removeItem('CURRENT_USER');
+              return;
+            }
+
+            currentUserId = userId;
+            console.log('Phát hiện session hợp lệ khi khởi chạy. Thực hiện tải dữ liệu mới nhất từ Supabase Cloud...');
+            syncAllDataFromSupabase(userId, email);
+            setupRealtime(userId);
           }
-
-          if (!staffMember) {
-            console.warn('[Auth Guard] Không tìm thấy bản ghi nhân viên tương ứng. Đăng xuất.');
-            await supabase.auth.signOut();
-            setCurrentUser(null);
-            localStorage.removeItem('CURRENT_USER');
-            return;
-          }
-
-          const role = (staffMember.ROLE || '').trim().toUpperCase();
-          const rawStatus = (staffMember.TRANG_THAI || '').trim().toUpperCase();
-          const isActive = staffMember.active === true;
-          
-          const isApprovedAdmin = role === 'ADMIN' && isActive && 
-            (rawStatus === 'ACTIVE' || rawStatus === 'HOẠT ĐỘNG' || rawStatus === 'KÍCH HOẠT' || rawStatus === 'HOAT DONG');
-
-          const isPending = !isApprovedAdmin && (
-            !isActive || 
-            rawStatus === 'PENDING' || 
-            rawStatus === 'CHỜ DUYỆT' || 
-            rawStatus === 'CHO DUYET' || 
-            role === 'PENDING'
-          );
-
-          if (isPending) {
-            console.warn('[Auth Guard] Tài khoản chờ duyệt hoặc không hoạt động. Đăng xuất.');
-            await supabase.auth.signOut();
-            setCurrentUser(null);
-            localStorage.removeItem('CURRENT_USER');
-            return;
-          }
-
-          currentUserId = userId;
-          console.log('Phát hiện session hợp lệ khi khởi chạy. Thực hiện tải dữ liệu mới nhất từ Supabase Cloud...');
-          syncAllDataFromSupabase(userId, email);
-          setupRealtime(userId);
         } else {
           console.log('Không phát hiện session hoạt động. Khôi phục trạng thái về màn hình đăng nhập...');
           setCurrentUser(null);
@@ -1647,64 +1531,9 @@ export default function App() {
 
     initializeAuth();
 
-    // 2. Lắng nghe sự thay đổi trạng thái Auth của Supabase
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
-      console.log('Sự kiện Auth thay đổi:', event);
-      if (session?.user) {
-        const userId = session.user.id;
-        const email = session.user.email || '';
-        
-        if (currentUserId !== userId) {
-          currentUserId = userId;
-          syncAllDataFromSupabase(userId, email);
-          setupRealtime(userId);
-        }
-      } else {
-        currentUserId = null;
-        if (realtimeChannel) {
-          supabase.removeChannel(realtimeChannel);
-          realtimeChannel = null;
-        }
-        // Khi người dùng đăng xuất, dọn dẹp sạch LocalStorage và khôi phục dữ liệu mẫu cục bộ
-        const current = localStorage.getItem('CURRENT_USER');
-        if (current) {
-          const parsed = JSON.parse(current);
-          if (parsed.username.includes('@')) {
-            localStorage.removeItem(`${parsed.username}_HISTORY_FILTER_SEARCH`);
-            localStorage.removeItem(`${parsed.username}_HISTORY_FILTER_TYPE`);
-            localStorage.removeItem(`${parsed.username}_HISTORY_FILTER_SORT_BY`);
-            localStorage.removeItem(`${parsed.username}_HISTORY_FILTER_SORT_ORDER`);
-            localStorage.removeItem(`${parsed.username}_HISTORY_FILTER_GROUPED`);
-            localStorage.removeItem(`${parsed.username}_HISTORY_FILTER_BRANCH`);
-            localStorage.removeItem(`${parsed.username}_HISTORY_FILTER_WAREHOUSE`);
-            localStorage.removeItem(`${parsed.username}_HISTORY_FILTER_FROM_DATE`);
-            localStorage.removeItem(`${parsed.username}_HISTORY_FILTER_TO_DATE`);
-
-            setCurrentUser(null);
-            localStorage.removeItem('CURRENT_USER');
-            
-            setSanPhams([]);
-            setNhapXuats([]);
-            setNhapXuatCTs([]);
-            setKiemKhos([]);
-            setThuongHieus([]);
-            setChiNhanhs([]);
-            setNhanViens([]);
-
-            localStorage.removeItem('B_SANPHAM');
-            localStorage.removeItem('B_NHAPXUAT');
-            localStorage.removeItem('B_NHAPXUATCT');
-            localStorage.removeItem('B_KIEMKHO');
-            localStorage.removeItem('B_THUONGHIEU');
-            localStorage.removeItem('B_CHINHANH');
-            localStorage.removeItem('B_NHANVIEN');
-          }
-        }
-      }
-    });
+    // 2. Không cần lắng nghe onAuthStateChange vì Auth đã chuyển hoàn toàn sang b_nhanvien trực tiếp.
 
     return () => {
-      subscription.unsubscribe();
       if (realtimeChannel) {
         supabase.removeChannel(realtimeChannel);
       }
@@ -1910,14 +1739,15 @@ export default function App() {
   const getUserId = async (): Promise<string | null> => {
     if (currentUser?.user_id) return currentUser.user_id;
     if (currentUser?.id) return currentUser.id;
-    const { data: { session } } = await supabase.auth.getSession();
-    if (session?.user?.id) return session.user.id;
-    try {
-      const { data: { user } } = await supabase.auth.getUser();
-      return user?.id || null;
-    } catch {
-      return null;
+    
+    const savedUserStr = localStorage.getItem('CURRENT_USER');
+    if (savedUserStr) {
+      try {
+        const savedUser = JSON.parse(savedUserStr);
+        return savedUser.user_id || savedUser.id || null;
+      } catch {}
     }
+    return null;
   };
 
   const reloadRoles = async () => {
@@ -3779,51 +3609,7 @@ export default function App() {
           )}
         </nav>
 
-        {/* PHÂN VÙNG ĐỔI VAI NHANH - CHỈ HIỂN THỊ CHO TÀI KHOẢN ADMIN KHI CHƯA COLLAPSED */}
-        {currentUser.role === 'ADMIN' && !sidebarCollapsed && (
-          <div className={`p-4 mx-3 my-2 rounded-xl border shrink-0 space-y-3.5 ${sidebarStyle.switchBox}`}>
-            <div>
-              <div className={`text-[9px] font-bold uppercase tracking-wider mb-1.5 ${sidebarStyle.switchText}`}>Mô phỏng đổi vai nhanh:</div>
-              <select
-                value={currentUser.username}
-                onChange={(e) => handleSwitchUser(e.target.value)}
-                className={`w-full text-[10px] font-bold rounded-lg px-2 py-1.5 focus:outline-hidden cursor-pointer ${sidebarStyle.switchSelect}`}
-              >
-                {nhanViens.map(n => (
-                  <option key={n.EMAIL} value={n.EMAIL}>{n.HO_TEN} ({n.ROLE === 'ADMIN' ? 'Admin' : n.ROLE === 'KHO' ? 'Thủ kho' : 'Bán hàng'})</option>
-                ))}
-              </select>
-            </div>
 
-            <div className={`h-[1px] ${sidebarStyle.divider}`} />
-
-            {/* QUYỀN HẠN INDICATOR */}
-            <div className="flex items-center justify-between text-[10px]">
-              <span className={`font-semibold ${sidebarStyle.switchText}`}>Quyền ghi dữ liệu:</span>
-              <span className={`font-bold py-0.5 px-2 rounded-full font-mono text-[9px] ${currentUser.writeAccess !== false ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' : 'bg-amber-500/10 text-amber-400 border border-amber-500/20'}`}>
-                {currentUser.writeAccess !== false ? 'FULL ACCESS' : 'READ ONLY'}
-              </span>
-            </div>
-
-            {/* SUPABASE STATUS INDICATOR */}
-            {currentUser && (
-              <div className={`flex items-center justify-between text-[10px] pt-1.5 border-t ${sidebarStyle.divider}`}>
-                <span className={`font-semibold ${sidebarStyle.switchText}`}>Supabase Cloud:</span>
-                {loadingDb ? (
-                  <span className="text-blue-400 animate-pulse font-bold text-[9px] flex items-center gap-1 font-mono">
-                    <span className="h-1.5 w-1.5 bg-blue-400 rounded-full animate-ping" />
-                    SYNCING...
-                  </span>
-                ) : (
-                  <span className="text-emerald-400 font-bold text-[9px] flex items-center gap-1 font-mono">
-                    <span className="h-1.5 w-1.5 bg-emerald-400 rounded-full" />
-                    CONNECTED
-                  </span>
-                )}
-              </div>
-            )}
-          </div>
-        )}
 
         {/* NÚT ĐĂNG XUẤT Ở CUỐI SIDEBAR */}
         <div className={`p-4 border-t shrink-0 ${sidebarStyle.logoutBorder}`}>

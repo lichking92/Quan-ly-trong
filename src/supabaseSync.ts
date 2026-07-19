@@ -46,24 +46,6 @@ export function logDbError(msg: string, err: any) {
  * Trả về User ID có hiệu lực của Chủ cửa hàng/Admin từ Supabase Auth session hiện tại
  */
 export async function resolveEffectiveUserId(): Promise<string> {
-  try {
-    const { data: { session } } = await supabase.auth.getSession();
-    if (session?.user?.id) {
-      return session.user.id;
-    }
-  } catch (err) {
-    console.warn("Lỗi getSession trong resolveEffectiveUserId:", err);
-  }
-
-  try {
-    const { data: { user } } = await supabase.auth.getUser();
-    if (user?.id) {
-      return user.id;
-    }
-  } catch (err) {
-    console.warn("Lỗi getUser trong resolveEffectiveUserId:", err);
-  }
-
   // Dự phòng cuối: Đọc từ localStorage
   const savedUser = localStorage.getItem('CURRENT_USER');
   if (savedUser) {
@@ -765,20 +747,30 @@ export async function ensureUserOnboarded(userId: string): Promise<UserDataPaylo
     await ensureStorageBucketExists();
 
     // 2. Tự động kiểm tra và thêm tài khoản đăng nhập hiện tại nếu chưa có trong b_nhanvien
-    let user = null;
-    const { data: { session } } = await supabase.auth.getSession();
-    if (session?.user) {
-      user = session.user;
-    } else {
+    let email = "";
+    const savedUser = localStorage.getItem('CURRENT_USER');
+    if (savedUser) {
       try {
-        const { data: { user: authUser } } = await supabase.auth.getUser();
-        user = authUser;
+        const parsed = JSON.parse(savedUser);
+        if (parsed) {
+          if (parsed.username && parsed.username.includes('@')) {
+            email = parsed.username;
+          } else if (parsed.id) {
+            const { data: staff } = await supabase
+              .from('b_nhanvien')
+              .select('EMAIL')
+              .eq('MA_NV', parsed.id)
+              .limit(1);
+            if (staff && staff.length > 0) {
+              email = staff[0].EMAIL;
+            }
+          }
+        }
       } catch (err) {
-        console.warn('Không thể lấy thông tin user từ auth.getUser:', err);
+        console.warn('Lỗi lấy thông tin email:', err);
       }
     }
-    if (user && user.email) {
-      const email = user.email;
+    if (email) {
       const { data: existingStaff } = await supabase
         .from('b_nhanvien')
         .select('MA_NV')
