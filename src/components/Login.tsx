@@ -43,8 +43,30 @@ const DEFAULT_ROLES = [
     ]
   },
   {
+    ROLE_CODE: 'KHO',
+    TEN_ROLE: 'Thủ kho (Kho)',
+    PERMISSIONS: [
+      'dashboard.view',
+      'product.view', 'product.create', 'product.edit',
+      'import.view', 'import.create', 'import.edit',
+      'export.view', 'export.create', 'export.edit',
+      'inventory.view', 'inventory.edit',
+      'report.view'
+    ]
+  },
+  {
     ROLE_CODE: 'STAFF',
     TEN_ROLE: 'Nhân viên bán hàng (Staff)',
+    PERMISSIONS: [
+      'product.view',
+      'export.view', 'export.create',
+      'import.view',
+      'inventory.view'
+    ]
+  },
+  {
+    ROLE_CODE: 'NHAN_VIEN',
+    TEN_ROLE: 'Nhân viên (NhanVien)',
     PERMISSIONS: [
       'product.view',
       'export.view', 'export.create',

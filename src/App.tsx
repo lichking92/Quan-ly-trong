@@ -159,8 +159,30 @@ const DEFAULT_ROLES: Role[] = [
     ]
   },
   {
+    ROLE_CODE: 'KHO',
+    TEN_ROLE: 'Thủ kho (Kho)',
+    PERMISSIONS: [
+      'dashboard.view',
+      'product.view', 'product.create', 'product.edit',
+      'import.view', 'import.create', 'import.edit',
+      'export.view', 'export.create', 'export.edit',
+      'inventory.view', 'inventory.edit',
+      'report.view'
+    ]
+  },
+  {
     ROLE_CODE: 'STAFF',
     TEN_ROLE: 'Nhân viên bán hàng (Staff)',
+    PERMISSIONS: [
+      'product.view',
+      'export.view', 'export.create',
+      'import.view',
+      'inventory.view'
+    ]
+  },
+  {
+    ROLE_CODE: 'NHAN_VIEN',
+    TEN_ROLE: 'Nhân viên (NhanVien)',
     PERMISSIONS: [
       'product.view',
       'export.view', 'export.create',
@@ -315,6 +337,12 @@ export default function App() {
   useEffect(() => {
     if (!currentUser) return;
     
+    // Prevent wiping permissions during initial loading state when nhanViens list is empty
+    if (nhanViens.length === 0) {
+      console.log("[RBAC Sync] Danh sách nhanViens chưa được tải từ Supabase. Bảo toàn quyền hiện tại từ cache.");
+      return;
+    }
+    
     // Find latest staff info for current user
     const latestStaff = nhanViens.find(n => 
       (n.MA_NV || '').trim().toLowerCase() === (currentUser.id || '').trim().toLowerCase() ||
@@ -376,14 +404,56 @@ export default function App() {
   const hasPermission = useCallback((permissionCode: string): boolean => {
     if (!currentUser) return false;
 
-    if (Array.isArray(currentUser.permissions)) {
-      return currentUser.permissions.includes(permissionCode);
+    const perms = Array.isArray(currentUser.permissions) ? currentUser.permissions : [];
+    
+    // Normalize user permissions to lowercase for direct match
+    const normalizedPerms = perms.map((p: string) => (p || '').trim().toLowerCase());
+    const targetPermLower = permissionCode.toLowerCase();
+
+    if (normalizedPerms.includes(targetPermLower)) {
+      return true;
+    }
+
+    // Bridge gap between legacy uppercase categories and new lowercase dot-notation permissions
+    const categoryMapping: Record<string, string[]> = {
+      'dashboard': ['dashboard.view', 'report.view'],
+      'product': ['product.view', 'product.create', 'product.edit', 'product.delete'],
+      'transaction': [
+        'import.view', 'import.create', 'import.edit', 'import.delete',
+        'export.view', 'export.create', 'export.edit', 'export.delete'
+      ],
+      'history': ['import.view', 'export.view', 'history.view'],
+      'audit': ['inventory.view', 'inventory.edit', 'stocktake.view'],
+      'category': [
+        'user.view', 'user.create', 'user.edit', 'user.delete',
+        'role.view', 'role.create', 'role.edit', 'role.delete',
+        'employee.view', 'product.edit', 'product.create'
+      ]
+    };
+
+    // If any of the user's legacy categories matches the requested permission code
+    for (const userPerm of normalizedPerms) {
+      if (categoryMapping[userPerm] && categoryMapping[userPerm].includes(targetPermLower)) {
+        return true;
+      }
     }
 
     // Fallback: dynamic lookup from roles/DEFAULT_ROLES
     const userRole = (currentUser.ROLE || currentUser.role || '').trim().toUpperCase();
     const { permissions } = resolvePermissions(userRole, undefined, roles);
-    return permissions.includes(permissionCode);
+    const normalizedFallback = permissions.map((p: string) => (p || '').trim().toLowerCase());
+    
+    if (normalizedFallback.includes(targetPermLower)) {
+      return true;
+    }
+    
+    for (const fPerm of normalizedFallback) {
+      if (categoryMapping[fPerm] && categoryMapping[fPerm].includes(targetPermLower)) {
+        return true;
+      }
+    }
+
+    return false;
   }, [currentUser, roles]);
 
   const handleLogout = async () => {
@@ -3447,8 +3517,8 @@ export default function App() {
         />
       )}
 
-      {/* SIDEBAR DỌC BÊN TRÁI - Sliding Drawer cực mượt trên mobile & Tĩnh trên desktop */}
-      <aside className={`fixed inset-y-0 left-0 z-50 shrink-0 flex flex-col border-r transition-all duration-200 ease-in-out md:translate-x-0 md:static md:flex ${sidebarStyle.bg} ${
+      {/* SIDEBAR DỌC BÊN TRÁI - Sliding Drawer cực mượt trên mobile & Sticky trên desktop */}
+      <aside className={`fixed inset-y-0 left-0 z-50 shrink-0 flex flex-col border-r transition-all duration-200 ease-in-out md:translate-x-0 md:sticky md:top-0 md:h-screen md:flex ${sidebarStyle.bg} ${
         mobileMenuOpen ? 'translate-x-0' : '-translate-x-full'
       } ${sidebarCollapsed ? 'md:w-20' : 'md:w-72'}`}>
         
