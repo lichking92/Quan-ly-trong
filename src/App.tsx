@@ -97,11 +97,18 @@ import {
   deleteThuongHieu,
   deleteChiNhanh,
   deleteNhanVien,
+  deleteKiemKho,
   syncEmailLog,
   fetchEmailLogs,
   setOfflineMode,
   resolveEffectiveUserId,
-  inMemoryCache
+  inMemoryCache,
+  cache,
+  invalidateCache,
+  fetchSanPham,
+  fetchKiemKho,
+  fetchNhapXuat,
+  fetchNhapXuatCT
 } from './supabaseSync';
 
 // Import Components con (lazy loaded for optimal bundle size)
@@ -152,8 +159,8 @@ const DEFAULT_ROLES: Role[] = [
     ]
   },
   {
-    ROLE_CODE: 'MANAGER',
-    TEN_ROLE: 'Quản lý nghiệp vụ (Manager)',
+    ROLE_CODE: 'KHO',
+    TEN_ROLE: 'Quản lý kho (Kho/Manager)',
     PERMISSIONS: [
       'dashboard.view', 'dashboard.read', 'dashboard.export',
       'ordercheck.view', 'ordercheck.read', 'ordercheck.analyze', 'ordercheck.save',
@@ -168,7 +175,7 @@ const DEFAULT_ROLES: Role[] = [
     ]
   },
   {
-    ROLE_CODE: 'STAFF',
+    ROLE_CODE: 'NHAN_VIEN',
     TEN_ROLE: 'Nhân viên bán hàng (Staff)',
     PERMISSIONS: [
       'picking_xuat.view', 'picking_xuat.read', 'picking_xuat.create',
@@ -296,9 +303,16 @@ export default function App() {
     if (!currentUser) return false;
 
     // Chuẩn hóa toàn bộ vai trò của user thành chữ in hoa
-    const rawRoles = safeParseArray(currentUser.ROLES).length > 0 
-      ? safeParseArray(currentUser.ROLES) 
-      : (currentUser.role ? [currentUser.role] : []);
+    const rawRoles: string[] = [];
+    if (currentUser.role) rawRoles.push(currentUser.role);
+    const parsedRolesArray = safeParseArray(currentUser.ROLES);
+    if (parsedRolesArray && parsedRolesArray.length > 0) {
+      parsedRolesArray.forEach(r => {
+        if (r && !rawRoles.includes(r)) {
+          rawRoles.push(r);
+        }
+      });
+    }
     const userRoles = rawRoles.map(r => String(r).trim().toUpperCase());
 
     // Nguồn quyền duy nhất: Thu thập toàn bộ permission từ các role của user trong db/state (hoặc DEFAULT_ROLES làm fallback)
@@ -311,8 +325,10 @@ export default function App() {
       } else {
         // Tương thích ngược: Đối sánh với vai trò mặc định nếu mã vai trò không khớp trực tiếp
         let fallbackRoleCode = roleCode;
-        if (roleCode === 'KHO') fallbackRoleCode = 'MANAGER';
-        if (roleCode === 'NHAN_VIEN') fallbackRoleCode = 'STAFF';
+        if (roleCode === 'KHO') fallbackRoleCode = 'KHO';
+        if (roleCode === 'NHAN_VIEN') fallbackRoleCode = 'NHAN_VIEN';
+        if (roleCode === 'MANAGER') fallbackRoleCode = 'KHO';
+        if (roleCode === 'STAFF') fallbackRoleCode = 'NHAN_VIEN';
 
         const matchedFallback = roles.find(r => r.ROLE_CODE.trim().toUpperCase() === fallbackRoleCode) 
           || DEFAULT_ROLES.find(r => r.ROLE_CODE.trim().toUpperCase() === fallbackRoleCode);
@@ -848,14 +864,6 @@ export default function App() {
       setNhanViens(payload.nhanViens);
       if (payload.roles && payload.roles.length > 0) {
         setRoles(payload.roles);
-      }
-
-      // Tải và đồng bộ Nhật ký email gửi đi
-      try {
-        const logs = await fetchEmailLogs(userId);
-        setEmailLogs(logs);
-      } catch (mailErr) {
-        console.warn("Lỗi tải lịch sử email log từ Supabase:", mailErr);
       }
 
       // CẬP NHẬT HOẶC BẢO TOÀN CURRENT_USER NỘI BỘ (Không để email Auth của Supabase ghi đè bừa bãi)
@@ -1543,12 +1551,86 @@ export default function App() {
 
   // --- 3. ĐIỀU HƯỚNG TAB CHỨC NĂNG ---
   const [activeTab, setActiveTab] = useState<string>('DASHBOARD');
+  const [activeCategorySubTab, setActiveCategorySubTab] = useState<string>('BRAND');
   const [historyFiltersOverride, setHistoryFiltersOverride] = useState<{
     historyTypeFilter: 'Tất cả' | 'NHẬP' | 'XUẤT' | 'KIỂM KHO' | 'NHẬP_KIEM_KHO' | 'XUAT_KIEM_KHO';
     branchFilter: string;
     fromDate: string;
     toDate: string;
   } | null>(null);
+
+  // Trạng thái theo dõi đang lazy loading để tránh gọi song song nhiều lần
+  const lazyLoadingRef = useRef<Record<string, boolean>>({});
+
+  useEffect(() => {
+    if (!currentUser || isOffline) return;
+
+    const loadData = async () => {
+      const activeOwnerId = currentUser?.user_id || currentUser?.id || '00000000-0000-0000-0000-000000000000';
+
+      // 1. Lazy load b_sanpham
+      const needsProducts = ['PRODUCT', 'MATRIX', 'ORDER_PARSER', 'TRANSACTION_NHAP', 'TRANSACTION_XUAT', 'DASHBOARD', 'AUDIT'].includes(activeTab);
+      if (needsProducts && !cache.sanpham && !lazyLoadingRef.current.sanpham) {
+        lazyLoadingRef.current.sanpham = true;
+        try {
+          const data = await fetchSanPham();
+          setSanPhams(deduplicateProducts(data));
+        } catch (err) {
+          console.error("Lỗi lazy load b_sanpham:", err);
+        } finally {
+          lazyLoadingRef.current.sanpham = false;
+        }
+      }
+
+      // 2. Lazy load b_kiemkho
+      const needsKiemKho = activeTab === 'AUDIT';
+      if (needsKiemKho && !cache.kiemkho && !lazyLoadingRef.current.kiemkho) {
+        lazyLoadingRef.current.kiemkho = true;
+        try {
+          const data = await fetchKiemKho();
+          setKiemKhos(data);
+        } catch (err) {
+          console.error("Lỗi lazy load b_kiemkho:", err);
+        } finally {
+          lazyLoadingRef.current.kiemkho = false;
+        }
+      }
+
+      // 3. Lazy load b_nhapxuat và b_nhapxuatct
+      const needsTransactions = ['DASHBOARD', 'TRANSACTION_NHAP', 'TRANSACTION_XUAT', 'HISTORY', 'ORDER_PARSER'].includes(activeTab);
+      if (needsTransactions && (!cache.nhapxuat || !cache.nhapxuatct) && !lazyLoadingRef.current.transactions) {
+        lazyLoadingRef.current.transactions = true;
+        try {
+          const [dataNx, dataNxCt] = await Promise.all([
+            fetchNhapXuat(),
+            fetchNhapXuatCT()
+          ]);
+          setNhapXuats(dataNx);
+          setNhapXuatCTs(dataNxCt);
+        } catch (err) {
+          console.error("Lỗi lazy load transactions:", err);
+        } finally {
+          lazyLoadingRef.current.transactions = false;
+        }
+      }
+
+      // 4. Lazy load b_emaillog
+      const needsEmailLogs = activeTab === 'CATEGORY' && activeCategorySubTab === 'EMAILLOG';
+      if (needsEmailLogs && !cache.emaillog && !lazyLoadingRef.current.emaillog) {
+        lazyLoadingRef.current.emaillog = true;
+        try {
+          const data = await fetchEmailLogs(activeOwnerId);
+          setEmailLogs(data);
+        } catch (err) {
+          console.error("Lỗi lazy load b_emaillog:", err);
+        } finally {
+          lazyLoadingRef.current.emaillog = false;
+        }
+      }
+    };
+
+    loadData();
+  }, [activeTab, activeCategorySubTab, currentUser, isOffline]);
 
   // Tự động chuyển đổi activeTab khi phân quyền thay đổi để tránh màn hình trắng
   useEffect(() => {
@@ -2170,21 +2252,9 @@ export default function App() {
       .filter(d => cleanSKU(d.SKU) === normSku && d.LOAI === 'XUẤT' && activeInvoices.has(d.HOA_DON))
       .reduce((sum, d) => sum + (Number(d.SO_LUONG) || 0), 0);
 
-    // 3. Tính tổng lượng Nhập bù từ lịch sử Kiểm kho (chỉ những phiếu kiểm kho CHƯA có phiếu điều chỉnh PNK trong chi tiết)
-    const totalAuditNhapBu = currentKiemKhos
-      .filter(k => cleanSKU(k.SKU) === normSku && k.LOAI_BU === 'NHẬP BÙ')
-      .filter(k => !currentDetails.some(d => cleanSKU(d.SKU) === normSku && (d.GHI_CHU || '').includes(k.MA_PHIEU)))
-      .reduce((sum, k) => sum + (Number(k.LECH) || 0), 0);
-
-    // 4. Tính tổng lượng Xuất bù từ lịch sử Kiểm kho (chỉ những phiếu kiểm kho CHƯA có phiếu điều chỉnh PXK trong chi tiết)
-    const totalAuditXuatBu = currentKiemKhos
-      .filter(k => cleanSKU(k.SKU) === normSku && k.LOAI_BU === 'XUẤT BÙ')
-      .filter(k => !currentDetails.some(d => cleanSKU(d.SKU) === normSku && (d.GHI_CHU || '').includes(k.MA_PHIEU)))
-      .reduce((sum, k) => sum + Math.abs(Number(k.LECH) || 0), 0);
-
     const tonDau = Number(product.TON_DAU) || 0;
-    const finalNhap = totalNhap + totalAuditNhapBu;
-    const finalXuat = totalXuat + totalAuditXuatBu;
+    const finalNhap = totalNhap;
+    const finalXuat = totalXuat;
     const finalTonCuoi = tonDau + finalNhap - finalXuat;
 
     // Hiển thị trace log kiểm tra chi tiết theo yêu cầu của hệ thống
@@ -2192,10 +2262,8 @@ export default function App() {
     console.log(`- Tồn đầu (TON_DAU): ${tonDau}`);
     console.log(`- Tồn trước recalculate (TON_CUOI cũ): ${product.TON_CUOI}`);
     console.log(`- Tổng Nhập thực tế từ hóa đơn (totalNhap): ${totalNhap}`);
-    console.log(`- Nhập bù kiểm kho tự động (totalAuditNhapBu): ${totalAuditNhapBu}`);
     console.log(`- TỔNG NHẬP SAU CÙNG (finalNhap): ${finalNhap}`);
     console.log(`- Tổng Xuất thực tế từ hóa đơn (totalXuat): ${totalXuat}`);
-    console.log(`- Xuất bù kiểm kho tự động (totalAuditXuatBu): ${totalAuditXuatBu}`);
     console.log(`- TỔNG XUẤT SAU CÙNG (finalXuat): ${finalXuat}`);
     console.log(`=> TỒN CUỐI SAU CÙNG (finalTonCuoi): ${finalTonCuoi}`);
     console.groupEnd();
@@ -2632,6 +2700,55 @@ export default function App() {
           ignoreRealtimeRef.current = false;
         }, 3000);
       }
+    }
+  };
+
+  /**
+   * XÓA PHIẾU KIỂM KÊ (KHÔNG cập nhật tồn kho, KHÔNG tạo phiếu bù trừ)
+   */
+  const handleDeleteAudit = async (maPhieu: string): Promise<boolean> => {
+    const isSessionValid = await verifySession();
+    if (!isSessionValid) return false;
+    if (!(await ensureOnline())) return false;
+    try {
+      // 1. Cập nhật local state kiemKhos
+      const nextKiemKhos = kiemKhos.filter(k => k.MA_PHIEU !== maPhieu);
+      setKiemKhos(nextKiemKhos);
+
+      // 2. Đồng bộ Supabase
+      if (currentUser) {
+        ignoreRealtimeRef.current = true;
+        try {
+          const uId = await getUserId();
+          if (uId) {
+            const res = await deleteKiemKho(maPhieu, uId);
+            if (res.error) {
+              setSyncError({
+                table: 'b_kiemkho',
+                action: 'Xóa phiếu kiểm kê',
+                message: res.error.message || JSON.stringify(res.error)
+              });
+              return false;
+            }
+          }
+        } catch (err: any) {
+          console.error('Lỗi sync xóa phiếu kiểm kê:', err);
+          setSyncError({
+            table: 'b_kiemkho',
+            action: 'Xóa phiếu kiểm kê',
+            message: err.message || JSON.stringify(err)
+          });
+          return false;
+        } finally {
+          setTimeout(() => {
+            ignoreRealtimeRef.current = false;
+          }, 3000);
+        }
+      }
+      return true;
+    } catch (err) {
+      console.error('Lỗi khi xóa phiếu kiểm kê:', err);
+      return false;
     }
   };
 
@@ -3832,6 +3949,7 @@ export default function App() {
                     sanPhams={sanPhams}
                     kiemKhos={kiemKhos}
                     onSaveAudit={handleSaveAudit}
+                    onDeleteAudit={handleDeleteAudit}
                     thuongHieus={listBrandNames}
                     brandList={thuongHieus}
                     chiNhanhs={listBranchNames}
@@ -3870,6 +3988,7 @@ export default function App() {
                     chiNhanhs={chiNhanhs}
                     nhanViens={nhanViens}
                     emailLogs={emailLogs}
+                    onSubTabChange={(subTab) => setActiveCategorySubTab(subTab)}
                     onAddThuongHieu={handleAddThuongHieu}
                     onAddChiNhanh={handleAddChiNhanh}
                     onAddNhanVien={handleAddNhanVien}

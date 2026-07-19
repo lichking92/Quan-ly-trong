@@ -172,18 +172,8 @@ export default function TransactionHistory({
         .filter(d => cleanSKU(d.SKU) === normSku && d.LOAI === 'XUẤT')
         .reduce((sum, d) => sum + (Number(d.SO_LUONG) || 0), 0);
 
-      const totalAuditNhapBu = (kiemKhos || [])
-        .filter(k => cleanSKU(k.SKU) === normSku && k.LOAI_BU === 'NHẬP BÙ')
-        .filter(k => !simulatedDetails.some(d => cleanSKU(d.SKU) === normSku && (d.GHI_CHU || '').includes(k.MA_PHIEU)))
-        .reduce((sum, k) => sum + (Number(k.LECH) || 0), 0);
-
-      const totalAuditXuatBu = (kiemKhos || [])
-        .filter(k => cleanSKU(k.SKU) === normSku && k.LOAI_BU === 'XUẤT BÙ')
-        .filter(k => !simulatedDetails.some(d => cleanSKU(d.SKU) === normSku && (d.GHI_CHU || '').includes(k.MA_PHIEU)))
-        .reduce((sum, k) => sum + Math.abs(Number(k.LECH) || 0), 0);
-
       const tonDau = Number(product.TON_DAU) || 0;
-      const simulatedTonCuoi = tonDau + (totalNhap + totalAuditNhapBu) - (totalXuat + totalAuditXuatBu);
+      const simulatedTonCuoi = tonDau + totalNhap - totalXuat;
 
       if (simulatedTonCuoi < 0) {
         return { success: false, errorSku: sku, negativeValue: simulatedTonCuoi };
@@ -2310,7 +2300,7 @@ export default function TransactionHistory({
             {filteredInvoices.length > 0 ? (
               isGroupedByDate ? (
                 <div className="space-y-4 p-4">
-                  {groupedInvoicesByDate.map(({ dateStr, invoices }) => {
+                  {groupedInvoicesByDate.map(({ dateStr, invoices }, gIdx) => {
                     const isExpanded = expandedDates[dateStr] !== false;
                     const totalInvoices = invoices.length;
                     const totalQty = invoices.reduce((sum, h) => h.TRANG_THAI === 'Đã hủy' ? sum : sum + h.TONG_SL, 0);
@@ -2320,7 +2310,7 @@ export default function TransactionHistory({
                     const formattedDate = parts.length === 3 ? `${parts[2]}/${parts[1]}/${parts[0]}` : dateStr;
 
                     return (
-                      <div key={dateStr} className="border border-slate-150 rounded-xl overflow-hidden bg-white shadow-2xs">
+                      <div key={`${dateStr}-${gIdx}`} className="border border-slate-150 rounded-xl overflow-hidden bg-white shadow-2xs">
                         <button
                           onClick={() => setExpandedDates(prev => ({ ...prev, [dateStr]: !isExpanded }))}
                           className="w-full flex items-center justify-between bg-slate-50 hover:bg-slate-100/80 px-4 py-3 border-b border-slate-150 transition-all text-xs font-bold text-slate-700 cursor-pointer text-left"
@@ -2351,16 +2341,17 @@ export default function TransactionHistory({
                                     if (visibleColumns[colKey] === false) return null;
                                     const colDef = colDefinitions[colKey];
                                     if (!colDef) return null;
-                                    return colDef.renderHeader(
+                                    const cell = colDef.renderHeader(
                                       columnWidths[colKey] || colDef.defaultWidth,
                                       (e) => handleMouseDown(colKey, e),
                                       () => handleDoubleClick(colKey, colDef.defaultWidth)
                                     );
+                                    return cell && React.isValidElement(cell) ? React.cloneElement(cell, { key: colKey }) : cell;
                                   })}
                                 </tr>
                               </thead>
                               <tbody className="divide-y divide-slate-100 bg-white">
-                                {invoices.map((h) => {
+                                {invoices.map((h, idx) => {
                                   const isSelected = h.HOA_DON === selectedInvoice;
                                   let badgeColor = 'bg-emerald-50 text-emerald-700 border-emerald-100';
                                   if (h.LOAI === 'XUẤT') badgeColor = 'bg-rose-50 text-rose-700 border-rose-100';
@@ -2368,7 +2359,7 @@ export default function TransactionHistory({
 
                                   return (
                                     <tr
-                                      key={h.HOA_DON}
+                                      key={`${h.HOA_DON}-${idx}`}
                                       onClick={() => {
                                         setSelectedInvoice(h.HOA_DON);
                                         handleCancelEditRow();
@@ -2382,7 +2373,8 @@ export default function TransactionHistory({
                                         if (visibleColumns[colKey] === false) return null;
                                         const colDef = colDefinitions[colKey];
                                         if (!colDef) return null;
-                                        return colDef.renderCell(h, isSelected, badgeColor);
+                                        const cell = colDef.renderCell(h, isSelected, badgeColor);
+                                        return cell && React.isValidElement(cell) ? React.cloneElement(cell, { key: colKey }) : cell;
                                       })}
                                     </tr>
                                   );
@@ -2407,16 +2399,17 @@ export default function TransactionHistory({
                           if (visibleColumns[colKey] === false) return null;
                           const colDef = colDefinitions[colKey];
                           if (!colDef) return null;
-                          return colDef.renderHeader(
+                          const cell = colDef.renderHeader(
                             columnWidths[colKey] || colDef.defaultWidth,
                             (e) => handleMouseDown(colKey, e),
                             () => handleDoubleClick(colKey, colDef.defaultWidth)
                           );
+                          return cell && React.isValidElement(cell) ? React.cloneElement(cell, { key: colKey }) : cell;
                         })}
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100 bg-white">
-                      {filteredInvoices.map((h) => {
+                      {filteredInvoices.map((h, idx) => {
                         const isSelected = h.HOA_DON === selectedInvoice;
                         let badgeColor = 'bg-emerald-50 text-emerald-700 border-emerald-100';
                         if (h.LOAI === 'XUẤT') badgeColor = 'bg-rose-50 text-rose-700 border-rose-100';
@@ -2424,7 +2417,7 @@ export default function TransactionHistory({
 
                         return (
                           <tr
-                            key={h.HOA_DON}
+                            key={`${h.HOA_DON}-${idx}`}
                             onClick={() => {
                               setSelectedInvoice(h.HOA_DON);
                               handleCancelEditRow();
@@ -2438,7 +2431,8 @@ export default function TransactionHistory({
                               if (visibleColumns[colKey] === false) return null;
                               const colDef = colDefinitions[colKey];
                               if (!colDef) return null;
-                              return colDef.renderCell(h, isSelected, badgeColor);
+                              const cell = colDef.renderCell(h, isSelected, badgeColor);
+                              return cell && React.isValidElement(cell) ? React.cloneElement(cell, { key: colKey }) : cell;
                             })}
                           </tr>
                         );

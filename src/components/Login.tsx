@@ -194,7 +194,7 @@ export default function Login({ onLoginSuccess, nhanViens = [] }: LoginProps) {
           "user_id": targetUserId,
           "ROLES": assignedRoles,
           "WRITE_ACCESS": assignedWriteAccess,
-          "PERMISSIONS": assignedPermissions
+          "PERMISSIONS": []
         };
 
         const minimalPayload = {

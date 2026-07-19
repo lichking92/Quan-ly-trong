@@ -853,17 +853,49 @@ export async function ensureUserOnboarded(userId: string): Promise<UserDataPaylo
           {
             "ROLE_CODE": "ADMIN",
             "TEN_ROLE": "Quản trị viên (Admin)",
-            "PERMISSIONS": ["DASHBOARD", "PRODUCT", "TRANSACTION", "HISTORY", "AUDIT", "CATEGORY", "role.create", "role.edit", "role.delete"]
+            "PERMISSIONS": [
+              "dashboard.view", "dashboard.read", "dashboard.export",
+              "ordercheck.view", "ordercheck.read", "ordercheck.analyze", "ordercheck.save", "ordercheck.export",
+              "picking_xuat.view", "picking_xuat.read", "picking_xuat.create", "picking_xuat.edit", "picking_xuat.delete", "picking_xuat.export",
+              "picking_nhap.view", "picking_nhap.read", "picking_nhap.create", "picking_nhap.edit", "picking_nhap.delete",
+              "history.view", "history.read", "history.read_all", "history.create", "history.edit", "history.delete", "history.export",
+              "picking.view", "picking.read", "picking.create", "picking.delete", "picking.export",
+              "matrix.view", "matrix.read",
+              "stocktake.view", "stocktake.read",
+              "product.view", "product.read", "product.create", "product.edit", "product.delete",
+              "employee.view", "employee.read", "employee.create", "employee.edit", "employee.delete",
+              "role.view", "role.read", "role.create", "role.edit", "role.delete",
+              "settings.view", "settings.read",
+              "inventory.view"
+            ]
           },
           {
-            "ROLE_CODE": "MANAGER",
-            "TEN_ROLE": "Quản lý Kho",
-            "PERMISSIONS": ["DASHBOARD", "PRODUCT", "TRANSACTION", "HISTORY", "AUDIT", "CATEGORY"]
+            "ROLE_CODE": "KHO",
+            "TEN_ROLE": "Quản lý Kho (Manager)",
+            "PERMISSIONS": [
+              "dashboard.view", "dashboard.read", "dashboard.export",
+              "ordercheck.view", "ordercheck.read", "ordercheck.analyze", "ordercheck.save",
+              "picking_xuat.view", "picking_xuat.read", "picking_xuat.create", "picking_xuat.export",
+              "picking_nhap.view", "picking_nhap.read", "picking_nhap.create",
+              "history.view", "history.read", "history.read_all", "history.create", "history.edit", "history.export",
+              "picking.view", "picking.read", "picking.create", "picking.export",
+              "matrix.view", "matrix.read",
+              "stocktake.view", "stocktake.read",
+              "product.view", "product.read", "product.create", "product.edit",
+              "inventory.view"
+            ]
           },
           {
-            "ROLE_CODE": "STAFF",
-            "TEN_ROLE": "Nhân viên Bán hàng",
-            "PERMISSIONS": ["DASHBOARD", "PRODUCT", "TRANSACTION", "HISTORY"]
+            "ROLE_CODE": "NHAN_VIEN",
+            "TEN_ROLE": "Nhân viên Bán hàng (Staff)",
+            "PERMISSIONS": [
+              "picking_xuat.view", "picking_xuat.read", "picking_xuat.create",
+              "picking_nhap.view", "picking_nhap.read", "picking_nhap.create",
+              "history.view", "history.read",
+              "picking.view", "picking.read", "picking.create",
+              "product.view", "product.read",
+              "inventory.view"
+            ]
           }
         ];
       }
@@ -887,15 +919,376 @@ export async function ensureUserOnboarded(userId: string): Promise<UserDataPaylo
 }
 
 /**
+ * RAM Cache toàn hệ thống và Singleton Promises lưu trữ in-flight requests
+ */
+export const cache: {
+  nhanvien: any[] | null;
+  role: any[] | null;
+  thuonghieu: any[] | null;
+  chinhanh: any[] | null;
+  sanpham: any[] | null;
+  kiemkho: any[] | null;
+  emaillog: any[] | null;
+  nhapxuat: any[] | null;
+  nhapxuatct: any[] | null;
+} = {
+  nhanvien: null,
+  role: null,
+  thuonghieu: null,
+  chinhanh: null,
+  sanpham: null,
+  kiemkho: null,
+  emaillog: null,
+  nhapxuat: null,
+  nhapxuatct: null,
+};
+
+export const activePromises: Record<string, Promise<any[]> | null> = {};
+
+function updateInMemoryAndCentralCache(key: keyof typeof cache, data: any[]) {
+  cache[key] = data;
+  const inMemoryKey = `B_${key.toUpperCase()}`;
+  inMemoryCache[inMemoryKey] = data;
+}
+
+export function invalidateCache(key: keyof typeof cache) {
+  cache[key] = null;
+  const inMemoryKey = `B_${key.toUpperCase()}`;
+  delete inMemoryCache[inMemoryKey];
+  activePromises[key] = null;
+}
+
+export async function fetchNhanVien(force = false): Promise<any[]> {
+  if (isOfflineMode) return inMemoryCache['B_NHANVIEN'] || [];
+  if (!force && cache.nhanvien) return cache.nhanvien;
+  if (activePromises.nhanvien) return activePromises.nhanvien;
+
+  const promise = (async () => {
+    try {
+      const { data, error } = await supabase
+        .from('b_nhanvien')
+        .select('MA_NV, HO_TEN, CHUC_VU, BO_PHAN, CHI_NHANH, EMAIL, ROLE, PERMISSIONS, WRITE_ACCESS, TEN_DANG_NHAP, MAT_KHAU, TRANG_THAI, YEU_CAU_RESET, ROLES, user_id, active');
+      if (error) throw error;
+      const mapped = data || [];
+      updateInMemoryAndCentralCache('nhanvien', mapped);
+      return mapped;
+    } catch (err) {
+      console.error("Lỗi fetchNhanVien:", err);
+      return inMemoryCache['B_NHANVIEN'] || [];
+    } finally {
+      activePromises.nhanvien = null;
+    }
+  })();
+
+  activePromises.nhanvien = promise;
+  return promise;
+}
+
+export async function fetchRole(force = false): Promise<any[]> {
+  if (isOfflineMode) return inMemoryCache['B_ROLE'] || [];
+  if (!force && cache.role) return cache.role;
+  if (activePromises.role) return activePromises.role;
+
+  const userId = await resolveEffectiveUserId();
+  const promise = (async () => {
+    try {
+      const { data, error } = await supabase
+        .from('b_role')
+        .select('ROLE_CODE, TEN_ROLE, PERMISSIONS, user_id')
+        .eq('user_id', userId);
+      if (error) throw error;
+      const mapped = data || [];
+      updateInMemoryAndCentralCache('role', mapped);
+      return mapped;
+    } catch (err) {
+      console.error("Lỗi fetchRole:", err);
+      return inMemoryCache['B_ROLE'] || [];
+    } finally {
+      activePromises.role = null;
+    }
+  })();
+
+  activePromises.role = promise;
+  return promise;
+}
+
+export async function fetchThuongHieu(force = false): Promise<any[]> {
+  if (isOfflineMode) return inMemoryCache['B_THUONGHIEU'] || [];
+  if (!force && cache.thuonghieu) return cache.thuonghieu;
+  if (activePromises.thuonghieu) return activePromises.thuonghieu;
+
+  const userId = await resolveEffectiveUserId();
+  const promise = (async () => {
+    try {
+      const { data, error } = await supabase
+        .from('b_thuonghieu')
+        .select('THUONG_HIEU, CHIET_XUAT_MAC_DINH, TINH_NANG_MAC_DINH, SPH_TU, SPH_DEN, SPH_VIEN_TU, SPH_VIEN_DEN, BUOC_NHAY, user_id')
+        .eq('user_id', userId);
+      if (error) throw error;
+      const mapped = data || [];
+      updateInMemoryAndCentralCache('thuonghieu', mapped);
+      return mapped;
+    } catch (err) {
+      console.error("Lỗi fetchThuongHieu:", err);
+      return inMemoryCache['B_THUONGHIEU'] || [];
+    } finally {
+      activePromises.thuonghieu = null;
+    }
+  })();
+
+  activePromises.thuonghieu = promise;
+  return promise;
+}
+
+export async function fetchChiNhanh(force = false): Promise<any[]> {
+  if (isOfflineMode) return inMemoryCache['B_CHINHANH'] || [];
+  if (!force && cache.chinhanh) return cache.chinhanh;
+  if (activePromises.chinhanh) return activePromises.chinhanh;
+
+  const userId = await resolveEffectiveUserId();
+  const promise = (async () => {
+    try {
+      const { data, error } = await supabase
+        .from('b_chinhanh')
+        .select('CHI_NHANH, DIA_CHI, SDT, user_id')
+        .eq('user_id', userId);
+      if (error) throw error;
+      const mapped = data || [];
+      updateInMemoryAndCentralCache('chinhanh', mapped);
+      return mapped;
+    } catch (err) {
+      console.error("Lỗi fetchChiNhanh:", err);
+      return inMemoryCache['B_CHINHANH'] || [];
+    } finally {
+      activePromises.chinhanh = null;
+    }
+  })();
+
+  activePromises.chinhanh = promise;
+  return promise;
+}
+
+export async function fetchSanPham(force = false): Promise<any[]> {
+  if (isOfflineMode) return inMemoryCache['B_SANPHAM'] || [];
+  if (!force && cache.sanpham) return cache.sanpham;
+  if (activePromises.sanpham) return activePromises.sanpham;
+
+  const userId = await resolveEffectiveUserId();
+  const promise = (async () => {
+    try {
+      let allData: any[] = [];
+      let from = 0;
+      const pageSize = 1000;
+      let hasMore = true;
+
+      while (hasMore) {
+        const { data, error } = await supabase
+          .from('b_sanpham')
+          .select('SKU, TEN_SAN_PHAM, THUONG_HIEU, CHIET_XUAT, TINH_NANG, CAN, LOAN, DVT, TON_DAU, NHAP, XUAT, TON_CUOI, TON_TOI_THIEU, user_id')
+          .eq('user_id', userId)
+          .range(from, from + pageSize - 1);
+
+        if (error) throw error;
+
+        if (data && data.length > 0) {
+          allData = [...allData, ...data];
+          if (data.length < pageSize) {
+            hasMore = false;
+          } else {
+            from += pageSize;
+          }
+        } else {
+          hasMore = false;
+        }
+      }
+
+      updateInMemoryAndCentralCache('sanpham', allData);
+      return allData;
+    } catch (err) {
+      console.error("Lỗi fetchSanPham:", err);
+      return inMemoryCache['B_SANPHAM'] || [];
+    } finally {
+      activePromises.sanpham = null;
+    }
+  })();
+
+  activePromises.sanpham = promise;
+  return promise;
+}
+
+export async function fetchKiemKho(force = false): Promise<any[]> {
+  if (isOfflineMode) return inMemoryCache['B_KIEMKHO'] || [];
+  if (!force && cache.kiemkho) return cache.kiemkho;
+  if (activePromises.kiemkho) return activePromises.kiemkho;
+
+  const userId = await resolveEffectiveUserId();
+  const promise = (async () => {
+    try {
+      const { data, error } = await supabase
+        .from('b_kiemkho')
+        .select('MA_PHIEU, SKU, TON_HE_THONG, TON_THUC_TE, LECH, LOAI_BU, NGUOI_KIEM, THOI_DIEM, user_id')
+        .eq('user_id', userId);
+      if (error) throw error;
+      const mapped = data || [];
+      updateInMemoryAndCentralCache('kiemkho', mapped);
+      return mapped;
+    } catch (err) {
+      console.error("Lỗi fetchKiemKho:", err);
+      return inMemoryCache['B_KIEMKHO'] || [];
+    } finally {
+      activePromises.kiemkho = null;
+    }
+  })();
+
+  activePromises.kiemkho = promise;
+  return promise;
+}
+
+export async function fetchEmailLogs(userId: string, force = false): Promise<any[]> {
+  if (isOfflineMode) return inMemoryCache['B_EMAILLOG'] || [];
+  if (!force && cache.emaillog) return cache.emaillog;
+  if (activePromises.emaillog) return activePromises.emaillog;
+
+  const promise = (async () => {
+    try {
+      const { data, error } = await supabase
+        .from('b_emaillog')
+        .select('id, EMAIL, TIEU_DE, NOI_DUNG, NGAY_GUI, TRANG_THAI, LOAI_EMAIL, user_id')
+        .eq('user_id', userId)
+        .order('NGAY_GUI', { ascending: false })
+        .limit(100);
+      if (error) throw error;
+      const mapped = data || [];
+      updateInMemoryAndCentralCache('emaillog', mapped);
+      return mapped;
+    } catch (err) {
+      console.error("Lỗi fetchEmailLogs:", err);
+      return inMemoryCache['B_EMAILLOG'] || [];
+    } finally {
+      activePromises.emaillog = null;
+    }
+  })();
+
+  activePromises.emaillog = promise;
+  return promise;
+}
+
+export async function fetchNhapXuat(force = false): Promise<any[]> {
+  if (isOfflineMode) return inMemoryCache['B_NHAPXUAT'] || [];
+  if (!force && cache.nhapxuat) return cache.nhapxuat;
+  if (activePromises.nhapxuat) return activePromises.nhapxuat;
+
+  const userId = await resolveEffectiveUserId();
+  const promise = (async () => {
+    try {
+      let allData: any[] = [];
+      let from = 0;
+      const pageSize = 1000;
+      let hasMore = true;
+
+      while (hasMore) {
+        const { data, error } = await supabase
+          .from('b_nhapxuat')
+          .select('HOA_DON, CHI_NHANH, NGAY, LOAI, TONG_SL, NGUOI_TAO, TEN_NGUOI_TAO, TG_TAO, GHI_CHU, MA_NV, TEN_DANG_NHAP, TRANG_THAI, user_id')
+          .eq('user_id', userId)
+          .range(from, from + pageSize - 1);
+
+        if (error) throw error;
+
+        if (data && data.length > 0) {
+          allData = [...allData, ...data];
+          if (data.length < pageSize) {
+            hasMore = false;
+          } else {
+            from += pageSize;
+          }
+        } else {
+          hasMore = false;
+        }
+      }
+
+      updateInMemoryAndCentralCache('nhapxuat', allData);
+      return allData;
+    } catch (err) {
+      console.error("Lỗi fetchNhapXuat:", err);
+      return inMemoryCache['B_NHAPXUAT'] || [];
+    } finally {
+      activePromises.nhapxuat = null;
+    }
+  })();
+
+  activePromises.nhapxuat = promise;
+  return promise;
+}
+
+export async function fetchNhapXuatCT(force = false): Promise<any[]> {
+  if (isOfflineMode) return inMemoryCache['B_NHAPXUATCT'] || [];
+  if (!force && cache.nhapxuatct) return cache.nhapxuatct;
+  if (activePromises.nhapxuatct) return activePromises.nhapxuatct;
+
+  const userId = await resolveEffectiveUserId();
+  const promise = (async () => {
+    try {
+      let allData: any[] = [];
+      let from = 0;
+      const pageSize = 1000;
+      let hasMore = true;
+
+      while (hasMore) {
+        const { data, error } = await supabase
+          .from('b_nhapxuatct')
+          .select('id, HOA_DON, SKU, TEN_SP, THUONG_HIEU, CHIET_XUAT, TINH_NANG, SPH, CYL, SO_LUONG, DVT, GHI_CHU, LOAI, NGAY, user_id')
+          .eq('user_id', userId)
+          .range(from, from + pageSize - 1);
+
+        if (error) throw error;
+
+        if (data && data.length > 0) {
+          allData = [...allData, ...data];
+          if (data.length < pageSize) {
+            hasMore = false;
+          } else {
+            from += pageSize;
+          }
+        } else {
+          hasMore = false;
+        }
+      }
+
+      updateInMemoryAndCentralCache('nhapxuatct', allData);
+      return allData;
+    } catch (err) {
+      console.error("Lỗi fetchNhapXuatCT:", err);
+      return inMemoryCache['B_NHAPXUATCT'] || [];
+    } finally {
+      activePromises.nhapxuatct = null;
+    }
+  })();
+
+  activePromises.nhapxuatct = promise;
+  return promise;
+}
+
+/**
  * Tải toàn bộ dòng của một bảng theo phân trang (để vượt qua giới hạn 1000 dòng mặc định của Supabase/PostgREST)
  */
 export async function fetchAllRows(tableName: string, userId: string): Promise<any[]> {
   userId = await resolveEffectiveUserId();
-  const cacheKey = tableName.toUpperCase(); // e.g. B_SANPHAM, B_NHAPXUAT
+  const cacheKey = tableName.toUpperCase();
 
   if (isOfflineMode) {
     return inMemoryCache[cacheKey] || [];
   }
+
+  // Chuyển hướng sang các fetcher chuyên biệt nếu khớp bảng để tận dụng RAM cache
+  if (tableName === 'b_sanpham') return fetchSanPham();
+  if (tableName === 'b_nhapxuat') return fetchNhapXuat();
+  if (tableName === 'b_nhapxuatct') return fetchNhapXuatCT();
+  if (tableName === 'b_kiemkho') return fetchKiemKho();
+  if (tableName === 'b_thuonghieu') return fetchThuongHieu();
+  if (tableName === 'b_chinhanh') return fetchChiNhanh();
+  if (tableName === 'b_nhanvien') return fetchNhanVien();
+  if (tableName === 'b_role') return fetchRole();
 
   let allData: any[] = [];
   let from = 0;
@@ -913,7 +1306,6 @@ export async function fetchAllRows(tableName: string, userId: string): Promise<a
       if (error) {
         logDbError(`Lỗi fetchAllRows từ ${tableName}:`, error);
         if (isNetworkError(error)) {
-          console.warn(`[Database] Đang sử dụng dữ liệu Cache từ inMemoryCache cho bảng ${tableName} do lỗi mạng.`);
           return inMemoryCache[cacheKey] || [];
         }
         break;
@@ -932,7 +1324,6 @@ export async function fetchAllRows(tableName: string, userId: string): Promise<a
     } catch (err) {
       logDbError(`Lỗi ngoại lệ fetchAllRows từ ${tableName}:`, err);
       if (isNetworkError(err)) {
-        console.warn(`[Database] Đang sử dụng dữ liệu Cache từ inMemoryCache cho bảng ${tableName} do ngoại lệ lỗi mạng.`);
         return inMemoryCache[cacheKey] || [];
       }
       break;
@@ -951,12 +1342,10 @@ export async function fetchAllRows(tableName: string, userId: string): Promise<a
 export async function fetchAllUserData(userId: string): Promise<UserDataPayload> {
   userId = await resolveEffectiveUserId();
 
-  const getCached = (key: string): any[] => {
-    return inMemoryCache[key.toUpperCase()] || [];
-  };
-
   if (isOfflineMode) {
-    console.log("[Database] Đang tải dữ liệu hoàn toàn từ bộ nhớ cục bộ (Offline Mode)...");
+    const getCached = (key: string): any[] => {
+      return inMemoryCache[key.toUpperCase()] || [];
+    };
     return {
       sanPhams: getCached('B_SANPHAM'),
       nhapXuats: getCached('B_NHAPXUAT'),
@@ -969,101 +1358,42 @@ export async function fetchAllUserData(userId: string): Promise<UserDataPayload>
     };
   }
 
-  let dataSanPhams: any[] = [];
-  let dataNhapXuats: any[] = [];
-  let dataNhapXuatCTs: any[] = [];
-  let resKiemKhos: any = { data: null, error: null };
-  let resThuongHieus: any = { data: null, error: null };
-  let resChiNhanhs: any = { data: null, error: null };
-  let resNhanViens: any = { data: null, error: null };
-  let resRoles: any = { data: null, error: null };
+  // Load startup tables via singleton Promises + Cache
+  const [nhanViensRaw, rolesRaw, thuongHieusRaw, chiNhanhsRaw] = await Promise.all([
+    fetchNhanVien(),
+    fetchRole(),
+    fetchThuongHieu(),
+    fetchChiNhanh()
+  ]);
 
-  try {
-    const results = await Promise.all([
-      fetchAllRows('b_sanpham', userId),
-      fetchAllRows('b_nhapxuat', userId),
-      fetchAllRows('b_nhapxuatct', userId),
-      supabase.from('b_kiemkho').select('*').eq('user_id', userId),
-      supabase.from('b_thuonghieu').select('*').eq('user_id', userId),
-      supabase.from('b_chinhanh').select('*').eq('user_id', userId),
-      supabase.from('b_nhanvien').select('*'),
-      supabase.from('b_role').select('*').eq('user_id', userId).then(
-        r => r,
-        err => ({ data: null, error: err })
-      )
-    ]);
+  // For other tables, if already in cache, use them; otherwise empty (lazy load on tab enter)
+  const sanPhamsRaw = cache.sanpham || [];
+  const nhapXuatsRaw = cache.nhapxuat || [];
+  const nhapXuatCTsRaw = cache.nhapxuatct || [];
+  const kiemKhosRaw = cache.kiemkho || [];
 
-    // Kiểm tra xem có lỗi kết nối mạng nào từ các direct queries không
-    const directQueries = [
-      { name: 'b_kiemkho', res: results[3] },
-      { name: 'b_thuonghieu', res: results[4] },
-      { name: 'b_chinhanh', res: results[5] },
-      { name: 'b_nhanvien', res: results[6] }
-    ];
-
-    for (const q of directQueries) {
-      if (q.res.error && isNetworkError(q.res.error)) {
-        throw q.res.error;
-      }
-    }
-
-    dataSanPhams = results[0];
-    dataNhapXuats = results[1];
-    dataNhapXuatCTs = results[2];
-    resKiemKhos = results[3];
-    resThuongHieus = results[4];
-    resChiNhanhs = results[5];
-    resNhanViens = results[6];
-    resRoles = results[7];
-  } catch (err) {
-    logDbError('Lỗi tải fetchAllUserData từ Supabase:', err);
-    if (isNetworkError(err)) {
-      console.warn("[Database] Phát hiện lỗi kết nối mạng khi tải dữ liệu. Đang tự động sử dụng dữ liệu Cache Ngoại tuyến...");
-      return {
-        sanPhams: getCached('B_SANPHAM'),
-        nhapXuats: getCached('B_NHAPXUAT'),
-        nhapXuatCTs: getCached('B_NHAPXUATCT'),
-        kiemKhos: getCached('B_KIEMKHO'),
-        thuongHieus: getCached('B_THUONGHIEU'),
-        chiNhanhs: getCached('B_CHINHANH'),
-        nhanViens: getCached('B_NHANVIEN'),
-        roles: getCached('B_ROLE')
-      };
-    }
-  }
-
-  const handleLoadError = (table: string, err: any) => {
-    logDbError(`Lỗi tải ${table}:`, err);
-  };
-
-  if (resKiemKhos.error) handleLoadError('b_kiemkho', resKiemKhos.error);
-  if (resThuongHieus.error) handleLoadError('b_thuonghieu', resThuongHieus.error);
-  if (resChiNhanhs.error) handleLoadError('b_chinhanh', resChiNhanhs.error);
-  if (resNhanViens.error) handleLoadError('b_nhanvien', resNhanViens.error);
-
-  // Ánh xạ dữ liệu trả về từ Postgres thành Interface TypeScript chính xác
-  const sanPhams: SanPham[] = (dataSanPhams || []).map(item => ({
+  const sanPhams: SanPham[] = sanPhamsRaw.map(item => ({
     SKU: item.SKU,
     TEN_SAN_PHAM: item.TEN_SAN_PHAM,
     THUONG_HIEU: item.THUONG_HIEU,
     CHIET_XUAT: item.CHIET_XUAT,
     TINH_NANG: item.TINH_NANG,
-    CAN: Number(item.CAN),
-    LOAN: Number(item.LOAN),
+    CAN: Number(item.CAN ?? 0),
+    LOAN: Number(item.LOAN ?? 0),
     DVT: item.DVT,
-    TON_DAU: Number(item.TON_DAU),
-    NHAP: Number(item.NHAP),
-    XUAT: Number(item.XUAT),
-    TON_CUOI: Number(item.TON_CUOI),
-    TON_TOI_THIEU: Number(item.TON_TOI_THIEU)
+    TON_DAU: Number(item.TON_DAU ?? 0),
+    NHAP: Number(item.NHAP ?? 0),
+    XUAT: Number(item.XUAT ?? 0),
+    TON_CUOI: Number(item.TON_CUOI ?? 0),
+    TON_TOI_THIEU: Number(item.TON_TOI_THIEU ?? 0)
   }));
 
-  const nhapXuats: NhapXuat[] = (dataNhapXuats || []).map(item => ({
+  const nhapXuats: NhapXuat[] = nhapXuatsRaw.map(item => ({
     HOA_DON: item.HOA_DON,
     CHI_NHANH: item.CHI_NHANH,
     NGAY: item.NGAY,
     LOAI: item.LOAI,
-    TONG_SL: Number(item.TONG_SL),
+    TONG_SL: Number(item.TONG_SL ?? 0),
     NGUOI_TAO: item.NGUOI_TAO,
     TEN_NGUOI_TAO: item.TEN_NGUOI_TAO,
     TG_TAO: item.TG_TAO,
@@ -1073,7 +1403,7 @@ export async function fetchAllUserData(userId: string): Promise<UserDataPayload>
     TRANG_THAI: item.TRANG_THAI || 'Hoàn tất'
   }));
 
-  const nhapXuatCTs: NhapXuatCT[] = (dataNhapXuatCTs || []).map(item => ({
+  const nhapXuatCTs: NhapXuatCT[] = nhapXuatCTsRaw.map(item => ({
     ID: item.id !== undefined ? item.id : item.ID,
     HOA_DON: item.HOA_DON,
     SKU: item.SKU,
@@ -1081,27 +1411,27 @@ export async function fetchAllUserData(userId: string): Promise<UserDataPayload>
     THUONG_HIEU: item.THUONG_HIEU,
     CHIET_XUAT: item.CHIET_XUAT,
     TINH_NANG: item.TINH_NANG,
-    SPH: Number(item.SPH),
-    CYL: Number(item.CYL),
-    SO_LUONG: Number(item.SO_LUONG),
+    SPH: Number(item.SPH ?? 0),
+    CYL: Number(item.CYL ?? 0),
+    SO_LUONG: Number(item.SO_LUONG ?? 0),
     DVT: item.DVT,
     GHI_CHU: item.GHI_CHU || '',
     LOAI: item.LOAI,
     NGAY: item.NGAY
   }));
 
-  const kiemKhos: KiemKho[] = (resKiemKhos.data || []).map(item => ({
+  const kiemKhos: KiemKho[] = kiemKhosRaw.map(item => ({
     MA_PHIEU: item.MA_PHIEU,
     SKU: item.SKU,
-    TON_HE_THONG: Number(item.TON_HE_THONG),
-    TON_THUC_TE: Number(item.TON_THUC_TE),
-    LECH: Number(item.LECH),
+    TON_HE_THONG: Number(item.TON_HE_THONG ?? 0),
+    TON_THUC_TE: Number(item.TON_THUC_TE ?? 0),
+    LECH: Number(item.LECH ?? 0),
     LOAI_BU: item.LOAI_BU,
     NGUOI_KIEM: item.NGUOI_KIEM,
     THOI_DIEM: item.THOI_DIEM
   }));
 
-  const thuongHieus: ThuongHieu[] = (resThuongHieus.data || []).map(item => ({
+  const thuongHieus: ThuongHieu[] = thuongHieusRaw.map(item => ({
     THUONG_HIEU: item.THUONG_HIEU,
     CHIET_XUAT_MAC_DINH: item.CHIET_XUAT_MAC_DINH,
     TINH_NANG_MAC_DINH: item.TINH_NANG_MAC_DINH,
@@ -1113,13 +1443,13 @@ export async function fetchAllUserData(userId: string): Promise<UserDataPayload>
     BUOC_NHAY: item.BUOC_NHAY !== null && item.BUOC_NHAY !== undefined ? Number(item.BUOC_NHAY) : undefined
   }));
 
-  const chiNhanhs: ChiNhanh[] = (resChiNhanhs.data || []).map(item => ({
+  const chiNhanhs: ChiNhanh[] = chiNhanhsRaw.map(item => ({
     CHI_NHANH: item.CHI_NHANH,
     DIA_CHI: item.DIA_CHI,
     SDT: item.SDT
   }));
 
-  const nhanViens: NhanVien[] = (resNhanViens.data || []).map(item => ({
+  const nhanViens: NhanVien[] = nhanViensRaw.map(item => ({
     MA_NV: item.MA_NV,
     HO_TEN: item.HO_TEN,
     CHUC_VU: item.CHUC_VU,
@@ -1139,20 +1469,11 @@ export async function fetchAllUserData(userId: string): Promise<UserDataPayload>
     active: item.active !== false
   }));
 
-  const roles: Role[] = (resRoles?.data || []).map((item: any) => ({
+  const roles: Role[] = rolesRaw.map((item: any) => ({
     ROLE_CODE: item.ROLE_CODE,
     TEN_ROLE: item.TEN_ROLE,
     PERMISSIONS: safeParseArray(item.PERMISSIONS)
   }));
-
-  inMemoryCache['B_SANPHAM'] = sanPhams;
-  inMemoryCache['B_NHAPXUAT'] = nhapXuats;
-  inMemoryCache['B_NHAPXUATCT'] = nhapXuatCTs;
-  inMemoryCache['B_KIEMKHO'] = kiemKhos;
-  inMemoryCache['B_THUONGHIEU'] = thuongHieus;
-  inMemoryCache['B_CHINHANH'] = chiNhanhs;
-  inMemoryCache['B_NHANVIEN'] = nhanViens;
-  inMemoryCache['B_ROLE'] = roles;
 
   return {
     sanPhams,
@@ -1226,6 +1547,7 @@ export async function syncSanPham(p: SanPham, userId: string) {
     }
 
     if (res.error) logDbError("Lỗi syncSanPham:", res.error);
+    else invalidateCache('sanpham');
     return res;
   } catch (err: any) {
     logDbError("Lỗi ngoài dự kiến trong syncSanPham:", err);
@@ -1319,6 +1641,8 @@ export async function syncNhapXuat(nx: NhapXuat, userId: string) {
 
     if (res.error) {
       logDbError("Lỗi syncNhapXuat:", res.error);
+    } else {
+      invalidateCache('nhapxuat');
     }
     return res;
   } catch (err: any) {
@@ -1396,6 +1720,7 @@ export async function syncNhapXuatCTs(details: NhapXuatCT[], userId: string) {
       logDbError("Lỗi syncNhapXuatCTs:", failed.error);
       return { error: failed.error };
     }
+    invalidateCache('nhapxuatct');
     return { data: results.map(r => r.data).filter(Boolean).flat(), error: null };
   } catch (err: any) {
     logDbError("Lỗi ngoài dự kiến trong syncNhapXuatCTs:", err);
@@ -1454,6 +1779,9 @@ export async function syncKiemKho(k: KiemKho, userId: string) {
         .insert(payload)
         .select();
       if (res.error) logDbError("Lỗi syncKiemKho (insert):", res.error);
+    }
+    if (!res.error) {
+      invalidateCache('kiemkho');
     }
     return res;
   } catch (err: any) {
@@ -1566,6 +1894,9 @@ export async function syncThuongHieu(t: ThuongHieu, userId: string) {
 
       if (res.error) logDbError("Lỗi syncThuongHieu (insert):", res.error);
     }
+    if (!res.error) {
+      invalidateCache('thuonghieu');
+    }
     return res;
   } catch (err: any) {
     logDbError("Lỗi ngoài dự kiến trong syncThuongHieu:", err);
@@ -1616,6 +1947,9 @@ export async function syncChiNhanh(c: ChiNhanh, userId: string) {
         .select();
       if (res.error) logDbError("Lỗi syncChiNhanh (insert):", res.error);
     }
+    if (!res.error) {
+      invalidateCache('chinhanh');
+    }
     return res;
   } catch (err: any) {
     logDbError("Lỗi ngoài dự kiến trong syncChiNhanh:", err);
@@ -1664,7 +1998,7 @@ export async function syncNhanVien(n: NhanVien, userId: string) {
       "CHI_NHANH": n.CHI_NHANH,
       "EMAIL": n.EMAIL || '',
       "ROLE": n.ROLE,
-      "PERMISSIONS": n.PERMISSIONS,
+      "PERMISSIONS": [],
       "WRITE_ACCESS": n.WRITE_ACCESS,
       "TEN_DANG_NHAP": n.TEN_DANG_NHAP || '',
       "MAT_KHAU": n.MAT_KHAU || '',
@@ -1694,6 +2028,9 @@ export async function syncNhanVien(n: NhanVien, userId: string) {
       if (res.error) logDbError("Lỗi syncNhanVien (insert):", res.error);
     }
 
+    if (!res.error) {
+      invalidateCache('nhanvien');
+    }
     return res;
   } catch (err: any) {
     logDbError("Lỗi ngoài dự kiến trong syncNhanVien:", err);
@@ -1748,6 +2085,9 @@ export async function syncRole(r: Role, userId: string) {
       if (res.error) logDbError("Lỗi syncRole (insert):", res.error);
     }
 
+    if (!res.error) {
+      invalidateCache('role');
+    }
     return res;
   } catch (err: any) {
     logDbError("Lỗi ngoài dự kiến trong syncRole:", err);
@@ -1789,8 +2129,10 @@ export async function deleteRole(roleCode: string, userId: string) {
       logDbError("Lỗi deleteRole:", res2.error);
       return res2;
     }
+    invalidateCache('role');
     return res2;
   }
+  invalidateCache('role');
   return res;
 }
 
@@ -1804,6 +2146,10 @@ export async function deleteNhapXuatAndDetails(hoaDon: string) {
   ]);
   if (res1.error) logDbError("Lỗi deleteNhapXuatCT:", res1.error);
   if (res2.error) logDbError("Lỗi deleteNhapXuat:", res2.error);
+  if (!res1.error && !res2.error) {
+    invalidateCache('nhapxuat');
+    invalidateCache('nhapxuatct');
+  }
   return { error: res1.error || res2.error };
 }
 
@@ -1814,6 +2160,7 @@ export async function deleteThuongHieu(thuongHieu: string, userId: string) {
   userId = await resolveEffectiveUserId();
   const res = await supabase.from('b_thuonghieu').delete().eq('THUONG_HIEU', thuongHieu).eq('user_id', userId);
   if (res.error) logDbError("Lỗi deleteThuongHieu:", res.error);
+  else invalidateCache('thuonghieu');
   return res;
 }
 
@@ -1824,6 +2171,7 @@ export async function deleteChiNhanh(chiNhanh: string, userId: string) {
   userId = await resolveEffectiveUserId();
   const res = await supabase.from('b_chinhanh').delete().eq('CHI_NHANH', chiNhanh).eq('user_id', userId);
   if (res.error) logDbError("Lỗi deleteChiNhanh:", res.error);
+  else invalidateCache('chinhanh');
   return res;
 }
 
@@ -1834,6 +2182,32 @@ export async function deleteNhanVien(email: string, userId: string) {
   userId = await resolveEffectiveUserId();
   const res = await supabase.from('b_nhanvien').delete().eq('EMAIL', email).eq('user_id', userId);
   if (res.error) logDbError("Lỗi deleteNhanVien:", res.error);
+  else invalidateCache('nhanvien');
+  return res;
+}
+
+/**
+ * Xóa Phiếu kiểm kê kho và toàn bộ các dòng liên quan theo MA_PHIEU
+ */
+export async function deleteKiemKho(maPhieu: string, userId: string) {
+  if (isOfflineMode) {
+    let local = inMemoryCache['B_KIEMKHO'] || [];
+    local = local.filter((k: any) => k.MA_PHIEU !== maPhieu);
+    inMemoryCache['B_KIEMKHO'] = local;
+    invalidateCache('kiemkho');
+    return { data: null, error: null };
+  }
+  userId = await resolveEffectiveUserId();
+  const res = await supabase.from('b_kiemkho').delete().eq('MA_PHIEU', maPhieu).eq('user_id', userId);
+  if (res.error) {
+    logDbError("Lỗi deleteKiemKho:", res.error);
+  } else {
+    // Cập nhật lại inMemoryCache
+    let local = inMemoryCache['B_KIEMKHO'] || [];
+    local = local.filter((k: any) => k.MA_PHIEU !== maPhieu);
+    inMemoryCache['B_KIEMKHO'] = local;
+    invalidateCache('kiemkho');
+  }
   return res;
 }
 
@@ -1892,54 +2266,14 @@ export async function syncEmailLog(log: EmailLog, userId: string) {
       } else {
         console.warn("Lỗi syncEmailLog lên Supabase (sử dụng lưu trữ cục bộ fallback):", res.error.message);
       }
+    } else {
+      invalidateCache('emaillog');
     }
     return res;
   } catch (err: any) {
     console.warn("Exception khi syncEmailLog lên Supabase:", err?.message || err);
     return { data: null, error: err };
   }
-}
-
-/**
- * Lấy danh sách nhật ký email
- */
-export async function fetchEmailLogs(userId: string): Promise<EmailLog[]> {
-  userId = await resolveEffectiveUserId();
-
-  // Đọc danh sách cục bộ dự phòng trước
-  let localLogs: EmailLog[] = inMemoryCache['B_EMAILLOG'] || [];
-  
-  try {
-    const { data, error } = await supabase
-      .from('b_emaillog')
-      .select('*')
-      .eq('user_id', userId)
-      .order('NGAY_GUI', { ascending: false })
-      .limit(100);
-      
-    if (error) {
-      // Giảm độ nghiêm trọng của log nếu chỉ là lỗi thiếu bảng hoặc lỗi cache schema
-      const isMissingTable = error.code === '42P01' || 
-                             error.message?.includes('b_emaillog') || 
-                             error.message?.includes('schema cache');
-      if (isMissingTable) {
-        console.log(`[EMAIL LOG] Bảng b_emaillog gặp lỗi hoặc chưa sẵn sàng trên Supabase (Chi tiết: ${error.message}, Code: ${error.code}). Hệ thống tự động kích hoạt chế độ lưu trữ cục bộ inMemoryCache.`);
-      } else {
-        console.warn("Lỗi fetchEmailLogs từ Supabase:", error.message);
-      }
-      return localLogs;
-    }
-    
-    // Nếu có dữ liệu từ Supabase, cập nhật ngược lại cache cục bộ để đảm bảo đồng nhất
-    if (data) {
-      inMemoryCache['B_EMAILLOG'] = data;
-      return data;
-    }
-  } catch (err: any) {
-    console.warn("Exception khi fetchEmailLogs từ Supabase:", err?.message || err);
-  }
-
-  return localLogs;
 }
 
 /**

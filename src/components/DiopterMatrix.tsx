@@ -279,18 +279,8 @@ export default function DiopterMatrix({
         .filter(d => d.LOAI === 'XUẤT')
         .reduce((sum, d) => sum + d.SO_LUONG, 0);
 
-      const totalAuditNhapBu = kiemKhos
-        .filter(k => k.SKU === product.SKU && k.KHO === selectedBranch && k.LOAI_BU === 'NHẬP BÙ')
-        .filter(k => !nhapXuatCTs.some(d => d.SKU === product.SKU && (d.GHI_CHU || '').includes(k.MA_PHIEU)))
-        .reduce((sum, k) => sum + k.LECH, 0);
-
-      const totalAuditXuatBu = kiemKhos
-        .filter(k => k.SKU === product.SKU && k.KHO === selectedBranch && k.LOAI_BU === 'XUẤT BÙ')
-        .filter(k => !nhapXuatCTs.some(d => d.SKU === product.SKU && (d.GHI_CHU || '').includes(k.MA_PHIEU)))
-        .reduce((sum, k) => sum + Math.abs(k.LECH), 0);
-
-      const finalNhap = totalNhap + totalAuditNhapBu;
-      const finalXuat = totalXuat + totalAuditXuatBu;
+      const finalNhap = totalNhap;
+      const finalXuat = totalXuat;
 
       const isDefaultBranch = selectedBranch === 'Kho Trung Tâm';
       const branchTonDau = isDefaultBranch ? product.TON_DAU : 0;

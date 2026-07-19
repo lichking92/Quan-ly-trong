@@ -42,6 +42,7 @@ interface InventoryAuditProps {
   sanPhams: SanPham[];
   kiemKhos: KiemKho[];
   onSaveAudit: (newAudits: KiemKho[]) => void;
+  onDeleteAudit?: (maPhieu: string) => Promise<boolean>;
   thuongHieus: string[];
   brandList?: ThuongHieu[];
   chiNhanhs: string[];
@@ -64,6 +65,7 @@ export default function InventoryAudit({
   sanPhams, 
   kiemKhos, 
   onSaveAudit,
+  onDeleteAudit,
   thuongHieus,
   brandList,
   chiNhanhs,
@@ -73,6 +75,39 @@ export default function InventoryAudit({
   const hasPerm = (p: string) => {
     if (hasPermission) return hasPermission(p);
     return currentUser?.writeAccess !== false;
+  };
+
+  // --- XÓA PHIẾU KIỂM KÊ (Confirmation) ---
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState<boolean>(false);
+  const [deleteTargetId, setDeleteTargetId] = useState<string | null>(null);
+  const [isDeleting, setIsDeleting] = useState<boolean>(false);
+
+  const triggerDeleteConfirm = (maPhieu: string) => {
+    setDeleteTargetId(maPhieu);
+    setShowDeleteConfirm(true);
+  };
+
+  const handleConfirmDelete = async () => {
+    if (!deleteTargetId || !onDeleteAudit) return;
+    setIsDeleting(true);
+    try {
+      const success = await onDeleteAudit(deleteTargetId);
+      if (success) {
+        setSuccessMsg(`Đã xóa thành công phiếu kiểm kê ${deleteTargetId}!`);
+        setTimeout(() => setSuccessMsg(''), 5000);
+      } else {
+        setErrorMsg(`Lỗi khi xóa phiếu kiểm kê ${deleteTargetId}.`);
+        setTimeout(() => setErrorMsg(''), 5000);
+      }
+    } catch (err) {
+      console.error('Lỗi khi xóa phiếu kiểm kê:', err);
+      setErrorMsg('Lỗi không xác định khi xóa phiếu kiểm kê.');
+      setTimeout(() => setErrorMsg(''), 5000);
+    } finally {
+      setIsDeleting(false);
+      setShowDeleteConfirm(false);
+      setDeleteTargetId(null);
+    }
   };
 
   // --- 1. THÔNG TIN CHỨNG TỪ ---
@@ -933,9 +968,20 @@ export default function InventoryAudit({
                   return (
                     <div key={`${audit.MA_PHIEU}-${audit.SKU}-${audit.THOI_DIEM}-${index}`} className="pt-2 pb-3.5 border-b border-slate-100 space-y-1 text-xs">
                       <div className="flex items-center justify-between">
-                        <span className="font-extrabold text-red-600 font-mono bg-red-50 py-0.5 px-2 rounded-md text-[10px] border border-red-100">
-                          {audit.MA_PHIEU}
-                        </span>
+                        <div className="flex items-center gap-2">
+                          <span className="font-extrabold text-red-600 font-mono bg-red-50 py-0.5 px-2 rounded-md text-[10px] border border-red-100">
+                            {audit.MA_PHIEU}
+                          </span>
+                          {hasPerm('stocktake.write') && (
+                            <button
+                              onClick={() => triggerDeleteConfirm(audit.MA_PHIEU)}
+                              className="text-rose-500 hover:text-rose-700 p-1 rounded-md hover:bg-rose-50 transition-colors flex items-center gap-0.5 cursor-pointer font-bold font-sans text-[10px]"
+                              title="Xóa phiếu kiểm kê"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" /> Xóa phiếu
+                            </button>
+                          )}
+                        </div>
                         <span className="text-[10px] text-slate-400 font-mono flex items-center gap-1">
                           <Clock className="w-3 h-3" /> {audit.THOI_DIEM}
                         </span>
@@ -992,6 +1038,59 @@ export default function InventoryAudit({
         </div>
 
       </div>
+
+      {/* MODAL XÁC NHẬN XÓA PHIẾU KIỂM KÊ */}
+      <AnimatePresence>
+        {showDeleteConfirm && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-xs">
+            <motion.div
+              initial={{ scale: 0.95, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.95, opacity: 0 }}
+              className="bg-white rounded-xl shadow-xl border border-slate-100 max-w-md w-full p-6 space-y-4 text-left"
+            >
+              <div className="flex items-start gap-3">
+                <div className="p-2 bg-rose-50 text-rose-600 rounded-lg shrink-0">
+                  <Trash2 className="w-6 h-6" />
+                </div>
+                <div className="space-y-1">
+                  <h3 className="text-sm font-extrabold text-slate-800">Xác nhận xóa phiếu kiểm kê</h3>
+                  <p className="text-xs text-slate-500 leading-relaxed">
+                    Bạn có chắc chắn muốn xóa vĩnh viễn phiếu kiểm kê <strong className="text-rose-600 font-mono">{deleteTargetId}</strong> không?
+                  </p>
+                  <ul className="text-[10px] text-slate-400 list-disc list-inside space-y-0.5 pt-1">
+                    <li>Chỉ xóa dữ liệu lịch sử kiểm kê.</li>
+                    <li>KHÔNG cập nhật hay thay đổi tồn kho hiện tại.</li>
+                    <li>KHÔNG tạo hay thu hồi các phiếu bù trừ điều chỉnh.</li>
+                  </ul>
+                </div>
+              </div>
+
+              <div className="flex items-center justify-end gap-2 pt-2 text-xs">
+                <button
+                  type="button"
+                  disabled={isDeleting}
+                  onClick={() => {
+                    setShowDeleteConfirm(false);
+                    setDeleteTargetId(null);
+                  }}
+                  className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-600 font-bold rounded-lg cursor-pointer transition-colors"
+                >
+                  Hủy bỏ
+                </button>
+                <button
+                  type="button"
+                  disabled={isDeleting}
+                  onClick={handleConfirmDelete}
+                  className="px-4 py-2 bg-rose-600 hover:bg-rose-700 text-white font-bold rounded-lg cursor-pointer transition-colors flex items-center gap-1"
+                >
+                  {isDeleting ? 'Đang xóa...' : 'Xác nhận xóa'}
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
 
     </div>
   );

@@ -12,7 +12,7 @@
  */
 
 // Định nghĩa phân quyền người dùng trong hệ thống
-export type UserRole = 'ADMIN' | 'KHO' | 'NHAN_VIEN';
+export type UserRole = 'ADMIN' | 'KHO' | 'NHAN_VIEN' | string;
 
 export interface Role {
   ROLE_CODE: string;    // e.g. 'ADMIN', 'MANAGER', 'STAFF'
@@ -100,7 +100,8 @@ export const HIERARCHICAL_PERMISSIONS: PermissionNode[] = [
     code: 'stocktake.view',
     desc: 'Kiểm kho',
     children: [
-      { code: 'stocktake.read', desc: 'Xem Kiểm kho' }
+      { code: 'stocktake.read', desc: 'Xem Kiểm kho' },
+      { code: 'stocktake.delete', desc: 'Xóa phiếu Kiểm kho' }
     ]
   },
   {
@@ -359,6 +360,6 @@ export function normalizeDbRole(role: string): UserRole {
   const r = role.trim().toUpperCase();
   if (r === 'ADMIN') return 'ADMIN';
   if (r === 'KHO' || r === 'MANAGER') return 'KHO';
-  return 'NHAN_VIEN';
+  return r;
 }
 

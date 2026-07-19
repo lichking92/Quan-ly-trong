@@ -37,6 +37,7 @@ interface CategoryManagementProps {
   chiNhanhs: ChiNhanh[];
   nhanViens: NhanVien[];
   emailLogs?: EmailLog[];
+  onSubTabChange?: (subTab: string) => void;
   onAddThuongHieu: (brand: ThuongHieu) => void;
   onAddChiNhanh: (branch: ChiNhanh) => void;
   onAddNhanVien: (staff: NhanVien) => void;
@@ -110,6 +111,7 @@ const PERMISSION_MAP: Record<string, string> = {
   'matrix.read': 'Xem Bảng độ',
   
   'stocktake.read': 'Xem Kiểm kho',
+  'stocktake.delete': 'Xóa phiếu Kiểm kho',
   
   'product.read': 'Xem Sản phẩm',
   'product.create': 'Thêm Sản phẩm',
@@ -148,6 +150,7 @@ export default function CategoryManagement({
   chiNhanhs,
   nhanViens,
   emailLogs = [],
+  onSubTabChange,
   onAddThuongHieu,
   onAddChiNhanh,
   onAddNhanVien,
@@ -183,6 +186,12 @@ export default function CategoryManagement({
       }
     }
   }, [currentUser]);
+
+  React.useEffect(() => {
+    if (onSubTabChange) {
+      onSubTabChange(activeSubTab);
+    }
+  }, [activeSubTab, onSubTabChange]);
 
   const canWriteCurrentTab = () => {
     if (activeSubTab === 'BRAND') return hasPerm('inventory.view'); // Brands are editable under inventory.view
@@ -345,7 +354,6 @@ export default function CategoryManagement({
   const [newStaffUsername, setNewStaffUsername] = useState<string>('');
   const [newStaffPassword, setNewStaffPassword] = useState<string>('');
   const [newStaffStatus, setNewStaffStatus] = useState<string>('ACTIVE');
-  const [newStaffRoles, setNewStaffRoles] = useState<string[]>([]);
 
   // States cho RBAC Role Management
   const [editingRole, setEditingRole] = useState<Role | null>(null);
@@ -616,22 +624,22 @@ export default function CategoryManagement({
     // Tự sinh email ẩn để đảm bảo tính đồng bộ và không lỗi schema DB cũ
     const generatedEmail = `${newStaffUsername.trim().toLowerCase()}@glassstock.com`;
 
-    const derivedRole = newStaffRoles.includes('ADMIN') ? 'ADMIN' : newStaffRoles.includes('MANAGER') ? 'KHO' : 'NHAN_VIEN';
+    const derivedRole = newStaffRole;
 
     const staffRecord: NhanVien = {
       MA_NV: `NV${String(nhanViens.length + 1).padStart(4, '0')}`,
       HO_TEN: newStaffName.trim(),
       CHUC_VU: newStaffChucVu,
-      BO_PHAN: derivedRole === 'ADMIN' ? 'Ban Giám Đốc' : derivedRole === 'KHO' ? 'Bộ Phận Kho' : 'Bộ Phận Bán Hàng',
+      BO_PHAN: derivedRole === 'ADMIN' ? 'Ban Giám Đốc' : (derivedRole === 'KHO' || derivedRole === 'MANAGER') ? 'Bộ Phận Kho' : 'Bộ Phận Bán Hàng',
       CHI_NHANH: newStaffBranch,
       EMAIL: generatedEmail,
       ROLE: derivedRole,
-      WRITE_ACCESS: derivedRole === 'ADMIN' || derivedRole === 'KHO',
+      WRITE_ACCESS: derivedRole === 'ADMIN' || derivedRole === 'KHO' || derivedRole === 'MANAGER',
       TEN_DANG_NHAP: newStaffUsername.trim(),
       MAT_KHAU: newStaffPassword.trim(),
       TRANG_THAI: newStaffStatus,
       YEU_CAU_RESET: false,
-      ROLES: newStaffRoles.length > 0 ? newStaffRoles : ['STAFF']
+      ROLES: [derivedRole]
     };
 
     onAddNhanVien(staffRecord);
@@ -641,7 +649,6 @@ export default function CategoryManagement({
     setNewStaffPassword('');
     setNewStaffChucVu('Nhân viên bán kính');
     setNewStaffStatus('ACTIVE');
-    setNewStaffRoles([]);
     setTimeout(() => setSuccessMsg(''), 3000);
   };
 
@@ -654,8 +661,6 @@ export default function CategoryManagement({
     setNewStaffChucVu(staff.CHUC_VU);
     setNewStaffRole(staff.ROLE);
     setNewStaffStatus(staff.TRANG_THAI || 'ACTIVE');
-    const parsedRoles = safeParseArray(staff.ROLES);
-    setNewStaffRoles(parsedRoles.length > 0 ? parsedRoles : [staff.ROLE === 'ADMIN' ? 'ADMIN' : staff.ROLE === 'KHO' ? 'MANAGER' : 'STAFF']);
   };
 
   const handleSaveEditStaff = (e: React.FormEvent) => {
@@ -669,25 +674,24 @@ export default function CategoryManagement({
       return;
     }
 
-    const derivedRole = newStaffRoles.includes('ADMIN') ? 'ADMIN' : newStaffRoles.includes('MANAGER') ? 'KHO' : 'NHAN_VIEN';
+    const derivedRole = newStaffRole;
     const isStatusActive = newStaffStatus === 'ACTIVE' || newStaffStatus === 'HOẠT ĐỘNG' || newStaffStatus === 'KÍCH HOẠT' || newStaffStatus === 'HOAT DONG';
 
     const updatedStaff: NhanVien = {
       MA_NV: editingStaff.staff.MA_NV,
       HO_TEN: newStaffName.trim(),
       CHUC_VU: newStaffChucVu,
-      BO_PHAN: derivedRole === 'ADMIN' ? 'Ban Giám Đốc' : derivedRole === 'KHO' ? 'Bộ Phận Kho' : 'Bộ Phận Bán Hàng',
+      BO_PHAN: derivedRole === 'ADMIN' ? 'Ban Giám Đốc' : (derivedRole === 'KHO' || derivedRole === 'MANAGER') ? 'Bộ Phận Kho' : 'Bộ Phận Bán Hàng',
       CHI_NHANH: newStaffBranch,
       EMAIL: editingStaff.staff.EMAIL, // Giữ nguyên Email cũ làm khóa duy nhất cho các logic đồng bộ cũ
       ROLE: derivedRole,
-      WRITE_ACCESS: derivedRole === 'ADMIN' || derivedRole === 'KHO',
+      WRITE_ACCESS: derivedRole === 'ADMIN' || derivedRole === 'KHO' || derivedRole === 'MANAGER',
       TEN_DANG_NHAP: newStaffUsername.trim(),
       MAT_KHAU: newStaffPassword.trim(),
       TRANG_THAI: newStaffStatus,
       active: isStatusActive,
       YEU_CAU_RESET: false, // Tự động tắt yêu cầu reset khi Admin đổi/lưu lại mật khẩu mới!
-      ROLES: newStaffRoles.length > 0 ? newStaffRoles : ['STAFF'],
-      PERMISSIONS: editingStaff.staff.PERMISSIONS,
+      ROLES: [derivedRole],
       user_id: editingStaff.staff.user_id
     };
 
@@ -699,7 +703,6 @@ export default function CategoryManagement({
     setNewStaffPassword('');
     setNewStaffChucVu('Nhân viên bán kính');
     setNewStaffStatus('ACTIVE');
-    setNewStaffRoles([]);
     setTimeout(() => setSuccessMsg(''), 3000);
   };
 
@@ -710,7 +713,6 @@ export default function CategoryManagement({
     setNewStaffPassword('');
     setNewStaffChucVu('Nhân viên bán kính');
     setNewStaffStatus('ACTIVE');
-    setNewStaffRoles([]);
   };
 
   const handleDeleteStaffItem = (email: string) => {
@@ -1476,28 +1478,15 @@ export default function CategoryManagement({
                   {roles && roles.length > 0 && (
                     <div className="space-y-1.5 border-t border-slate-100 pt-2">
                       <label className="text-[10px] uppercase font-bold text-slate-400 block mb-1">Vai trò RBAC được gán</label>
-                      <div className="flex flex-wrap gap-2.5 p-2 bg-slate-50 rounded-lg border border-slate-100">
-                        {roles.map(r => {
-                          const isChecked = newStaffRoles.includes(r.ROLE_CODE);
-                          return (
-                            <label key={r.ROLE_CODE} className="inline-flex items-center gap-1.5 text-[11px] font-bold text-slate-600 cursor-pointer select-none">
-                              <input
-                                type="checkbox"
-                                checked={isChecked}
-                                onChange={(e) => {
-                                  if (e.target.checked) {
-                                    setNewStaffRoles(prev => [...prev, r.ROLE_CODE]);
-                                  } else {
-                                    setNewStaffRoles(prev => prev.filter(code => code !== r.ROLE_CODE));
-                                  }
-                                }}
-                                className="rounded text-red-600 focus:ring-red-500 w-3.5 h-3.5 border-slate-200"
-                              />
-                              <span>{r.TEN_ROLE}</span>
-                            </label>
-                          );
-                        })}
-                      </div>
+                      <select
+                        value={newStaffRole}
+                        onChange={(e) => setNewStaffRole(e.target.value)}
+                        className="w-full text-xs font-semibold text-slate-700 bg-slate-50 border border-slate-100 rounded-lg p-2.5 focus:outline-hidden"
+                      >
+                        {roles.map(r => (
+                          <option key={r.ROLE_CODE} value={r.ROLE_CODE}>{r.TEN_ROLE} ({r.ROLE_CODE})</option>
+                        ))}
+                      </select>
                     </div>
                   )}
 
@@ -2519,28 +2508,15 @@ export default function CategoryManagement({
                 {roles && roles.length > 0 && (
                   <div className="space-y-1.5 border-t border-slate-100 pt-2">
                     <label className="text-[10px] uppercase font-bold text-slate-400 block mb-1">Vai trò RBAC được gán</label>
-                    <div className="flex flex-wrap gap-2.5 p-2 bg-slate-50 rounded-lg border border-slate-100">
-                      {roles.map(r => {
-                        const isChecked = newStaffRoles.includes(r.ROLE_CODE);
-                        return (
-                          <label key={r.ROLE_CODE} className="inline-flex items-center gap-1.5 text-[11px] font-bold text-slate-600 cursor-pointer select-none">
-                            <input
-                              type="checkbox"
-                              checked={isChecked}
-                              onChange={(e) => {
-                                if (e.target.checked) {
-                                  setNewStaffRoles(prev => [...prev, r.ROLE_CODE]);
-                                } else {
-                                  setNewStaffRoles(prev => prev.filter(code => code !== r.ROLE_CODE));
-                                }
-                              }}
-                              className="rounded text-red-600 focus:ring-red-500 w-3.5 h-3.5 border-slate-200"
-                            />
-                            <span>{r.TEN_ROLE}</span>
-                          </label>
-                        );
-                      })}
-                    </div>
+                    <select
+                      value={newStaffRole}
+                      onChange={(e) => setNewStaffRole(e.target.value)}
+                      className="w-full text-xs font-semibold text-slate-700 bg-slate-50 border border-slate-100 rounded-lg p-2.5 focus:outline-hidden"
+                    >
+                      {roles.map(r => (
+                        <option key={r.ROLE_CODE} value={r.ROLE_CODE}>{r.TEN_ROLE} ({r.ROLE_CODE})</option>
+                      ))}
+                    </select>
                   </div>
                 )}
 
