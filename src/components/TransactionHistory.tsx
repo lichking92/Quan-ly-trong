@@ -112,10 +112,10 @@ export default function TransactionHistory({
   const [formBranch, setFormBranch] = useState<string>('');
   const [formDate, setFormDate] = useState<string>('');
   const [formGhiChu, setFormGhiChu] = useState<string>('');
-  const [formItems, setFormItems] = useState<NhapXuatCT[]>([]);
+  const [formItems, setFormItems] = useState<(Omit<NhapXuatCT, 'SO_LUONG'> & { SO_LUONG: number | '' })[]>([]);
   
   const [editorSearchSku, setEditorSearchSku] = useState<string>('');
-  const [editorAddQty, setEditorAddQty] = useState<number>(1);
+  const [editorAddQty, setEditorAddQty] = useState<number | ''>(1);
   const [editorAddGhiChu, setEditorAddGhiChu] = useState<string>('');
 
   // States for Audit Logs
@@ -223,19 +223,60 @@ export default function TransactionHistory({
     setSuccessMsg('');
 
     if (!activeHeader) return;
-    if (formItems.length === 0) {
+
+    // Sanitize quantities
+    const sanitizedFormItems = formItems.map(item => {
+      const num = Number(item.SO_LUONG);
+      const val = (isNaN(num) || num < 1) ? 1 : Math.floor(num);
+      return { ...item, SO_LUONG: val };
+    });
+    setFormItems(sanitizedFormItems);
+
+    if (sanitizedFormItems.length === 0) {
       setErrorMsg('Phiếu không được bỏ trống danh sách tròng kính. Phải có ít nhất 1 mặt hàng.');
       return;
     }
 
     // Validate quantities
-    if (formItems.some(i => i.SO_LUONG <= 0)) {
+    if (sanitizedFormItems.some(i => i.SO_LUONG <= 0)) {
       setErrorMsg('Số lượng của tất cả mặt hàng phải lớn hơn 0.');
       return;
     }
 
+    // 1. Precise validation of adjustments (chênh lệch) to prevent negative inventory
+    const affectedSKUsForCheck = Array.from(new Set([
+      ...activeDetails.map(d => d.SKU),
+      ...sanitizedFormItems.map(d => d.SKU)
+    ]));
+
+    for (const sku of affectedSKUsForCheck) {
+      const product = sanPhams.find(p => p.SKU === sku);
+      const TON_KHA_DUNG = product ? (Number(product.TON_CUOI) || 0) : 0;
+
+      const SL_cu = activeDetails.filter(d => d.SKU === sku).reduce((sum, d) => sum + (Number(d.SO_LUONG) || 0), 0);
+      const SL_moi = sanitizedFormItems.filter(d => d.SKU === sku).reduce((sum, d) => sum + (Number(d.SO_LUONG) || 0), 0);
+      const delta = SL_moi - SL_cu;
+
+      if (activeHeader.LOAI === 'XUẤT') {
+        if (delta > 0) {
+          if (TON_KHA_DUNG < delta) {
+            setErrorMsg(`Không đủ tồn kho để tăng số lượng xuất.`);
+            return;
+          }
+        }
+      } else if (activeHeader.LOAI === 'NHẬP') {
+        if (delta < 0) {
+          const decreaseAmount = Math.abs(delta);
+          if (TON_KHA_DUNG < decreaseAmount) {
+            setErrorMsg(`Không thể giảm số lượng nhập vì sẽ làm tồn kho âm.`);
+            return;
+          }
+        }
+      }
+    }
+
     // Check simulated stock
-    const checkResult = checkSimulatedStock(formInvoiceId, formItems);
+    const checkResult = checkSimulatedStock(formInvoiceId, sanitizedFormItems as NhapXuatCT[]);
     if (!checkResult.success) {
       setErrorMsg(`Lỗi (Rule 1): Không cho phép tồn kho âm. SKU [${checkResult.errorSku}] sẽ có tồn kho sau khi sửa đổi là ${checkResult.negativeValue} cái.`);
       return;
@@ -252,7 +293,7 @@ export default function TransactionHistory({
       onConfirm: () => {
         setConfirmModal(prev => ({ ...prev, isOpen: false }));
         try {
-          const newTotalQty = formItems.reduce((sum, d) => sum + d.SO_LUONG, 0);
+          const newTotalQty = sanitizedFormItems.reduce((sum, d) => sum + Number(d.SO_LUONG), 0);
           const updatedHeader: NhapXuat = {
             ...activeHeader,
             CHI_NHANH: formBranch,
@@ -261,7 +302,7 @@ export default function TransactionHistory({
             TONG_SL: newTotalQty
           };
 
-          const updatedFormItems = formItems.map(d => ({
+          const updatedFormItems = sanitizedFormItems.map(d => ({
             ...d,
             CHI_NHANH: formBranch,
             NGAY: formDate,
@@ -273,18 +314,18 @@ export default function TransactionHistory({
 
           const affectedSKUs = Array.from(new Set([
             ...activeDetails.map(d => d.SKU),
-            ...formItems.map(d => d.SKU)
+            ...sanitizedFormItems.map(d => d.SKU)
           ]));
 
           // Perform Update
-          onUpdateTransaction(updatedHeader, updatedDetailsList, affectedSKUs);
+          onUpdateTransaction(updatedHeader, updatedDetailsList as NhapXuatCT[], affectedSKUs);
 
           // Save Audit Log
           addAuditLog(
             'SỬA', 
             formInvoiceId, 
             { header: activeHeader, details: activeDetails }, 
-            { header: updatedHeader, details: updatedFormItems }, 
+            { header: updatedHeader, details: updatedFormItems as NhapXuatCT[] }, 
             `Chỉnh sửa thông tin phiếu của ${currentUser.username}`
           );
 
@@ -302,12 +343,20 @@ export default function TransactionHistory({
     setErrorMsg('');
     setSuccessMsg('');
 
-    if (formItems.length === 0) {
+    // Sanitize quantities
+    const sanitizedFormItems = formItems.map(item => {
+      const num = Number(item.SO_LUONG);
+      const val = (isNaN(num) || num < 1) ? 1 : Math.floor(num);
+      return { ...item, SO_LUONG: val };
+    });
+    setFormItems(sanitizedFormItems);
+
+    if (sanitizedFormItems.length === 0) {
       setErrorMsg('Vui lòng thêm ít nhất 1 mặt hàng vào phiếu.');
       return;
     }
 
-    if (formItems.some(i => i.SO_LUONG <= 0)) {
+    if (sanitizedFormItems.some(i => i.SO_LUONG <= 0)) {
       setErrorMsg('Số lượng của tất cả mặt hàng phải lớn hơn 0.');
       return;
     }
@@ -318,7 +367,7 @@ export default function TransactionHistory({
     const loai: LoaiPhieu = isNhap ? 'NHẬP' : 'XUẤT';
 
     // Check simulated stock
-    const checkResult = checkSimulatedStock('', formItems);
+    const checkResult = checkSimulatedStock('', sanitizedFormItems as NhapXuatCT[]);
     if (!checkResult.success) {
       setErrorMsg(`Lỗi (Rule 1): Không cho phép tồn kho âm. SKU [${checkResult.errorSku}] sẽ có tồn kho sau khi tạo phiếu là ${checkResult.negativeValue} cái.`);
       return;
@@ -353,20 +402,20 @@ export default function TransactionHistory({
             CHI_NHANH: formBranch,
             NGAY: formDate,
             LOAI: loai,
-            TONG_SL: formItems.reduce((sum, d) => sum + d.SO_LUONG, 0),
+            TONG_SL: sanitizedFormItems.reduce((sum, d) => sum + Number(d.SO_LUONG), 0),
             NGUOI_TAO: currentUser.username,
             TEN_NGUOI_TAO: currentUser.fullName || currentUser.username,
             TG_TAO: getVietnamDateTimeString(),
             GHI_CHU: formGhiChu
           };
 
-          const newDetails: NhapXuatCT[] = formItems.map((item, idx) => ({
+          const newDetails: NhapXuatCT[] = sanitizedFormItems.map((item, idx) => ({
             ...item,
             ID: `CT_NEW_${Date.now()}_${idx}`,
             HOA_DON: tempId,
             LOAI: loai,
             NGAY: formDate
-          }));
+          })) as NhapXuatCT[];
 
           if (onSaveTransaction) {
             await onSaveTransaction(newHeader, newDetails);
@@ -407,10 +456,8 @@ export default function TransactionHistory({
       return;
     }
 
-    if (editorAddQty <= 0) {
-      setErrorMsg('Số lượng bổ sung phải lớn hơn 0.');
-      return;
-    }
+    const sanitizedQty = editorAddQty === '' || isNaN(Number(editorAddQty)) || Number(editorAddQty) < 1 ? 1 : Math.floor(Number(editorAddQty));
+    setEditorAddQty(sanitizedQty);
 
     if (formItems.some(item => item.SKU === editorSearchSku)) {
       setErrorMsg('Sản phẩm SKU này đã tồn tại trong phiếu. Hãy điều chỉnh số lượng ở bảng bên dưới.');
@@ -420,7 +467,7 @@ export default function TransactionHistory({
     const isNhap = (isCreatingInvoice && (createInvoiceType === 'NHẬP' || createInvoiceType === 'NHẬP_KIEM_KHO')) || (isEditingInvoice && activeHeader?.LOAI === 'NHẬP');
     const loai: LoaiPhieu = isNhap ? 'NHẬP' : 'XUẤT';
 
-    const newItem: NhapXuatCT = {
+    const newItem: any = {
       ID: `CT_TEMP_${Date.now()}`,
       HOA_DON: formInvoiceId || 'TEMP',
       SKU: targetProduct.SKU,
@@ -430,7 +477,7 @@ export default function TransactionHistory({
       TINH_NANG: targetProduct.TINH_NANG,
       SPH: targetProduct.CAN,
       CYL: targetProduct.LOAN,
-      SO_LUONG: editorAddQty,
+      SO_LUONG: sanitizedQty,
       DVT: targetProduct.DVT || 'Cái',
       GHI_CHU: editorAddGhiChu || 'Ghi chú bổ sung',
       LOAI: loai,
@@ -449,7 +496,7 @@ export default function TransactionHistory({
   };
 
   // Update a quantity in the form details
-  const updateItemQtyInForm = (sku: string, val: number) => {
+  const updateItemQtyInForm = (sku: string, val: number | '') => {
     setFormItems(prev => prev.map(i => i.SKU === sku ? { ...i, SO_LUONG: val } : i));
   };
 
@@ -638,12 +685,12 @@ export default function TransactionHistory({
 
   // Trạng thái cho Form Sửa/Thêm dòng trong phiếu chi tiết
   const [editingRowId, setEditingRowId] = useState<string | null>(null);
-  const [editQty, setEditQty] = useState<number>(0);
+  const [editQty, setEditQty] = useState<number | ''>(0);
   const [editGhiChu, setEditGhiChu] = useState<string>('');
   
   const [showAddRowForm, setShowAddRowForm] = useState<boolean>(false);
   const [newRowSKU, setNewRowSKU] = useState<string>('');
-  const [newRowQty, setNewRowQty] = useState<number>(10);
+  const [newRowQty, setNewRowQty] = useState<number | ''>(10);
   const [newRowGhiChu, setNewRowGhiChu] = useState<string>('');
   
   const [errorMsg, setErrorMsg] = useState<string>('');
@@ -858,19 +905,29 @@ export default function TransactionHistory({
     setErrorMsg('');
     setSuccessMsg('');
 
-    if (editQty <= 0) {
-      setErrorMsg('Số lượng sửa đổi bắt buộc phải lớn hơn 0.');
-      return;
-    }
+    const sanitizedQty = editQty === '' || isNaN(Number(editQty)) || Number(editQty) < 1 ? 1 : Math.floor(Number(editQty));
+    setEditQty(sanitizedQty);
 
     if (!activeHeader) return;
 
+    const targetProduct = sanPhams.find(p => p.SKU === row.SKU);
+    const TON_KHA_DUNG = targetProduct ? (Number(targetProduct.TON_CUOI) || 0) : 0;
+    const SL_cu = Number(row.SO_LUONG) || 0;
+    const SL_moi = sanitizedQty;
+    const delta = SL_moi - SL_cu;
+
     if (activeHeader.LOAI === 'XUẤT') {
-      const targetProduct = sanPhams.find(p => p.SKU === row.SKU);
-      if (targetProduct) {
-        const totalAvailableStock = targetProduct.TON_CUOI + row.SO_LUONG;
-        if (editQty > totalAvailableStock) {
-          setErrorMsg(`Lỗi nghiệp vụ (Rule 1): Không cho phép xuất âm kho. SKU [${row.SKU}] chỉ có thể xuất tối đa là ${totalAvailableStock} ${row.DVT}.`);
+      if (delta > 0) {
+        if (TON_KHA_DUNG < delta) {
+          setErrorMsg(`Không đủ tồn kho để tăng số lượng xuất.`);
+          return;
+        }
+      }
+    } else if (activeHeader.LOAI === 'NHẬP') {
+      if (delta < 0) {
+        const decreaseAmount = Math.abs(delta);
+        if (TON_KHA_DUNG < decreaseAmount) {
+          setErrorMsg(`Không thể giảm số lượng nhập vì sẽ làm tồn kho âm.`);
           return;
         }
       }
@@ -878,7 +935,7 @@ export default function TransactionHistory({
 
     const updatedDetails = nhapXuatCTs.map(d => {
       if (d.ID === row.ID) {
-        return { ...d, SO_LUONG: editQty, GHI_CHU: editGhiChu };
+        return { ...d, SO_LUONG: sanitizedQty, GHI_CHU: editGhiChu };
       }
       return d;
     });
@@ -901,13 +958,11 @@ export default function TransactionHistory({
     setErrorMsg('');
     setSuccessMsg('');
 
+    const sanitizedQty = newRowQty === '' || isNaN(Number(newRowQty)) || Number(newRowQty) < 1 ? 1 : Math.floor(Number(newRowQty));
+    setNewRowQty(sanitizedQty);
+
     if (!newRowSKU) {
       setErrorMsg('Vui lòng chọn SKU tròng kính cần bổ sung vào phiếu.');
-      return;
-    }
-
-    if (newRowQty <= 0) {
-      setErrorMsg('Số lượng bổ sung phải lớn hơn 0.');
       return;
     }
 
@@ -926,8 +981,8 @@ export default function TransactionHistory({
     }
 
     if (activeHeader.LOAI === 'XUẤT') {
-      if (newRowQty > targetProduct.TON_CUOI) {
-        setErrorMsg(`Lỗi (Rule 1): Không cho xuất âm kho. SKU [${newRowSKU}] chỉ còn tồn ${targetProduct.TON_CUOI} ${targetProduct.DVT}.`);
+      if (sanitizedQty > targetProduct.TON_CUOI) {
+        setErrorMsg(`Không đủ tồn kho để tăng số lượng xuất.`);
         return;
       }
     }
@@ -942,7 +997,7 @@ export default function TransactionHistory({
       TINH_NANG: targetProduct.TINH_NANG,
       SPH: targetProduct.CAN,
       CYL: targetProduct.LOAN,
-      SO_LUONG: newRowQty,
+      SO_LUONG: sanitizedQty,
       DVT: targetProduct.DVT,
       GHI_CHU: newRowGhiChu || 'Bổ sung dòng sau lập phiếu',
       LOAI: activeHeader.LOAI,
@@ -972,6 +1027,16 @@ export default function TransactionHistory({
     if (activeDetails.length <= 1) {
       setErrorMsg('Phiếu nhập xuất bắt buộc phải chứa ít nhất 1 mặt hàng. Bạn không thể xóa dòng cuối cùng. Hãy chọn "Hủy Phiếu" nếu muốn hủy bỏ toàn bộ.');
       return;
+    }
+
+    if (activeHeader.LOAI === 'NHẬP') {
+      const targetProduct = sanPhams.find(p => p.SKU === row.SKU);
+      const TON_KHA_DUNG = targetProduct ? (Number(targetProduct.TON_CUOI) || 0) : 0;
+      const decreaseAmount = Number(row.SO_LUONG) || 0;
+      if (TON_KHA_DUNG < decreaseAmount) {
+        setErrorMsg(`Không thể giảm số lượng nhập vì sẽ làm tồn kho âm.`);
+        return;
+      }
     }
 
     setConfirmModal({
@@ -1222,7 +1287,22 @@ export default function TransactionHistory({
                     type="number"
                     min={1}
                     value={newRowQty}
-                    onChange={(e) => setNewRowQty(Math.max(1, parseInt(e.target.value) || 1))}
+                    onChange={(e) => {
+                      const raw = e.target.value;
+                      if (raw === '') {
+                        setNewRowQty('');
+                      } else {
+                        const val = parseInt(raw, 10);
+                        setNewRowQty(isNaN(val) ? '' : val);
+                      }
+                    }}
+                    onBlur={() => {
+                      if (newRowQty === '' || isNaN(Number(newRowQty)) || Number(newRowQty) < 1) {
+                        setNewRowQty(1);
+                      } else {
+                        setNewRowQty(Math.floor(Number(newRowQty)));
+                      }
+                    }}
                     className="w-full text-xs font-bold text-slate-700 bg-white border border-slate-200 rounded p-1.5 font-mono"
                   />
                 </div>
@@ -1291,7 +1371,22 @@ export default function TransactionHistory({
                           type="number"
                           min={1}
                           value={editQty}
-                          onChange={(e) => setEditQty(Math.max(1, parseInt(e.target.value) || 1))}
+                          onChange={(e) => {
+                            const raw = e.target.value;
+                            if (raw === '') {
+                              setEditQty('');
+                            } else {
+                              const val = parseInt(raw, 10);
+                              setEditQty(isNaN(val) ? '' : val);
+                            }
+                          }}
+                          onBlur={() => {
+                            if (editQty === '' || isNaN(Number(editQty)) || Number(editQty) < 1) {
+                              setEditQty(1);
+                            } else {
+                              setEditQty(Math.floor(Number(editQty)));
+                            }
+                          }}
                           className="w-16 p-1 text-center border border-slate-300 rounded font-bold bg-white"
                         />
                       ) : (
@@ -1837,7 +1932,22 @@ export default function TransactionHistory({
                 type="number"
                 min="1"
                 value={editorAddQty}
-                onChange={(e) => setEditorAddQty(Math.max(1, parseInt(e.target.value, 10) || 1))}
+                onChange={(e) => {
+                  const raw = e.target.value;
+                  if (raw === '') {
+                    setEditorAddQty('');
+                  } else {
+                    const val = parseInt(raw, 10);
+                    setEditorAddQty(isNaN(val) ? '' : val);
+                  }
+                }}
+                onBlur={() => {
+                  if (editorAddQty === '' || isNaN(Number(editorAddQty)) || Number(editorAddQty) < 1) {
+                    setEditorAddQty(1);
+                  } else {
+                    setEditorAddQty(Math.floor(Number(editorAddQty)));
+                  }
+                }}
                 className="w-full text-xs font-mono font-bold text-slate-700 bg-white border border-slate-200 rounded-xl px-3 py-2 focus:outline-hidden"
               />
             </div>
@@ -1901,7 +2011,7 @@ export default function TransactionHistory({
                       <div className="flex items-center justify-center gap-1.5">
                         <button
                           type="button"
-                          onClick={() => updateItemQtyInForm(item.SKU, Math.max(1, item.SO_LUONG - 1))}
+                          onClick={() => updateItemQtyInForm(item.SKU, Math.max(1, (Number(item.SO_LUONG) || 0) - 1))}
                           className="w-6 h-6 rounded-full border border-slate-200 flex items-center justify-center text-slate-500 font-bold hover:bg-slate-50 cursor-pointer"
                         >
                           -
@@ -1910,12 +2020,27 @@ export default function TransactionHistory({
                           type="number"
                           min="1"
                           value={item.SO_LUONG}
-                          onChange={(e) => updateItemQtyInForm(item.SKU, Math.max(1, parseInt(e.target.value, 10) || 1))}
+                          onChange={(e) => {
+                            const raw = e.target.value;
+                            if (raw === '') {
+                              updateItemQtyInForm(item.SKU, '');
+                            } else {
+                              const val = parseInt(raw, 10);
+                              updateItemQtyInForm(item.SKU, isNaN(val) ? '' : val);
+                            }
+                          }}
+                          onBlur={() => {
+                            if (item.SO_LUONG === '' || isNaN(Number(item.SO_LUONG)) || Number(item.SO_LUONG) < 1) {
+                              updateItemQtyInForm(item.SKU, 1);
+                            } else {
+                              updateItemQtyInForm(item.SKU, Math.floor(Number(item.SO_LUONG)));
+                            }
+                          }}
                           className="w-16 text-center font-mono font-bold text-xs border border-slate-200 rounded py-1"
                         />
                         <button
                           type="button"
-                          onClick={() => updateItemQtyInForm(item.SKU, item.SO_LUONG + 1)}
+                          onClick={() => updateItemQtyInForm(item.SKU, (Number(item.SO_LUONG) || 0) + 1)}
                           className="w-6 h-6 rounded-full border border-slate-200 flex items-center justify-center text-slate-500 font-bold hover:bg-slate-50 cursor-pointer"
                         >
                           +
@@ -1962,75 +2087,7 @@ export default function TransactionHistory({
   return (
     <div className="space-y-6">
 
-      {/* HEADER TAB LỊCH SỬ VỚI CÁC CHỨC NĂNG THÊM PHIẾU CHUYÊN NGHIỆP */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-slate-50 p-4 rounded-2xl border border-slate-150 shadow-2xs">
-        <div className="text-left col-span-2">
-          <h2 className="text-sm font-extrabold text-slate-800 flex items-center gap-2">
-            <History className="w-5 h-5 text-red-650" />
-            Lịch sử & Quản lý Phiếu Nhập Xuất Kho
-          </h2>
-          <p className="text-[11px] text-slate-500 font-semibold leading-normal">
-            Tra cứu, lập mới, chỉnh sửa, hủy phiếu và tự động cập nhật tồn kho an toàn.
-          </p>
-        </div>
 
-        <div className="flex flex-wrap items-center gap-2">
-          {(hasPerm('picking_nhap.create') || hasPerm('picking_xuat.create') || hasPerm('stocktake.read')) && (
-            <div className="relative group">
-              <button className="flex items-center gap-1.5 bg-red-650 hover:bg-red-700 text-white font-extrabold text-xs py-2 px-4 rounded-xl shadow-2xs transition-all cursor-pointer">
-                <Plus className="w-4 h-4" />
-                Lập Phiếu Mới
-              </button>
-              <div className="absolute right-0 mt-1.5 w-56 bg-white border border-slate-150 rounded-xl shadow-lg hidden group-hover:block hover:block z-45 py-1.5">
-                {hasPerm('picking_nhap.create') && (
-                  <button
-                    onClick={() => handleStartCreateInvoice('NHẬP')}
-                    className="w-full text-left px-4 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 flex items-center gap-2 cursor-pointer"
-                  >
-                    <span className="w-2 h-2 rounded-full bg-emerald-500" />
-                    Phiếu Nhập Hàng (PN)
-                  </button>
-                )}
-                {hasPerm('picking_xuat.create') && (
-                  <button
-                    onClick={() => handleStartCreateInvoice('XUẤT')}
-                    className="w-full text-left px-4 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 flex items-center gap-2 cursor-pointer"
-                  >
-                    <span className="w-2 h-2 rounded-full bg-amber-500" />
-                    Phiếu Xuất Hàng (PX)
-                  </button>
-                )}
-                {hasPerm('stocktake.read') && (
-                  <button
-                    onClick={() => handleStartCreateInvoice('NHẬP_KIEM_KHO')}
-                    className="w-full text-left px-4 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 flex items-center gap-2 cursor-pointer"
-                  >
-                    <span className="w-2 h-2 rounded-full bg-blue-500" />
-                    Phiếu Nhập Kiểm Kho (PNK)
-                  </button>
-                )}
-                {hasPerm('stocktake.read') && (
-                  <button
-                    onClick={() => handleStartCreateInvoice('XUAT_KIEM_KHO')}
-                    className="w-full text-left px-4 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 flex items-center gap-2 cursor-pointer"
-                  >
-                    <span className="w-2 h-2 rounded-full bg-purple-500" />
-                    Phiếu Xuất Kiểm Kho (PXK)
-                  </button>
-                )}
-              </div>
-            </div>
-          )}
-
-          <button
-            onClick={() => setShowAuditLogModal(true)}
-            className="flex items-center gap-1.5 bg-white hover:bg-slate-50 border border-slate-200 text-slate-600 hover:text-slate-800 font-extrabold text-xs py-2 px-4 rounded-xl shadow-2xs transition-all cursor-pointer"
-          >
-            <History className="w-4 h-4 text-slate-400" />
-            Nhật Ký Chỉnh Sửa ({auditLogs.length})
-          </button>
-        </div>
-      </div>
 
       {/* 1. KHU VỰC BỘ LỌC VÀ TÌM KIẾM PHIẾU */}
       <div className="bg-white rounded-2xl border border-slate-100 p-4 shadow-2xs space-y-4">

@@ -123,7 +123,7 @@ export default function InventoryAudit({
   const [selectDoSph, setSelectDoSph] = useState<number>(-2.00);
   const [selectDoCyl, setSelectDoCyl] = useState<number>(0.00);
   const [selectAxis, setSelectAxis] = useState<string>(''); // Trục (AXIS) nếu có
-  const [tonThucTe, setTonThucTe] = useState<number>(0);
+  const [tonThucTe, setTonThucTe] = useState<number | ''>(0);
 
   // Trạng thái tìm kiếm SKU nhanh để tự động điền thuộc tính
   const [searchSKUQuery, setSearchSKUQuery] = useState<string>('');
@@ -320,7 +320,8 @@ export default function InventoryAudit({
   const calculation = useMemo(() => {
     if (!matchedProduct) return { lech: 0, loaiBu: 'KHÔNG LỆCH' as const };
     const tonHeThong = matchedProduct.TON_CUOI;
-    const lech = tonThucTe - tonHeThong;
+    const finalTonThucTe = tonThucTe === '' ? 0 : tonThucTe;
+    const lech = finalTonThucTe - tonHeThong;
     
     let loaiBu: 'NHẬP BÙ' | 'XUẤT BÙ' | 'KHÔNG LỆCH' = 'KHÔNG LỆCH';
     if (lech > 0) loaiBu = 'NHẬP BÙ';
@@ -345,14 +346,22 @@ export default function InventoryAudit({
       return;
     }
 
+    const finalTonThucTe = tonThucTe === '' || isNaN(Number(tonThucTe)) || Number(tonThucTe) < 0 ? 0 : Math.floor(Number(tonThucTe));
+    setTonThucTe(finalTonThucTe);
+
+    const finalLech = finalTonThucTe - matchedProduct.TON_CUOI;
+    let finalLoaiBu: 'NHẬP BÙ' | 'XUẤT BÙ' | 'KHÔNG LỆCH' = 'KHÔNG LỆCH';
+    if (finalLech > 0) finalLoaiBu = 'NHẬP BÙ';
+    else if (finalLech < 0) finalLoaiBu = 'XUẤT BÙ';
+
     const item: AuditCartItem = {
       id: `AUDIT_CART_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`,
       sku: matchedProduct.SKU,
       tenSp: matchedProduct.TEN_SAN_PHAM,
       tonHeThong: matchedProduct.TON_CUOI,
-      tonThucTe: tonThucTe,
-      lech: calculation.lech,
-      loaiBu: calculation.loaiBu,
+      tonThucTe: finalTonThucTe,
+      lech: finalLech,
+      loaiBu: finalLoaiBu,
       axis: selectAxis.trim() ? `Trục: ${selectAxis}` : ''
     };
 
@@ -730,7 +739,22 @@ export default function InventoryAudit({
                     min={0}
                     disabled={!matchedProduct}
                     value={tonThucTe}
-                    onChange={(e) => setTonThucTe(Math.max(0, parseInt(e.target.value) || 0))}
+                    onChange={(e) => {
+                      const raw = e.target.value;
+                      if (raw === '') {
+                        setTonThucTe('');
+                      } else {
+                        const val = parseInt(raw, 10);
+                        setTonThucTe(isNaN(val) ? '' : val);
+                      }
+                    }}
+                    onBlur={() => {
+                      if (tonThucTe === '' || isNaN(Number(tonThucTe)) || Number(tonThucTe) < 0) {
+                        setTonThucTe(0);
+                      } else {
+                        setTonThucTe(Math.floor(Number(tonThucTe)));
+                      }
+                    }}
                     className="w-full py-1.5 px-2.5 text-xs font-bold text-slate-700 bg-white border border-slate-250 rounded-md font-mono focus:outline-hidden focus:ring-1 focus:ring-red-500"
                   />
                 </div>

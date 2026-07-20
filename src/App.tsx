@@ -2768,16 +2768,46 @@ export default function App() {
     const nextHeaders = nhapXuats.map(h => h.HOA_DON === updatedHeader.HOA_DON ? updatedHeader : h);
     setNhapXuats(nextHeaders);
     
-    // 2. Ghi đè lại toàn bộ chi tiết mới (chỉ chứa sự thay đổi của dòng trong phiếu)
+    // 2. Ghi đè lại toàn bộ chi tiết mới
     setNhapXuatCTs(updatedDetails);
 
-    // 3. Tái tính toán cục bộ cho các SKU bị ảnh hưởng
-    const normSkusToRecalc = skusToRecalc.map(s => cleanSKU(s));
+    // 3. Tái tính toán cục bộ cho các SKU bị ảnh hưởng theo delta = so_luong_moi - so_luong_cu
+    const oldInvoiceDetails = nhapXuatCTs.filter(d => d.HOA_DON === updatedHeader.HOA_DON);
+    const newInvoiceDetails = updatedDetails.filter(d => d.HOA_DON === updatedHeader.HOA_DON);
+
+    const allAffectedSkus = Array.from(new Set([
+      ...oldInvoiceDetails.map(d => cleanSKU(d.SKU)),
+      ...newInvoiceDetails.map(d => cleanSKU(d.SKU))
+    ]));
+
     const updatedProductsList = sanPhams.map(p => {
       const pSkuNorm = cleanSKU(p.SKU);
-      if (normSkusToRecalc.includes(pSkuNorm)) {
-        const updatedP = recalculateProductState(p.SKU, sanPhams, updatedDetails, kiemKhos, nextHeaders);
-        return updatedP ? updatedP : p;
+      if (allAffectedSkus.includes(pSkuNorm)) {
+        const SL_cu = oldInvoiceDetails
+          .filter(d => cleanSKU(d.SKU) === pSkuNorm)
+          .reduce((sum, d) => sum + (Number(d.SO_LUONG) || 0), 0);
+        const SL_moi = newInvoiceDetails
+          .filter(d => cleanSKU(d.SKU) === pSkuNorm)
+          .reduce((sum, d) => sum + (Number(d.SO_LUONG) || 0), 0);
+        const delta = SL_moi - SL_cu;
+
+        let newNhap = p.NHAP || 0;
+        let newXuat = p.XUAT || 0;
+
+        if (updatedHeader.LOAI === 'NHẬP') {
+          newNhap = (p.NHAP || 0) + delta;
+        } else if (updatedHeader.LOAI === 'XUẤT') {
+          newXuat = (p.XUAT || 0) + delta;
+        }
+
+        const newTonCuoi = (p.TON_DAU || 0) + newNhap - newXuat;
+
+        return {
+          ...p,
+          NHAP: newNhap,
+          XUAT: newXuat,
+          TON_CUOI: newTonCuoi
+        };
       }
       return p;
     });
@@ -2796,7 +2826,7 @@ export default function App() {
           ]);
           const [res2, res3] = await Promise.all([
             syncNhapXuatCTs(updatedDetails.filter(d => d.HOA_DON === updatedHeader.HOA_DON), uId),
-            syncSanPhams(updatedProductsList.filter(p => normSkusToRecalc.includes(cleanSKU(p.SKU))), uId)
+            syncSanPhams(updatedProductsList.filter(p => allAffectedSkus.includes(cleanSKU(p.SKU))), uId)
           ]);
           const error = res1.error || resDel.error || res2.error || res3.error;
           if (error) {
@@ -3922,7 +3952,7 @@ export default function App() {
                     sanPhams={sanPhams}
                     onAddProduct={handleAddProduct}
                     onUpdateProduct={handleUpdateProduct}
-                    thuongHieus={listBranchNames}
+                    thuongHieus={listBrandNames}
                     brandList={thuongHieus}
                   />
                 )}
