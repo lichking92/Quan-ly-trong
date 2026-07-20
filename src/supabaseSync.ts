@@ -3070,6 +3070,593 @@ export async function fetchExportMappings(userId?: string): Promise<any[]> {
 }
 
 /**
+ * Chuẩn hóa SKU cục bộ cho hàm fallback
+ */
+function localCleanSKU(sku: string | undefined | null): string {
+  if (!sku) return '';
+  let cleaned = sku.trim().replace(/,/g, '.').replace(/\s+/g, ' ').toUpperCase();
+  cleaned = cleaned.replace(/(?:^|\s)\+(\d)/g, (match) => match.replace('+', ''));
+  cleaned = cleaned.replace(/\b1\.5\b/g, '1.50').replace(/\b1\.6\b/g, '1.60');
+  return cleaned;
+}
+
+/**
+ * Kiểm tra xem lỗi trả về có phải do thiếu hàm RPC trong database hay không
+ */
+function isRpcNotFoundError(error: any): boolean {
+  if (!error) return false;
+  const errMsg = (error.message || '').toLowerCase();
+  return (
+    error.code === 'PGRST125' ||
+    error.code === 'PGRST202' ||
+    errMsg.includes('could not find') ||
+    errMsg.includes('function') ||
+    errMsg.includes('invalid path')
+  );
+}
+
+/**
+ * Fallback lấy mã hóa đơn tiếp theo trực tiếp từ DB bằng client-side query
+ */
+async function fallbackGetNextInvoiceId(prefix: string, userId: string): Promise<string> {
+  try {
+    const { data, error } = await supabase
+      .from('b_nhapxuat')
+      .select('HOA_DON')
+      .eq('user_id', userId)
+      .ilike('HOA_DON', `${prefix}%`);
+    if (error || !data) {
+      return prefix + Math.floor(Math.random() * 1000000).toString().padStart(6, '0');
+    }
+    let maxNum = 0;
+    data.forEach(item => {
+      const h = item.HOA_DON;
+      if (h.startsWith(prefix)) {
+        const numPart = parseInt(h.substring(prefix.length), 10);
+        if (!isNaN(numPart) && numPart > maxNum) {
+          maxNum = numPart;
+        }
+      }
+    });
+    return `${prefix}${String(maxNum + 1).padStart(6, '0')}`;
+  } catch (err) {
+    return prefix + Math.floor(Math.random() * 1000000).toString().padStart(6, '0');
+  }
+}
+
+/**
+ * Fallback lấy mã kiểm kho tiếp theo trực tiếp từ DB bằng client-side query
+ */
+async function fallbackGetNextKiemKhoId(prefix: string, userId: string): Promise<string> {
+  try {
+    const { data, error } = await supabase
+      .from('b_kiemkho')
+      .select('MA_PHIEU')
+      .eq('user_id', userId)
+      .ilike('MA_PHIEU', `${prefix}%`);
+    if (error || !data) {
+      return prefix + Math.floor(Math.random() * 1000000).toString().padStart(6, '0');
+    }
+    let maxNum = 0;
+    data.forEach(item => {
+      const m = item.MA_PHIEU;
+      if (m.startsWith(prefix)) {
+        const numPart = parseInt(m.substring(prefix.length), 10);
+        if (!isNaN(numPart) && numPart > maxNum) {
+          maxNum = numPart;
+        }
+      }
+    });
+    return `${prefix}${String(maxNum + 1).padStart(6, '0')}`;
+  } catch (err) {
+    return prefix + Math.floor(Math.random() * 1000000).toString().padStart(6, '0');
+  }
+}
+
+/**
+ * Fallback tạo giao dịch bằng client-side REST queries
+ */
+async function fallbackCreateTransaction(header: any, details: any[], userId: string) {
+  let v_hoa_don = header.HOA_DON;
+  const v_loai = header.LOAI;
+  
+  const isTempCode = !v_hoa_don || v_hoa_don === '' || !/^(PN|PX|PNK|PXK)\d+$/.test(v_hoa_don);
+  if (isTempCode) {
+    let prefix = 'PX';
+    if (v_loai === 'NHẬP') {
+      prefix = v_hoa_don && v_hoa_don.startsWith('PNK') ? 'PNK' : 'PN';
+    } else {
+      prefix = v_hoa_don && v_hoa_don.startsWith('PXK') ? 'PXK' : 'PX';
+    }
+    v_hoa_don = await fallbackGetNextInvoiceId(prefix, userId);
+  }
+
+  // 1. Insert/update header b_nhapxuat
+  const headerRow = {
+    HOA_DON: v_hoa_don,
+    CHI_NHANH: header.CHI_NHANH,
+    NGAY: header.NGAY,
+    LOAI: v_loai,
+    TONG_SL: Number(header.TONG_SL),
+    NGUOI_TAO: header.NGUOI_TAO,
+    TEN_NGUOI_TAO: header.TEN_NGUOI_TAO,
+    TG_TAO: header.TG_TAO,
+    GHI_CHU: header.GHI_CHU,
+    MA_NV: header.MA_NV,
+    TEN_DANG_NHAP: header.TEN_DANG_NHAP,
+    TRANG_THAI: header.TRANG_THAI || 'Hoàn tất',
+    user_id: userId
+  };
+
+  const { error: hErr } = await supabase
+    .from('b_nhapxuat')
+    .upsert(headerRow, { onConflict: 'HOA_DON' });
+  if (hErr) throw hErr;
+
+  // 2. Delete existing details in b_nhapxuatct
+  const { error: dDelErr } = await supabase
+    .from('b_nhapxuatct')
+    .delete()
+    .eq('HOA_DON', v_hoa_don)
+    .eq('user_id', userId);
+  if (dDelErr) throw dDelErr;
+
+  // 3. Insert new details to b_nhapxuatct
+  const detailRows = details.map((d: any, idx: number) => ({
+    id: d.id || d.ID || `CT_${Date.now()}_${idx}_${Math.random().toString(36).substr(2, 5)}`,
+    HOA_DON: v_hoa_don,
+    SKU: d.SKU,
+    TEN_SP: d.TEN_SP,
+    THUONG_HIEU: d.THUONG_HIEU,
+    CHIET_XUAT: d.CHIET_XUAT,
+    TINH_NANG: d.TINH_NANG,
+    SPH: d.SPH !== undefined && d.SPH !== null ? Number(d.SPH) : null,
+    CYL: d.CYL !== undefined && d.CYL !== null ? Number(d.CYL) : null,
+    SO_LUONG: Number(d.SO_LUONG),
+    DVT: d.DVT,
+    GHI_CHU: d.GHI_CHU,
+    LOAI: d.LOAI || v_loai,
+    NGAY: d.NGAY || header.NGAY,
+    user_id: userId
+  }));
+
+  if (detailRows.length > 0) {
+    const { error: dInsErr } = await supabase
+      .from('b_nhapxuatct')
+      .insert(detailRows);
+    if (dInsErr) throw dInsErr;
+  }
+
+  // 4. Recalculate stock and enforce no negative stock constraint for involved SKUs
+  const skusToRecalc = Array.from(new Set(details.map(d => localCleanSKU(d.SKU))));
+  if (skusToRecalc.length > 0) {
+    for (const sku of skusToRecalc) {
+      const { data: rawDetails, error: detailsErr } = await supabase
+        .from('b_nhapxuatct')
+        .select(`
+          SO_LUONG,
+          LOAI,
+          SKU,
+          b_nhapxuat (
+            TRANG_THAI
+          )
+        `)
+        .eq('user_id', userId);
+      
+      if (detailsErr) throw detailsErr;
+
+      const filtered = (rawDetails || []).filter((d: any) => {
+        const isSkuMatch = localCleanSKU(d.SKU) === sku;
+        const isHeaderNotCancelled = d.b_nhapxuat && d.b_nhapxuat.TRANG_THAI !== 'Đã hủy';
+        return isSkuMatch && isHeaderNotCancelled;
+      });
+
+      const totalNhap = filtered
+        .filter((d: any) => d.LOAI === 'NHẬP')
+        .reduce((sum: number, d: any) => sum + (Number(d.SO_LUONG) || 0), 0);
+
+      const totalXuat = filtered
+        .filter((d: any) => d.LOAI === 'XUẤT')
+        .reduce((sum: number, d: any) => sum + (Number(d.SO_LUONG) || 0), 0);
+
+      const { data: pData, error: pErr } = await supabase
+        .from('b_sanpham')
+        .select('SKU, TON_DAU')
+        .eq('user_id', userId);
+      
+      if (pErr) throw pErr;
+
+      const productRow = (pData || []).find((p: any) => localCleanSKU(p.SKU) === sku);
+      const tonDau = productRow ? (Number(productRow.TON_DAU) || 0) : 0;
+      const tonCuoi = tonDau + totalNhap - totalXuat;
+
+      if (tonCuoi < 0) {
+        throw new Error(`Lỗi (Rule 1): Không cho phép tồn kho âm. SKU [${sku}] chỉ còn tồn ${tonDau} (yêu cầu xuất làm âm thành ${tonCuoi})`);
+      }
+
+      if (productRow) {
+        const { error: upErr } = await supabase
+          .from('b_sanpham')
+          .update({
+            NHAP: totalNhap,
+            XUAT: totalXuat,
+            TON_CUOI: tonCuoi
+          })
+          .eq('user_id', userId)
+          .eq('SKU', productRow.SKU);
+        if (upErr) throw upErr;
+      }
+    }
+  }
+
+  return { success: true, hoa_don: v_hoa_don };
+}
+
+/**
+ * Fallback xóa giao dịch bằng client-side REST queries
+ */
+async function fallbackDeleteTransaction(hoaDon: string, userId: string) {
+  // Get all SKUs in this invoice before deleting details
+  const { data: detailsToDelete, error: dErr } = await supabase
+    .from('b_nhapxuatct')
+    .select('SKU')
+    .eq('HOA_DON', hoaDon)
+    .eq('user_id', userId);
+  if (dErr) throw dErr;
+
+  // Delete details
+  const { error: delDetailsErr } = await supabase
+    .from('b_nhapxuatct')
+    .delete()
+    .eq('HOA_DON', hoaDon)
+    .eq('user_id', userId);
+  if (delDetailsErr) throw delDetailsErr;
+
+  // Delete header
+  const { error: delHeaderErr } = await supabase
+    .from('b_nhapxuat')
+    .delete()
+    .eq('HOA_DON', hoaDon)
+    .eq('user_id', userId);
+  if (delHeaderErr) throw delHeaderErr;
+
+  // Recalculate stock for the affected products
+  const skusToRecalc = Array.from(new Set((detailsToDelete || []).map((d: any) => localCleanSKU(d.SKU))));
+  if (skusToRecalc.length > 0) {
+    for (const sku of skusToRecalc) {
+      const { data: rawDetails, error: detailsErr } = await supabase
+        .from('b_nhapxuatct')
+        .select(`
+          SO_LUONG,
+          LOAI,
+          SKU,
+          b_nhapxuat (
+            TRANG_THAI
+          )
+        `)
+        .eq('user_id', userId);
+      
+      if (detailsErr) throw detailsErr;
+
+      const filtered = (rawDetails || []).filter((d: any) => {
+        const isSkuMatch = localCleanSKU(d.SKU) === sku;
+        const isHeaderNotCancelled = d.b_nhapxuat && d.b_nhapxuat.TRANG_THAI !== 'Đã hủy';
+        return isSkuMatch && isHeaderNotCancelled;
+      });
+
+      const totalNhap = filtered
+        .filter((d: any) => d.LOAI === 'NHẬP')
+        .reduce((sum: number, d: any) => sum + (Number(d.SO_LUONG) || 0), 0);
+
+      const totalXuat = filtered
+        .filter((d: any) => d.LOAI === 'XUẤT')
+        .reduce((sum: number, d: any) => sum + (Number(d.SO_LUONG) || 0), 0);
+
+      const { data: pData, error: pErr } = await supabase
+        .from('b_sanpham')
+        .select('SKU, TON_DAU')
+        .eq('user_id', userId);
+      
+      if (pErr) throw pErr;
+
+      const productRow = (pData || []).find((p: any) => localCleanSKU(p.SKU) === sku);
+      const tonDau = productRow ? (Number(productRow.TON_DAU) || 0) : 0;
+      const tonCuoi = tonDau + totalNhap - totalXuat;
+
+      if (tonCuoi < 0) {
+        throw new Error(`Lỗi (Rule 1): Không cho phép tồn kho âm sau khi xóa. SKU [${sku}] chỉ còn tồn ${tonDau} (xóa làm âm thành ${tonCuoi})`);
+      }
+
+      if (productRow) {
+        const { error: upErr } = await supabase
+          .from('b_sanpham')
+          .update({
+            NHAP: totalNhap,
+            XUAT: totalXuat,
+            TON_CUOI: tonCuoi
+          })
+          .eq('user_id', userId)
+          .eq('SKU', productRow.SKU);
+        if (upErr) throw upErr;
+      }
+    }
+  }
+
+  return { success: true };
+}
+
+/**
+ * Fallback lưu phiếu kiểm kho bằng client-side REST queries
+ */
+async function fallbackSaveAudit(audits: any[], headers: any[], details: any[], userId: string) {
+  // 1. Generate MA_PHIEU for PKK
+  let currentPKKNum: number | null = null;
+  const mappedAudits = [];
+  for (const audit of audits) {
+    let v_ma_phieu = audit.MA_PHIEU;
+    if (!v_ma_phieu || v_ma_phieu === '' || !/^PKK\d+$/.test(v_ma_phieu)) {
+      if (currentPKKNum === null) {
+        const nextId = await fallbackGetNextKiemKhoId('PKK', userId);
+        currentPKKNum = parseInt(nextId.substring(3), 10);
+      } else {
+        currentPKKNum += 1;
+      }
+      v_ma_phieu = `PKK${String(currentPKKNum).padStart(6, '0')}`;
+    }
+    mappedAudits.push({ ...audit, MA_PHIEU: v_ma_phieu });
+  }
+
+  // 2. Upsert audits
+  for (const audit of mappedAudits) {
+    const { data: existing, error: checkErr } = await supabase
+      .from('b_kiemkho')
+      .select('MA_PHIEU')
+      .eq('MA_PHIEU', audit.MA_PHIEU)
+      .eq('SKU', audit.SKU)
+      .eq('user_id', userId)
+      .limit(1);
+    
+    if (checkErr) throw checkErr;
+    
+    const auditRow = {
+      MA_PHIEU: audit.MA_PHIEU,
+      SKU: audit.SKU,
+      TON_HE_THONG: Number(audit.TON_HE_THONG),
+      TON_THUC_TE: Number(audit.TON_THUC_TE),
+      LECH: Number(audit.LECH),
+      LOAI_BU: audit.LOAI_BU,
+      NGUOI_KIEM: audit.NGUOI_KIEM,
+      THOI_DIEM: audit.THOI_DIEM,
+      MA_NV: audit.MA_NV,
+      TEN_DANG_NHAP: audit.TEN_DANG_NHAP,
+      user_id: userId
+    };
+
+    if (existing && existing.length > 0) {
+      const { error: upErr } = await supabase
+        .from('b_kiemkho')
+        .update(auditRow)
+        .eq('MA_PHIEU', audit.MA_PHIEU)
+        .eq('SKU', audit.SKU)
+        .eq('user_id', userId);
+      if (upErr) throw upErr;
+    } else {
+      const { error: insErr } = await supabase
+        .from('b_kiemkho')
+        .insert(auditRow);
+      if (insErr) throw insErr;
+    }
+  }
+
+  // 3. Upsert headers
+  const adjHoaDonMap: Record<string, string> = {};
+  let currentPNKNum: number | null = null;
+  let currentPXKNum: number | null = null;
+
+  for (const header of headers) {
+    const oldHoaDon = header.HOA_DON;
+    const prefix = oldHoaDon.startsWith('PNK') ? 'PNK' : 'PXK';
+    
+    let newHoaDon = '';
+    if (prefix === 'PNK') {
+      if (currentPNKNum === null) {
+        const nextId = await fallbackGetNextInvoiceId('PNK', userId);
+        currentPNKNum = parseInt(nextId.substring(3), 10);
+      } else {
+        currentPNKNum += 1;
+      }
+      newHoaDon = `PNK${String(currentPNKNum).padStart(6, '0')}`;
+    } else {
+      if (currentPXKNum === null) {
+        const nextId = await fallbackGetNextInvoiceId('PXK', userId);
+        currentPXKNum = parseInt(nextId.substring(3), 10);
+      } else {
+        currentPXKNum += 1;
+      }
+      newHoaDon = `PXK${String(currentPXKNum).padStart(6, '0')}`;
+    }
+
+    adjHoaDonMap[oldHoaDon] = newHoaDon;
+
+    const headerRow = {
+      HOA_DON: newHoaDon,
+      CHI_NHANH: header.CHI_NHANH,
+      NGAY: header.NGAY,
+      LOAI: header.LOAI,
+      TONG_SL: Number(header.TONG_SL),
+      NGUOI_TAO: header.NGUOI_TAO,
+      TEN_NGUOI_TAO: header.TEN_NGUOI_TAO,
+      TG_TAO: header.TG_TAO,
+      GHI_CHU: header.GHI_CHU,
+      MA_NV: header.MA_NV,
+      TEN_DANG_NHAP: header.TEN_DANG_NHAP,
+      TRANG_THAI: header.TRANG_THAI || 'Hoàn tất',
+      user_id: userId
+    };
+
+    const { error: insHeaderErr } = await supabase
+      .from('b_nhapxuat')
+      .insert(headerRow);
+    if (insHeaderErr) throw insHeaderErr;
+  }
+
+  // 4. Insert details
+  const detailRows = details.map((d: any, idx: number) => {
+    const oldHoaDon = d.HOA_DON;
+    const newHoaDon = adjHoaDonMap[oldHoaDon] || oldHoaDon;
+
+    return {
+      id: d.id || d.ID || `CT_${Date.now()}_${idx}_${Math.random().toString(36).substr(2, 5)}`,
+      HOA_DON: newHoaDon,
+      SKU: d.SKU,
+      TEN_SP: d.TEN_SP,
+      THUONG_HIEU: d.THUONG_HIEU,
+      CHIET_XUAT: d.CHIET_XUAT,
+      TINH_NANG: d.TINH_NANG,
+      SPH: d.SPH !== undefined && d.SPH !== null ? Number(d.SPH) : null,
+      CYL: d.CYL !== undefined && d.CYL !== null ? Number(d.CYL) : null,
+      SO_LUONG: Number(d.SO_LUONG),
+      DVT: d.DVT,
+      GHI_CHU: d.GHI_CHU,
+      LOAI: d.LOAI,
+      NGAY: d.NGAY,
+      user_id: userId
+    };
+  });
+
+  if (detailRows.length > 0) {
+    const { error: insDetailsErr } = await supabase
+      .from('b_nhapxuatct')
+      .insert(detailRows);
+    if (insDetailsErr) throw insDetailsErr;
+  }
+
+  // 5. Recalculate stock for affected SKUs
+  const skusToRecalc = Array.from(new Set([
+    ...audits.map(a => localCleanSKU(a.SKU)),
+    ...details.map(d => localCleanSKU(d.SKU))
+  ]));
+
+  if (skusToRecalc.length > 0) {
+    for (const sku of skusToRecalc) {
+      const { data: rawDetails, error: detailsErr } = await supabase
+        .from('b_nhapxuatct')
+        .select(`
+          SO_LUONG,
+          LOAI,
+          SKU,
+          b_nhapxuat (
+            TRANG_THAI
+          )
+        `)
+        .eq('user_id', userId);
+      
+      if (detailsErr) throw detailsErr;
+
+      const filtered = (rawDetails || []).filter((d: any) => {
+        const isSkuMatch = localCleanSKU(d.SKU) === sku;
+        const isHeaderNotCancelled = d.b_nhapxuat && d.b_nhapxuat.TRANG_THAI !== 'Đã hủy';
+        return isSkuMatch && isHeaderNotCancelled;
+      });
+
+      const totalNhap = filtered
+        .filter((d: any) => d.LOAI === 'NHẬP')
+        .reduce((sum: number, d: any) => sum + (Number(d.SO_LUONG) || 0), 0);
+
+      const totalXuat = filtered
+        .filter((d: any) => d.LOAI === 'XUẤT')
+        .reduce((sum: number, d: any) => sum + (Number(d.SO_LUONG) || 0), 0);
+
+      const { data: pData, error: pErr } = await supabase
+        .from('b_sanpham')
+        .select('SKU, TON_DAU')
+        .eq('user_id', userId);
+      
+      if (pErr) throw pErr;
+
+      const productRow = (pData || []).find((p: any) => localCleanSKU(p.SKU) === sku);
+      const tonDau = productRow ? (Number(productRow.TON_DAU) || 0) : 0;
+      const tonCuoi = tonDau + totalNhap - totalXuat;
+
+      if (tonCuoi < 0) {
+        throw new Error(`Lỗi (Rule 1): Không cho phép tồn kho âm. SKU [${sku}] chỉ còn tồn ${tonDau} (yêu cầu điều chỉnh làm âm thành ${tonCuoi})`);
+      }
+
+      if (productRow) {
+        const { error: upErr } = await supabase
+          .from('b_sanpham')
+          .update({
+            NHAP: totalNhap,
+            XUAT: totalXuat,
+            TON_CUOI: tonCuoi
+          })
+          .eq('user_id', userId)
+          .eq('SKU', productRow.SKU);
+        if (upErr) throw upErr;
+      }
+    }
+  }
+
+  return { success: true };
+}
+
+/**
+ * Fallback tạo gom đơn bằng client-side REST queries
+ */
+async function fallbackCreateGomDon(header: any, details: any[], userId: string) {
+  const v_id = header.id;
+
+  // Insert or update b_gomdon
+  const gomDonRow = {
+    id: v_id,
+    branch: header.branch,
+    original_text: header.original_text,
+    trang_thai: header.trang_thai || 'Chờ xử lý',
+    so_phieu_xuat: header.so_phieu_xuat,
+    user_id: userId
+  };
+
+  const { error: gdErr } = await supabase
+    .from('b_gomdon')
+    .upsert(gomDonRow, { onConflict: 'id' });
+  if (gdErr) throw gdErr;
+
+  // Delete existing details of this gom_don
+  const { error: dDelErr } = await supabase
+    .from('b_gomdonct')
+    .delete()
+    .eq('gom_don_id', v_id)
+    .eq('user_id', userId);
+  if (dDelErr) throw dDelErr;
+
+  // Insert details b_gomdonct
+  const detailRows = details.map((item: any, idx: number) => ({
+    id: item.id || `GDCT_${Date.now()}_${idx}_${Math.random().toString(36).substr(2, 5)}`,
+    gom_don_id: v_id,
+    raw_line: item.raw_line,
+    brand: item.brand,
+    chiet_xuat: item.chiet_xuat,
+    tinh_nang: item.tinh_nang,
+    sph: item.sph !== undefined && item.sph !== null ? Number(item.sph) : null,
+    cyl: item.cyl !== undefined && item.cyl !== null ? Number(item.cyl) : null,
+    quantity: item.quantity !== undefined && item.quantity !== null ? Number(item.quantity) : 1,
+    unit: item.unit || 'miếng',
+    sku: item.sku,
+    error: item.error,
+    user_id: userId
+  }));
+
+  if (detailRows.length > 0) {
+    const { error: gdctErr } = await supabase
+      .from('b_gomdonct')
+      .insert(detailRows);
+    if (gdctErr) throw gdctErr;
+  }
+
+  return { success: true };
+}
+
+/**
  * Giao dịch tạo phiếu và chi tiết đi kèm qua RPC PostgreSQL (An toàn tuyệt đối khỏi race condition)
  */
 export async function rpcCreateTransaction(header: any, details: any[]) {
@@ -3084,11 +3671,25 @@ export async function rpcCreateTransaction(header: any, details: any[]) {
       p_user_id: userId
     });
     if (error) {
+      if (isRpcNotFoundError(error)) {
+        console.warn('RPC create_transaction_v2 missing, falling back to client-side transaction...');
+        const res = await fallbackCreateTransaction(header, details, userId);
+        return { data: res, error: null };
+      }
       console.error('Lỗi khi chạy create_transaction_v2 RPC:', error);
       return { data: null, error };
     }
     return { data, error: null };
   } catch (err: any) {
+    if (isRpcNotFoundError(err)) {
+      console.warn('RPC create_transaction_v2 exception, falling back to client-side transaction...');
+      try {
+        const res = await fallbackCreateTransaction(header, details, userId);
+        return { data: res, error: null };
+      } catch (fallbackErr: any) {
+        return { data: null, error: fallbackErr };
+      }
+    }
     console.error('Exception khi chạy create_transaction_v2 RPC:', err);
     return { data: null, error: err };
   }
@@ -3108,11 +3709,25 @@ export async function rpcDeleteTransaction(hoaDon: string) {
       p_user_id: userId
     });
     if (error) {
+      if (isRpcNotFoundError(error)) {
+        console.warn('RPC delete_transaction_v2 missing, falling back to client-side deletion...');
+        const res = await fallbackDeleteTransaction(hoaDon, userId);
+        return { data: res, error: null };
+      }
       console.error('Lỗi khi chạy delete_transaction_v2 RPC:', error);
       return { data: null, error };
     }
     return { data, error: null };
   } catch (err: any) {
+    if (isRpcNotFoundError(err)) {
+      console.warn('RPC delete_transaction_v2 exception, falling back to client-side deletion...');
+      try {
+        const res = await fallbackDeleteTransaction(hoaDon, userId);
+        return { data: res, error: null };
+      } catch (fallbackErr: any) {
+        return { data: null, error: fallbackErr };
+      }
+    }
     console.error('Exception khi chạy delete_transaction_v2 RPC:', err);
     return { data: null, error: err };
   }
@@ -3134,11 +3749,25 @@ export async function rpcSaveAudit(audits: any[], headers: any[], details: any[]
       p_user_id: userId
     });
     if (error) {
+      if (isRpcNotFoundError(error)) {
+        console.warn('RPC save_audit_v2 missing, falling back to client-side audit...');
+        const res = await fallbackSaveAudit(audits, headers, details, userId);
+        return { data: res, error: null };
+      }
       console.error('Lỗi khi chạy save_audit_v2 RPC:', error);
       return { data: null, error };
     }
     return { data, error: null };
   } catch (err: any) {
+    if (isRpcNotFoundError(err)) {
+      console.warn('RPC save_audit_v2 exception, falling back to client-side audit...');
+      try {
+        const res = await fallbackSaveAudit(audits, headers, details, userId);
+        return { data: res, error: null };
+      } catch (fallbackErr: any) {
+        return { data: null, error: fallbackErr };
+      }
+    }
     console.error('Exception khi chạy save_audit_v2 RPC:', err);
     return { data: null, error: err };
   }
@@ -3159,11 +3788,25 @@ export async function rpcCreateGomDon(header: any, details: any[]) {
       p_user_id: userId
     });
     if (error) {
+      if (isRpcNotFoundError(error)) {
+        console.warn('RPC create_gom_don_v2 missing, falling back to client-side gom don...');
+        const res = await fallbackCreateGomDon(header, details, userId);
+        return { data: res, error: null };
+      }
       console.error('Lỗi khi chạy create_gom_don_v2 RPC:', error);
       return { data: null, error };
     }
     return { data, error: null };
   } catch (err: any) {
+    if (isRpcNotFoundError(err)) {
+      console.warn('RPC create_gom_don_v2 exception, falling back to client-side gom don...');
+      try {
+        const res = await fallbackCreateGomDon(header, details, userId);
+        return { data: res, error: null };
+      } catch (fallbackErr: any) {
+        return { data: null, error: fallbackErr };
+      }
+    }
     console.error('Exception khi chạy create_gom_don_v2 RPC:', err);
     return { data: null, error: err };
   }
@@ -3183,13 +3826,20 @@ export async function rpcGetNextInvoiceId(prefix: string): Promise<string> {
       p_user_id: userId
     });
     if (error) {
+      if (isRpcNotFoundError(error)) {
+        return await fallbackGetNextInvoiceId(prefix, userId);
+      }
       console.error('Lỗi khi lấy get_next_invoice_id RPC:', error);
       return prefix + Math.floor(Math.random() * 1000000).toString().padStart(6, '0');
     }
     return data;
   } catch (err) {
+    if (isRpcNotFoundError(err)) {
+      return await fallbackGetNextInvoiceId(prefix, userId);
+    }
     console.error('Exception khi lấy get_next_invoice_id:', err);
     return prefix + Math.floor(Math.random() * 1000000).toString().padStart(6, '0');
   }
 }
+
 
