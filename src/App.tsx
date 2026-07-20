@@ -3261,7 +3261,7 @@ export default function App() {
                   `- Họ và tên: ${staff.HO_TEN}\n` +
                   `- Tên đăng nhập: ${staff.TEN_DANG_NHAP || staff.EMAIL}\n` +
                   `- Email liên hệ: ${staff.EMAIL}\n` +
-                  `- Vai trò hệ thống: ${staff.ROLE === 'ADMIN' ? 'Admin (Chủ cửa hàng)' : staff.ROLE === 'KHO' ? 'Thủ Kho' : 'Nhân Viên Bán Hàng'}\n` +
+                  `- Vai trò hệ thống: ${staff.ROLE === 'ADMIN' ? 'Admin (Quản Lý Kho)' : staff.ROLE === 'KHO' ? 'Thủ Kho' : 'Nhân Viên Bán Hàng'}\n` +
                   `- Chi nhánh: ${staff.CHI_NHANH}\n` +
                   `- Trạng thái tài khoản: Hoạt động (Active)\n\n` +
                   `Bây giờ bạn có thể đăng nhập vào ứng dụng và sử dụng các tính năng được cấp quyền ngay lập tức.\n\n` +
@@ -3546,7 +3546,7 @@ export default function App() {
                 <div className="min-w-0 flex-1">
                   <p className={`text-xs font-bold truncate ${sidebarStyle.userText}`}>{currentUser.fullName}</p>
                   <p className={`text-[9px] font-mono font-bold uppercase tracking-wider truncate ${sidebarStyle.userSub}`}>
-                    {currentUser.role === 'ADMIN' ? 'Chủ Cửa Hàng' : currentUser.role === 'KHO' ? 'Thủ Kho' : 'Nhân Viên'} | {currentUser.branch}
+                    {currentUser.role === 'ADMIN' ? 'Quản Lý Kho' : currentUser.role === 'KHO' ? 'Thủ Kho' : 'Nhân Viên'} | {currentUser.branch}
                   </p>
                 </div>
               )}
@@ -3846,6 +3846,8 @@ export default function App() {
                     currentUser={currentUser}
                     onSaveMultipleTransactions={handleSaveMultipleTransactions}
                     onNavigateToHistory={() => setActiveTab('HISTORY')}
+                    nhapXuats={nhapXuats}
+                    nhapXuatCTs={nhapXuatCTs}
                   />
                 )}
 
@@ -4083,9 +4085,9 @@ export default function App() {
         {/* FOOTER CHUYÊN NGHIỆP */}
         <footer className="footer-theme border-t py-3 text-center text-[10px] shrink-0 font-medium shadow-[0_-1px_3px_rgba(0,0,0,0.02)]">
           <p className="flex items-center justify-center gap-1.5 text-desc-color">
-            <span>© 2026 Quản Lý Kho. Thiết kế & vận hành bởi Nguyễn Kiến Đức.</span>
+            <span>© 2026 Quản Lý Kho. Thiết kế bởi Nguyễn Kiên Đức.</span>
             <span className="text-slate-300">|</span>
-            <span className="font-mono text-blue-500" style={{ color: 'var(--accent-color)' }}>Cập nhật thời gian thực bằng Google Apps Script & Sheets</span>
+            <span className="font-mono text-blue-500" style={{ color: 'var(--accent-color)' }}>Cập nhật thời gian thực</span>
           </p>
         </footer>
 

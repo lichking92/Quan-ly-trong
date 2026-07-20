@@ -33,7 +33,7 @@ import {
   ArrowUp,
   ArrowDown
 } from 'lucide-react';
-import { SanPham } from '../types';
+import { SanPham, NhapXuat, NhapXuatCT } from '../types';
 import { supabase } from '../supabaseClient';
 import { generateSKUString, formatDop, formatSKUForDisplay, cleanSKU, getVietnamDateString, getVietnamDateTimeString } from '../data/mockData';
 import { normalizeChietXuat, compareChietXuat } from '../utils/chietXuatHelper';
@@ -156,6 +156,8 @@ interface OrderParserProps {
   currentUser?: any;
   onSaveMultipleTransactions?: (transactions: { header: any; details: any[] }[]) => Promise<string[]>;
   onNavigateToHistory?: () => void;
+  nhapXuats: NhapXuat[];
+  nhapXuatCTs: NhapXuatCT[];
 }
 
 interface ParsedItem {
@@ -183,7 +185,9 @@ export default function OrderParser({
   onTriggerToast,
   currentUser,
   onSaveMultipleTransactions,
-  onNavigateToHistory
+  onNavigateToHistory,
+  nhapXuats = [],
+  nhapXuatCTs = []
 }: OrderParserProps) {
   // Sub-tab: ANALYZE (New analysis & temporary order creation) or TEMP_ORDERS (List of temporary cards & batch picking)
   const [parserViewTab, setParserViewTab] = useState<'ANALYZE' | 'TEMP_ORDERS'>('ANALYZE');
@@ -258,6 +262,77 @@ export default function OrderParser({
   useEffect(() => {
     localStorage.setItem('BATCH_PICKING_TEMP_ORDERS', JSON.stringify(tempOrders));
   }, [tempOrders]);
+
+  // Helper to compute branch-specific stock dynamically
+  const getProductStockByBranch = (
+    sku: string,
+    branch: string,
+    product: SanPham | undefined | null,
+    localHeaders: NhapXuat[],
+    localDetails: NhapXuatCT[]
+  ): number => {
+    if (!product) return 0;
+    if (!branch || branch === 'Tất cả') {
+      return product.TON_CUOI;
+    }
+
+    const branchHeaders = localHeaders.filter(h => h.CHI_NHANH === branch && h.TRANG_THAI !== 'Đã hủy');
+    const branchHeaderIds = new Set(branchHeaders.map(h => h.HOA_DON));
+
+    const branchDetails = localDetails.filter(d => cleanSKU(d.SKU) === cleanSKU(sku) && branchHeaderIds.has(d.HOA_DON));
+
+    const totalNhap = branchDetails
+      .filter(d => d.LOAI === 'NHẬP')
+      .reduce((sum, d) => sum + d.SO_LUONG, 0);
+
+    const totalXuat = branchDetails
+      .filter(d => d.LOAI === 'XUẤT')
+      .reduce((sum, d) => sum + d.SO_LUONG, 0);
+
+    const isDefaultBranch = branch === 'Kho Trung Tâm';
+    const branchTonDau = isDefaultBranch ? product.TON_DAU : 0;
+
+    return Math.max(0, branchTonDau + totalNhap - totalXuat);
+  };
+
+  const handleUpdateOrderBranch = async (orderId: string, newBranch: string) => {
+    // Update local state immediately for fast response
+    setTempOrders(prev => prev.map(o => {
+      if (o.id === orderId) {
+        return { ...o, branch: newBranch };
+      }
+      return o;
+    }));
+
+    if (onTriggerToast) {
+      onTriggerToast(`Đang đồng bộ chi nhánh mới "${newBranch}" lên đám mây...`, 'success');
+    }
+
+    try {
+      const userId = await resolveEffectiveUserId();
+      const { error } = await supabase
+        .from('b_gomdon')
+        .update({ branch: newBranch })
+        .eq('id', orderId)
+        .eq('user_id', userId);
+
+      if (error) {
+        console.error('Lỗi khi cập nhật chi nhánh b_gomdon lên Supabase:', error);
+        if (onTriggerToast) {
+          onTriggerToast('Không thể đồng bộ cập nhật chi nhánh lên Supabase Cloud!', 'error');
+        }
+      } else {
+        if (onTriggerToast) {
+          onTriggerToast(`Đã đổi chi nhánh đơn hàng tạm sang "${newBranch}" thành công!`, 'success');
+        }
+      }
+    } catch (err) {
+      console.error('Lỗi khi cập nhật chi nhánh:', err);
+      if (onTriggerToast) {
+        onTriggerToast('Đã xảy ra lỗi khi đổi chi nhánh!', 'error');
+      }
+    }
+  };
 
   // Tải đơn hàng tạm từ Supabase khi khởi chạy hoặc chuyển đổi người dùng
   useEffect(() => {
@@ -841,6 +916,9 @@ export default function OrderParser({
       // Separate consecutive SPH and CYL written consecutively (e.g., -2.00-0.50 -> -2.00 -0.50)
       processedLine = processedLine.replace(/(\d)([-+])(\d)/g, '$1 $2$3');
 
+      // Ensure Plano/PL followed directly by a sign and a digit is separated by a space (e.g. Plano-4.25 -> PLANO -4.25)
+      processedLine = processedLine.replace(/(PLANO|PL)\s*([-+]?\d)/gi, '$1 $2');
+
       const rawTokens = processedLine.split(/\s+/).filter(Boolean);
 
       // Build precise set of context words to filter out from diopter tokens
@@ -937,12 +1015,12 @@ export default function OrderParser({
         // 1. Identify and extract quantity if explicitly specified with suffix
         let activeTokens = [...tokens];
         const suffixIndex = activeTokens.findIndex(token => 
-          token.match(/^(\d+)\s*(M|C|CẶP|CAP|MIẾNG|MIENG|X|V)$/i)
+          token.match(/^(\d+)\s*(M|C|CẶP|CAP|MIẾNG|MIENG|X|V|PCS)$/i)
         );
 
         if (suffixIndex !== -1) {
           const token = activeTokens[suffixIndex];
-          const qtyMatch = token.match(/^(\d+)\s*(M|C|CẶP|CAP|MIẾNG|MIENG|X|V)$/i);
+          const qtyMatch = token.match(/^(\d+)\s*(M|C|CẶP|CAP|MIẾNG|MIENG|X|V|PCS)$/i);
           if (qtyMatch) {
             const num = parseInt(qtyMatch[1], 10);
             const suffix = qtyMatch[2].toUpperCase();
@@ -1027,7 +1105,7 @@ export default function OrderParser({
               console.log(`  - WARN: No exact SKU match found in catalog for "${generatedSku}"`);
             }
 
-            const stock = matchedProduct?.TON_CUOI ?? 0;
+            const stock = matchedProduct ? getProductStockByBranch(generatedSku, selectedOrderBranch, matchedProduct, nhapXuats, nhapXuatCTs) : 0;
             const isSelectable = !!matchedProduct && stock > 0;
             const defaultExportQty = isSelectable ? Math.min(quantity, stock) : 0;
 
@@ -1075,7 +1153,7 @@ export default function OrderParser({
         return;
       }
       
-      const stock = item.matchedProduct.TON_CUOI;
+      const stock = getProductStockByBranch(item.sku, selectedOrderBranch, item.matchedProduct, nhapXuats, nhapXuatCTs);
       if (stock <= 0) {
         outOfStock++;
       } else if (stock < item.quantity) {
@@ -1096,7 +1174,7 @@ export default function OrderParser({
       errorsCount,
       isAllSufficient
     };
-  }, [parsedItems]);
+  }, [parsedItems, selectedOrderBranch, nhapXuats, nhapXuatCTs]);
 
   const isMissingBrand = useMemo(() => {
     return parsedItems.some(item => !item.brand || item.brand === 'N/A' || item.error?.includes('Thương hiệu'));
@@ -1130,7 +1208,7 @@ export default function OrderParser({
         return;
       }
       
-      const stock = item.matchedProduct.TON_CUOI;
+      const stock = getProductStockByBranch(item.sku, selectedOrderBranch, item.matchedProduct, nhapXuats, nhapXuatCTs);
       if (stock <= 0) {
         deficientList.push(`${cleanLineDesc} → HẾT`);
       } else if (stock < item.quantity) {
@@ -1166,7 +1244,7 @@ export default function OrderParser({
         return;
       }
 
-      const stock = item.matchedProduct.TON_CUOI;
+      const stock = getProductStockByBranch(item.sku, selectedOrderBranch, item.matchedProduct, nhapXuats, nhapXuatCTs);
       if (stock <= 0) {
         linesToCopy.push(`❌ ${cleanLineDesc} → HẾT`);
       } else if (stock < item.quantity) {
@@ -1189,8 +1267,12 @@ export default function OrderParser({
 
   // Selection helper variables
   const selectableItems = useMemo(() => {
-    return parsedItems.filter(item => !item.error && item.matchedProduct && item.matchedProduct.TON_CUOI > 0);
-  }, [parsedItems]);
+    return parsedItems.filter(item => {
+      if (item.error || !item.matchedProduct) return false;
+      const stock = getProductStockByBranch(item.sku, selectedOrderBranch, item.matchedProduct, nhapXuats, nhapXuatCTs);
+      return stock > 0;
+    });
+  }, [parsedItems, selectedOrderBranch, nhapXuats, nhapXuatCTs]);
 
   const allSelectableChecked = useMemo(() => {
     if (selectableItems.length === 0) return false;
@@ -1205,7 +1287,8 @@ export default function OrderParser({
   const handleToggleSelectAll = () => {
     const targetState = !allSelectableChecked;
     setParsedItems(prev => prev.map(item => {
-      const isSelectable = !item.error && item.matchedProduct && item.matchedProduct.TON_CUOI > 0;
+      const stock = item.matchedProduct ? getProductStockByBranch(item.sku, selectedOrderBranch, item.matchedProduct, nhapXuats, nhapXuatCTs) : 0;
+      const isSelectable = !item.error && item.matchedProduct && stock > 0;
       if (isSelectable) {
         return { ...item, selected: targetState };
       }
@@ -1217,7 +1300,7 @@ export default function OrderParser({
     setParsedItems(prev => prev.map(item => {
       if (item.id === id) {
         // Can only select if stock > 0 and no error
-        const stock = item.matchedProduct?.TON_CUOI ?? 0;
+        const stock = item.matchedProduct ? getProductStockByBranch(item.sku, selectedOrderBranch, item.matchedProduct, nhapXuats, nhapXuatCTs) : 0;
         if (!item.error && stock > 0) {
           return { ...item, selected: !item.selected };
         }
@@ -1229,7 +1312,7 @@ export default function OrderParser({
   const handleUpdateExportQty = (id: string, val: number) => {
     setParsedItems(prev => prev.map(item => {
       if (item.id !== id) return item;
-      const stock = item.matchedProduct?.TON_CUOI ?? 0;
+      const stock = item.matchedProduct ? getProductStockByBranch(item.sku, selectedOrderBranch, item.matchedProduct, nhapXuats, nhapXuatCTs) : 0;
       // Clamp quantity to [1, stock]
       const clamped = Math.max(1, Math.min(val, stock));
       return { ...item, exportQuantity: clamped };
@@ -1246,7 +1329,7 @@ export default function OrderParser({
     setParsedItems(prev => prev.filter(item => {
       if (item.error) return false;
       if (!item.matchedProduct) return false;
-      const stock = item.matchedProduct.TON_CUOI;
+      const stock = getProductStockByBranch(item.sku, selectedOrderBranch, item.matchedProduct, nhapXuats, nhapXuatCTs);
       return stock > 0;
     }));
   };
@@ -1524,7 +1607,7 @@ export default function OrderParser({
       .map((item: any) => {
         // Find current live stock limit
         const liveProd = sanPhams.find(p => cleanSKU(p.SKU) === cleanSKU(item.sku));
-        const liveStock = liveProd?.TON_CUOI ?? 0;
+        const liveStock = liveProd ? getProductStockByBranch(item.sku, order.branch, liveProd, nhapXuats, nhapXuatCTs) : 0;
         return {
           sku: item.sku,
           soLuong: Math.min(item.quantity, liveStock > 0 ? liveStock : item.quantity)
@@ -1703,8 +1786,9 @@ export default function OrderParser({
       return;
     }
 
-    // 1. Calculate aggregated requested export quantity per SKU and verify against live stock
-    const skuRequiredQty: Record<string, number> = {};
+    // 1. Calculate aggregated requested export quantity per Branch and SKU, and verify against branch stock
+    // Key structure: "branchName|||skuKey"
+    const skuBranchRequiredQty: Record<string, number> = {};
     const skuOriginalNames: Record<string, string> = {};
 
     for (const order of ordersToExport) {
@@ -1722,19 +1806,21 @@ export default function OrderParser({
         }
 
         const skuKey = cleanSKU(item.sku);
-        skuRequiredQty[skuKey] = (skuRequiredQty[skuKey] || 0) + item.quantity;
+        const compositeKey = `${order.branch}|||${skuKey}`;
+        skuBranchRequiredQty[compositeKey] = (skuBranchRequiredQty[compositeKey] || 0) + item.quantity;
         skuOriginalNames[skuKey] = `${item.brand} ${item.chietXuat} ${item.tinhNang} (SPH ${formatDop(item.sph)} CYL ${formatDop(item.cyl)})`;
       }
     }
 
-    // Now verify against live stock
+    // Now verify against live branch stock
     const stockErrors: string[] = [];
-    for (const [skuKey, requiredQty] of Object.entries(skuRequiredQty)) {
+    for (const [compositeKey, requiredQty] of Object.entries(skuBranchRequiredQty)) {
+      const [branch, skuKey] = compositeKey.split('|||');
       const liveProd = sanPhams.find(p => cleanSKU(p.SKU) === skuKey);
-      const liveStock = liveProd?.TON_CUOI ?? 0;
+      const liveStock = liveProd ? getProductStockByBranch(skuKey, branch, liveProd, nhapXuats, nhapXuatCTs) : 0;
       if (requiredQty > liveStock) {
         stockErrors.push(
-          `${skuOriginalNames[skuKey]} (SKU: ${skuKey}) - Yêu cầu: ${requiredQty}, Tồn kho: ${liveStock}`
+          `${skuOriginalNames[skuKey]} (SKU: ${skuKey}) [Chi nhánh: ${branch}] - Yêu cầu: ${requiredQty}, Tồn kho chi nhánh: ${liveStock}`
         );
       }
     }
@@ -2274,7 +2360,7 @@ export default function OrderParser({
                       {copiedDeficient ? 'Đã copy danh sách thiếu!' : 'Copy Danh Sách Thiếu Hàng'}
                     </button>
 
-                    {!stats.isAllSufficient && parsedItems.some(item => item.error || !item.matchedProduct || item.matchedProduct.TON_CUOI < item.quantity) && (
+                    {!stats.isAllSufficient && parsedItems.some(item => item.error || !item.matchedProduct || getProductStockByBranch(item.sku, selectedOrderBranch, item.matchedProduct, nhapXuats, nhapXuatCTs) < item.quantity) && (
                       <button
                         onClick={handleRemoveUnavailableSKUs}
                         className="flex-1 min-w-[150px] bg-rose-50 hover:bg-rose-100 text-rose-700 text-xs font-bold py-2 px-3 rounded-lg border border-rose-200 transition-colors flex items-center justify-center gap-1.5 cursor-pointer"
@@ -2287,7 +2373,7 @@ export default function OrderParser({
                   </div>
 
                   {/* Display Deficiencies List */}
-                  {!stats.isAllSufficient && parsedItems.some(item => !item.error && (!item.matchedProduct || (item.matchedProduct.TON_CUOI < item.quantity))) && (
+                  {!stats.isAllSufficient && parsedItems.some(item => !item.error && (!item.matchedProduct || (getProductStockByBranch(item.sku, selectedOrderBranch, item.matchedProduct, nhapXuats, nhapXuatCTs) < item.quantity))) && (
                     <div className="bg-rose-50 border border-rose-100 rounded-xl p-4 space-y-2">
                       <h3 className="font-sans font-bold text-rose-800 text-xs flex items-center gap-1.5 uppercase tracking-wider">
                         <AlertTriangle className="w-4 h-4 text-rose-500 shrink-0" />
@@ -2295,9 +2381,9 @@ export default function OrderParser({
                       </h3>
                       <ul className="divide-y divide-rose-100/50 text-xs text-rose-700 font-mono">
                         {parsedItems
-                          .filter(item => !item.error && (!item.matchedProduct || (item.matchedProduct.TON_CUOI < item.quantity)))
+                          .filter(item => !item.error && (!item.matchedProduct || (getProductStockByBranch(item.sku, selectedOrderBranch, item.matchedProduct, nhapXuats, nhapXuatCTs) < item.quantity)))
                           .map(item => {
-                            const stock = item.matchedProduct?.TON_CUOI ?? 0;
+                            const stock = item.matchedProduct ? getProductStockByBranch(item.sku, selectedOrderBranch, item.matchedProduct, nhapXuats, nhapXuatCTs) : 0;
                             const skuDesc = `${item.brand} ${item.chietXuat} ${item.tinhNang} ${formatDop(item.sph)} ${formatDop(item.cyl)}`;
                             return (
                               <li key={item.id} className="py-1.5 flex justify-between items-center">
@@ -2375,7 +2461,7 @@ export default function OrderParser({
                               );
                             }
 
-                            const stock = item.matchedProduct?.TON_CUOI ?? 0;
+                            const stock = item.matchedProduct ? getProductStockByBranch(item.sku, selectedOrderBranch, item.matchedProduct, nhapXuats, nhapXuatCTs) : 0;
                             const hasProduct = !!item.matchedProduct;
                             const isSelectable = hasProduct && stock > 0;
                             
@@ -2577,7 +2663,7 @@ export default function OrderParser({
                     if (item.error) return;
                     totalValid++;
                     const liveProd = sanPhams.find(p => cleanSKU(p.SKU) === cleanSKU(item.sku));
-                    const liveStock = liveProd?.TON_CUOI ?? 0;
+                    const liveStock = liveProd ? getProductStockByBranch(item.sku, order.branch, liveProd, nhapXuats, nhapXuatCTs) : 0;
 
                     if (liveStock <= 0) {
                       outCount++;
@@ -2636,10 +2722,26 @@ export default function OrderParser({
                               className="w-4 h-4 rounded-md border-slate-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer shrink-0"
                             />
                             <div className="space-y-0.5">
-                              <h4 className="font-sans font-bold text-slate-800 text-sm flex items-center gap-1">
+                              <div className="flex items-center gap-1.5 flex-wrap">
                                 <Building2 className="w-4 h-4 text-indigo-500 shrink-0" />
-                                {order.branch}
-                              </h4>
+                                <select
+                                  value={order.branch}
+                                  onChange={(e) => {
+                                    e.stopPropagation();
+                                    handleUpdateOrderBranch(order.id, e.target.value);
+                                  }}
+                                  onClick={(e) => e.stopPropagation()}
+                                  disabled={order.trangThai === 'Đã xuất'}
+                                  className="font-sans font-bold text-slate-800 text-xs bg-slate-50 border border-slate-200 hover:border-slate-300 rounded-lg py-1 px-2 focus:ring-1 focus:ring-indigo-500 focus:border-indigo-500 cursor-pointer outline-none transition-colors disabled:bg-slate-100 disabled:cursor-not-allowed"
+                                  id={`branch_select_card_${order.id}`}
+                                >
+                                  {chiNhanhs.map((branch) => (
+                                    <option key={branch} value={branch}>
+                                      {branch}
+                                    </option>
+                                  ))}
+                                </select>
+                              </div>
                               <p className="text-[10px] text-slate-400 font-medium font-mono">{order.createdAt}</p>
                             </div>
                           </div>
@@ -2670,7 +2772,7 @@ export default function OrderParser({
                         <div className="max-h-36 overflow-y-auto space-y-1.5 divide-y divide-slate-50/50 pr-1">
                           {order.items.map((item: any, i: number) => {
                             const liveProd = sanPhams.find(p => cleanSKU(p.SKU) === cleanSKU(item.sku));
-                            const liveStock = liveProd?.TON_CUOI ?? 0;
+                            const liveStock = liveProd ? getProductStockByBranch(item.sku, order.branch, liveProd, nhapXuats, nhapXuatCTs) : 0;
 
                             let stockIndicator = null;
                             if (item.error) {
@@ -2928,11 +3030,27 @@ export default function OrderParser({
                                 onChange={() => {}} // toggled by card click
                                 className="w-4.5 h-4.5 rounded-md border-slate-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer shrink-0"
                               />
-                              <div>
-                                <h4 className="font-sans font-bold text-slate-800 text-sm flex items-center gap-1 flex-wrap">
+                              <div className="space-y-0.5">
+                                <div className="flex items-center gap-1.5 flex-wrap">
                                   <Building2 className="w-4 h-4 text-indigo-500 shrink-0" />
-                                  {order.branch}
-                                </h4>
+                                  <select
+                                    value={order.branch}
+                                    onChange={(e) => {
+                                      e.stopPropagation();
+                                      handleUpdateOrderBranch(order.id, e.target.value);
+                                    }}
+                                    onClick={(e) => e.stopPropagation()}
+                                    disabled={isExported}
+                                    className="font-sans font-bold text-slate-800 text-xs bg-slate-50 border border-slate-200 hover:border-slate-300 rounded-lg py-1 px-2 focus:ring-1 focus:ring-indigo-500 focus:border-indigo-500 cursor-pointer outline-none transition-colors disabled:bg-slate-100 disabled:cursor-not-allowed"
+                                    id={`branch_select_checklist_${order.id}`}
+                                  >
+                                    {chiNhanhs.map((branch) => (
+                                      <option key={branch} value={branch}>
+                                        {branch}
+                                      </option>
+                                    ))}
+                                  </select>
+                                </div>
                                 <p className="text-[10px] text-slate-400 font-mono">{order.createdAt}</p>
                               </div>
                             </div>
@@ -3156,7 +3274,10 @@ export default function OrderParser({
                               <div className="p-3 md:p-4 space-y-3 bg-white divide-y divide-slate-100">
                                 {group.items.map((item) => {
                                   const liveProd = sanPhams.find(p => cleanSKU(p.SKU) === cleanSKU(item.sku));
-                                  const liveStock = liveProd?.TON_CUOI ?? 0;
+                                  const distinctBranches = Array.from(new Set(item.origins.map(o => o.branch)));
+                                  const liveStock = distinctBranches.reduce((sum: number, br: any) => {
+                                    return sum + (liveProd ? getProductStockByBranch(item.sku, br, liveProd, nhapXuats, nhapXuatCTs) : 0);
+                                  }, 0);
 
                                   return (
                                     <div key={item.sku} className="pt-3 first:pt-0 flex flex-col gap-2.5">
@@ -3192,11 +3313,14 @@ export default function OrderParser({
                                       {/* Branch Breakdown */}
                                       <div className="bg-slate-50 rounded-xl p-2.5 border border-slate-100 flex flex-wrap gap-1.5 items-center">
                                         <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider mr-1">Phân bổ:</span>
-                                        {item.origins.map((o, oi) => (
-                                          <span key={oi} className="bg-white border border-slate-200 text-slate-700 font-bold font-mono text-[10px] px-2 py-0.5 rounded-md">
-                                            {o.branch}: {o.qty}M
-                                          </span>
-                                        ))}
+                                        {item.origins.map((o, oi) => {
+                                          const brStock = liveProd ? getProductStockByBranch(item.sku, o.branch, liveProd, nhapXuats, nhapXuatCTs) : 0;
+                                          return (
+                                            <span key={oi} className="bg-white border border-slate-200 text-slate-700 font-bold font-mono text-[10px] px-2 py-0.5 rounded-md">
+                                              {o.branch}: {o.qty}M (Kho: {brStock})
+                                            </span>
+                                          );
+                                        })}
                                       </div>
                                     </div>
                                   );
@@ -3296,7 +3420,10 @@ export default function OrderParser({
                               {group.items.map((item) => {
                                 const isPicked = !!pickedItemsState[item.sku];
                                 const liveProd = sanPhams.find(p => cleanSKU(p.SKU) === cleanSKU(item.sku));
-                                const liveStock = liveProd?.TON_CUOI ?? 0;
+                                const distinctBranches = Array.from(new Set(item.origins.map(o => o.branch)));
+                                const liveStock = distinctBranches.reduce((sum: number, br: any) => {
+                                  return sum + (liveProd ? getProductStockByBranch(item.sku, br, liveProd, nhapXuats, nhapXuatCTs) : 0);
+                                }, 0);
 
                                 return (
                                   <div 
@@ -3336,7 +3463,19 @@ export default function OrderParser({
                                       }`}>
                                         {item.brand} {item.chietXuat} {item.tinhNang}
                                       </p>
-                                      <p className="font-mono text-[9px] text-slate-400 tracking-tight">SKU: {item.sku}</p>
+                                      <div className="font-mono text-[9px] text-slate-400 tracking-tight flex flex-wrap gap-1 items-center mt-0.5">
+                                        <span>SKU: {item.sku}</span>
+                                        <span className="text-slate-200">|</span>
+                                        <span className="font-bold text-slate-400 uppercase text-[8px] tracking-wider">Phân bổ:</span>
+                                        {item.origins.map((o, oi) => {
+                                          const brStock = liveProd ? getProductStockByBranch(item.sku, o.branch, liveProd, nhapXuats, nhapXuatCTs) : 0;
+                                          return (
+                                            <span key={oi} className="bg-slate-50 border border-slate-200 text-slate-600 px-1 rounded-sm text-[8px]">
+                                              {o.branch}: {o.qty}M (Kho: {brStock})
+                                            </span>
+                                          );
+                                        })}
+                                      </div>
                                     </div>
 
                                     {/* Large Bold Quantity Bubble */}
@@ -3418,7 +3557,7 @@ export default function OrderParser({
 
                       orderItems.forEach((item: any) => {
                         const liveProd = sanPhams.find(p => cleanSKU(p.SKU) === cleanSKU(item.sku));
-                        const liveStock = liveProd?.TON_CUOI ?? 0;
+                        const liveStock = liveProd ? getProductStockByBranch(item.sku, order.branch, liveProd, nhapXuats, nhapXuatCTs) : 0;
 
                         if (liveStock < item.quantity) {
                           isOk = false;
