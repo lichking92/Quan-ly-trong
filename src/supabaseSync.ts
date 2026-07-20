@@ -593,7 +593,601 @@ export async function tryCreateColumnsOnSupabase() {
         );
       END;
       $func$ LANGUAGE plpgsql SECURITY DEFINER;
-  `;
+
+      -- Helper function to clean SKU (clean_sku_func)
+      CREATE OR REPLACE FUNCTION public.clean_sku_func(p_sku text)
+      RETURNS text AS $func$
+      DECLARE
+        v_res text;
+      BEGIN
+        IF p_sku IS NULL THEN
+          RETURN '';
+        END IF;
+        
+        -- trim, replace ',' with '.' and multiple spaces with a single space, uppercase
+        v_res := upper(regexp_replace(replace(trim(p_sku), ',', '.'), '\\s+', ' ', 'g'));
+        
+        -- replace + before digit with just the digit
+        -- handle + at start of string or after space
+        -- e.g. "+3.00" -> "3.00", " +2.00" -> " 2.00"
+        v_res := regexp_replace(v_res, '(^|\\s)\\+(\\d)', '\\1\\2', 'g');
+        
+        -- replace 1.5 with 1.50 and 1.6 with 1.60
+        v_res := regexp_replace(v_res, '\\y1\\.5\\y', '1.50', 'g');
+        v_res := regexp_replace(v_res, '\\y1\\.6\\y', '1.60', 'g');
+        
+        RETURN v_res;
+      END;
+      $func$ LANGUAGE plpgsql IMMUTABLE;
+
+      -- Sequences for Ticket numbers
+      CREATE SEQUENCE IF NOT EXISTS public.b_pn_seq;
+      CREATE SEQUENCE IF NOT EXISTS public.b_px_seq;
+      CREATE SEQUENCE IF NOT EXISTS public.b_pnk_seq;
+      CREATE SEQUENCE IF NOT EXISTS public.b_pxk_seq;
+      CREATE SEQUENCE IF NOT EXISTS public.b_pkk_seq;
+
+      -- Helper to generate next invoice ID using PostgreSQL sequence safely aligned with existing data
+      CREATE OR REPLACE FUNCTION public.get_next_invoice_id(p_prefix text, p_user_id uuid)
+      RETURNS text AS $func$
+      DECLARE
+        v_seq_name text;
+        v_val integer;
+        v_max_id integer := 0;
+      BEGIN
+        IF p_prefix = 'PN' THEN
+          v_seq_name := 'public.b_pn_seq';
+        ELSIF p_prefix = 'PX' THEN
+          v_seq_name := 'public.b_px_seq';
+        ELSIF p_prefix = 'PNK' THEN
+          v_seq_name := 'public.b_pnk_seq';
+        ELSIF p_prefix = 'PXK' THEN
+          v_seq_name := 'public.b_pxk_seq';
+        ELSIF p_prefix = 'PKK' THEN
+          v_seq_name := 'public.b_pkk_seq';
+        ELSE
+          RAISE EXCEPTION 'Prefix khong hop le %', p_prefix;
+        END IF;
+
+        -- Ensure sequence exists
+        BEGIN
+          EXECUTE 'CREATE SEQUENCE IF NOT EXISTS ' || v_seq_name;
+        EXCEPTION WHEN others THEN NULL;
+        END;
+
+        -- Get next value
+        EXECUTE 'SELECT nextval(''' || v_seq_name || ''')' INTO v_val;
+        
+        -- If it just started at 1, align it with the maximum existing ID in tables
+        IF v_val = 1 THEN
+          IF p_prefix = 'PKK' THEN
+            SELECT max(nullif(regexp_replace("MA_PHIEU", '^PKK', ''), ''))::integer 
+            FROM public.b_kiemkho 
+            WHERE "MA_PHIEU" LIKE 'PKK%'
+            INTO v_max_id;
+          ELSE
+            SELECT max(nullif(regexp_replace("HOA_DON", '^' || p_prefix, ''), ''))::integer 
+            FROM public.b_nhapxuat 
+            WHERE "HOA_DON" LIKE p_prefix || '%'
+            INTO v_max_id;
+          END IF;
+
+          IF v_max_id IS NOT NULL AND v_max_id > 0 THEN
+            EXECUTE 'SELECT setval(''' || v_seq_name || ''', ' || v_max_id || ')';
+            EXECUTE 'SELECT nextval(''' || v_seq_name || ''')' INTO v_val;
+          END IF;
+        END IF;
+
+        RETURN p_prefix || lpad(v_val::text, 6, '0');
+      END;
+      $func$ LANGUAGE plpgsql SECURITY DEFINER;
+
+      -- Transaction RPC for single or updated transactions (NHAP, XUAT, adjust, cancel)
+      CREATE OR REPLACE FUNCTION public.create_transaction_v2(
+        p_header jsonb,
+        p_details jsonb,
+        p_user_id uuid
+      ) RETURNS jsonb AS $func$
+      DECLARE
+        v_hoa_don text;
+        v_loai text;
+        v_prefix text;
+        v_skus text[];
+        v_sku text;
+        v_nhap integer;
+        v_xuat integer;
+        v_item jsonb;
+        v_current_ton integer;
+        v_temp_ton_cuoi integer;
+        v_exists boolean;
+      BEGIN
+        v_loai := p_header->>'LOAI';
+        v_hoa_don := p_header->>'HOA_DON';
+        
+        -- Auto-generate number if empty, temp, or placeholder
+        IF v_hoa_don IS NULL OR v_hoa_don = '' OR v_hoa_don NOT SIMILAR TO '(PN|PX|PNK|PXK)\\d+' THEN
+          IF v_loai = 'NHẬP' THEN
+            IF v_hoa_don LIKE 'PNK%' THEN
+              v_prefix := 'PNK';
+            ELSE
+              v_prefix := 'PN';
+            END IF;
+          ELSE
+            IF v_hoa_don LIKE 'PXK%' THEN
+              v_prefix := 'PXK';
+            ELSE
+              v_prefix := 'PX';
+            END IF;
+          END IF;
+          v_hoa_don := public.get_next_invoice_id(v_prefix, p_user_id);
+        END IF;
+
+        -- Extract distinct SKUs involved
+        SELECT array_agg(DISTINCT public.clean_sku_func(value->>'SKU'))
+        FROM jsonb_array_elements(p_details)
+        INTO v_skus;
+
+        -- 1. SELECT ... FOR UPDATE to lock product inventory rows atomically for this tenant/user
+        IF v_skus IS NOT NULL AND array_length(v_skus, 1) > 0 THEN
+          PERFORM "SKU"
+          FROM public.b_sanpham
+          WHERE public.clean_sku_func("SKU") = ANY(v_skus)
+            AND "user_id" = p_user_id
+          FOR UPDATE;
+        END IF;
+
+        -- 2. Insert or update header
+        INSERT INTO public.b_nhapxuat (
+          "HOA_DON", "CHI_NHANH", "NGAY", "LOAI", "TONG_SL", 
+          "NGUOI_TAO", "TEN_NGUOI_TAO", "TG_TAO", "GHI_CHU", 
+          "MA_NV", "TEN_DANG_NHAP", "TRANG_THAI", "user_id"
+        ) VALUES (
+          v_hoa_don,
+          p_header->>'CHI_NHANH',
+          p_header->>'NGAY',
+          v_loai,
+          (p_header->>'TONG_SL')::integer,
+          p_header->>'NGUOI_TAO',
+          p_header->>'TEN_NGUOI_TAO',
+          p_header->>'TG_TAO',
+          p_header->>'GHI_CHU',
+          p_header->>'MA_NV',
+          p_header->>'TEN_DANG_NHAP',
+          COALESCE(p_header->>'TRANG_THAI', 'Hoàn tất'),
+          p_user_id
+        )
+        ON CONFLICT ("HOA_DON") DO UPDATE SET
+          "CHI_NHANH" = EXCLUDED."CHI_NHANH",
+          "NGAY" = EXCLUDED."NGAY",
+          "LOAI" = EXCLUDED."LOAI",
+          "TONG_SL" = EXCLUDED."TONG_SL",
+          "NGUOI_TAO" = EXCLUDED."NGUOI_TAO",
+          "TEN_NGUOI_TAO" = EXCLUDED."TEN_NGUOI_TAO",
+          "TG_TAO" = EXCLUDED."TG_TAO",
+          "GHI_CHU" = EXCLUDED."GHI_CHU",
+          "MA_NV" = EXCLUDED."MA_NV",
+          "TEN_DANG_NHAP" = EXCLUDED."TEN_DANG_NHAP",
+          "TRANG_THAI" = EXCLUDED."TRANG_THAI";
+
+        -- Delete old details of this invoice to prevent duplication
+        DELETE FROM public.b_nhapxuatct WHERE "HOA_DON" = v_hoa_don AND "user_id" = p_user_id;
+
+        -- 3. Insert new details
+        FOR v_item IN SELECT * FROM jsonb_array_elements(p_details) LOOP
+          INSERT INTO public.b_nhapxuatct (
+            "id", "HOA_DON", "SKU", "TEN_SP", "THUONG_HIEU", 
+            "CHIET_XUAT", "TINH_NANG", "SPH", "CYL", "SO_LUONG", 
+            "DVT", "GHI_CHU", "LOAI", "NGAY", "user_id"
+          ) VALUES (
+            COALESCE(v_item->>'id', v_item->>'ID', 'CT_' || gen_random_uuid()::text),
+            v_hoa_don,
+            v_item->>'SKU',
+            v_item->>'TEN_SP',
+            v_item->>'THUONG_HIEU',
+            v_item->>'CHIET_XUAT',
+            v_item->>'TINH_NANG',
+            (v_item->>'SPH')::numeric,
+            (v_item->>'CYL')::numeric,
+            (v_item->>'SO_LUONG')::integer,
+            v_item->>'DVT',
+            v_item->>'GHI_CHU',
+            v_item->>'LOAI',
+            v_item->>'NGAY',
+            p_user_id
+          );
+        END LOOP;
+
+        -- 4. Recalculate stock and enforce no negative stock constraint (Rule 1)
+        IF v_skus IS NOT NULL AND array_length(v_skus, 1) > 0 THEN
+          FOR v_sku IN SELECT unnest(v_skus) LOOP
+            -- Sum nhap
+            SELECT COALESCE(SUM("SO_LUONG"), 0)
+            FROM public.b_nhapxuatct d
+            JOIN public.b_nhapxuat h ON d."HOA_DON" = h."HOA_DON"
+            WHERE public.clean_sku_func(d."SKU") = public.clean_sku_func(v_sku)
+              AND d."LOAI" = 'NHẬP'
+              AND h."TRANG_THAI" != 'Đã hủy'
+              AND d."user_id" = p_user_id
+            INTO v_nhap;
+
+            -- Sum xuat
+            SELECT COALESCE(SUM("SO_LUONG"), 0)
+            FROM public.b_nhapxuatct d
+            JOIN public.b_nhapxuat h ON d."HOA_DON" = h."HOA_DON"
+            WHERE public.clean_sku_func(d."SKU") = public.clean_sku_func(v_sku)
+              AND d."LOAI" = 'XUẤT'
+              AND h."TRANG_THAI" != 'Đã hủy'
+              AND d."user_id" = p_user_id
+            INTO v_xuat;
+
+            -- Calculate ton cuoi
+            SELECT COALESCE("TON_DAU", 0) FROM public.b_sanpham
+            WHERE public.clean_sku_func("SKU") = public.clean_sku_func(v_sku) AND "user_id" = p_user_id
+            INTO v_current_ton;
+
+            v_temp_ton_cuoi := v_current_ton + v_nhap - v_xuat;
+
+            -- Enforce negative stock rule
+            IF v_temp_ton_cuoi < 0 THEN
+              RAISE EXCEPTION 'Lỗi (Rule 1): Không cho phép tồn kho âm. SKU [%] chỉ còn tồn % (yêu cầu xuất/hoàn trả làm âm thành %)', v_sku, v_current_ton, v_temp_ton_cuoi;
+            END IF;
+
+            -- Update product
+            UPDATE public.b_sanpham
+            SET "NHAP" = v_nhap,
+                "XUAT" = v_xuat,
+                "TON_CUOI" = v_temp_ton_cuoi
+            WHERE public.clean_sku_func("SKU") = public.clean_sku_func(v_sku)
+              AND "user_id" = p_user_id;
+          END LOOP;
+        END IF;
+
+        RETURN jsonb_build_object('success', true, 'hoa_don', v_hoa_don);
+      END;
+      $func$ LANGUAGE plpgsql SECURITY DEFINER;
+
+      -- Transaction RPC for permanent deletion of invoice
+      CREATE OR REPLACE FUNCTION public.delete_transaction_v2(
+        p_hoa_don text,
+        p_user_id uuid
+      ) RETURNS jsonb AS $func$
+      DECLARE
+        v_skus text[];
+        v_sku text;
+        v_nhap integer;
+        v_xuat integer;
+        v_current_ton integer;
+        v_temp_ton_cuoi integer;
+      BEGIN
+        -- Get all SKUs in this invoice before deleting details
+        SELECT array_agg(DISTINCT public.clean_sku_func("SKU"))
+        FROM public.b_nhapxuatct
+        WHERE "HOA_DON" = p_hoa_don AND "user_id" = p_user_id
+        INTO v_skus;
+
+        -- 1. Lock b_sanpham rows for update
+        IF v_skus IS NOT NULL AND array_length(v_skus, 1) > 0 THEN
+          PERFORM "SKU"
+          FROM public.b_sanpham
+          WHERE public.clean_sku_func("SKU") = ANY(v_skus)
+            AND "user_id" = p_user_id
+          FOR UPDATE;
+        END IF;
+
+        -- 2. Delete details
+        DELETE FROM public.b_nhapxuatct WHERE "HOA_DON" = p_hoa_don AND "user_id" = p_user_id;
+
+        -- 3. Delete header
+        DELETE FROM public.b_nhapxuat WHERE "HOA_DON" = p_hoa_don AND "user_id" = p_user_id;
+
+        -- 4. Recalculate stock for the affected products
+        IF v_skus IS NOT NULL AND array_length(v_skus, 1) > 0 THEN
+          FOR v_sku IN SELECT unnest(v_skus) LOOP
+            -- Sum nhap
+            SELECT COALESCE(SUM("SO_LUONG"), 0)
+            FROM public.b_nhapxuatct d
+            JOIN public.b_nhapxuat h ON d."HOA_DON" = h."HOA_DON"
+            WHERE public.clean_sku_func(d."SKU") = public.clean_sku_func(v_sku)
+              AND d."LOAI" = 'NHẬP'
+              AND h."TRANG_THAI" != 'Đã hủy'
+              AND d."user_id" = p_user_id
+            INTO v_nhap;
+
+            -- Sum xuat
+            SELECT COALESCE(SUM("SO_LUONG"), 0)
+            FROM public.b_nhapxuatct d
+            JOIN public.b_nhapxuat h ON d."HOA_DON" = h."HOA_DON"
+            WHERE public.clean_sku_func(d."SKU") = public.clean_sku_func(v_sku)
+              AND d."LOAI" = 'XUẤT'
+              AND h."TRANG_THAI" != 'Đã hủy'
+              AND d."user_id" = p_user_id
+            INTO v_xuat;
+
+            -- Calculate ton cuoi
+            SELECT COALESCE("TON_DAU", 0) FROM public.b_sanpham
+            WHERE public.clean_sku_func("SKU") = public.clean_sku_func(v_sku) AND "user_id" = p_user_id
+            INTO v_current_ton;
+
+            v_temp_ton_cuoi := v_current_ton + v_nhap - v_xuat;
+
+            -- Enforce negative stock rule on delete/rollback
+            IF v_temp_ton_cuoi < 0 THEN
+              RAISE EXCEPTION 'Lỗi (Rule 1): Không cho phép tồn kho âm sau khi xóa. SKU [%] chỉ còn tồn % (xóa làm âm thành %)', v_sku, v_current_ton, v_temp_ton_cuoi;
+            END IF;
+
+            -- Update the product
+            UPDATE public.b_sanpham
+            SET "NHAP" = v_nhap,
+                "XUAT" = v_xuat,
+                "TON_CUOI" = v_temp_ton_cuoi
+            WHERE public.clean_sku_func("SKU") = public.clean_sku_func(v_sku)
+              AND "user_id" = p_user_id;
+          END LOOP;
+        END IF;
+
+        RETURN jsonb_build_object('success', true);
+      END;
+      $func$ LANGUAGE plpgsql SECURITY DEFINER;
+
+      -- Transaction RPC for stocktake audits and corresponding adjustments
+      CREATE OR REPLACE FUNCTION public.save_audit_v2(
+        p_audits jsonb,
+        p_headers jsonb,
+        p_details jsonb,
+        p_user_id uuid
+      ) RETURNS jsonb AS $func$
+      DECLARE
+        v_audit jsonb;
+        v_header jsonb;
+        v_item jsonb;
+        v_ma_phieu text;
+        v_hoa_don text;
+        v_skus text[] := ARRAY[]::text[];
+        v_sku text;
+        v_nhap integer;
+        v_xuat integer;
+        v_prefix text;
+        v_adj_hoa_don_map jsonb := '{}'::jsonb;
+        v_old_hoa_don text;
+        v_new_hoa_don text;
+        v_exists boolean;
+        v_current_ton integer;
+        v_temp_ton_cuoi integer;
+      BEGIN
+        -- Extract all distinct SKUs
+        SELECT array_agg(DISTINCT public.clean_sku_func(value->>'SKU'))
+        FROM (
+          SELECT value FROM jsonb_array_elements(p_audits)
+          UNION ALL
+          SELECT value FROM jsonb_array_elements(p_details)
+        ) t
+        INTO v_skus;
+
+        -- 1. Row-level locking of b_sanpham to prevent race conditions
+        IF v_skus IS NOT NULL AND array_length(v_skus, 1) > 0 THEN
+          PERFORM "SKU"
+          FROM public.b_sanpham
+          WHERE public.clean_sku_func("SKU") = ANY(v_skus)
+            AND "user_id" = p_user_id
+          FOR UPDATE;
+        END IF;
+
+        -- 2. Insert b_kiemkho records. Generate MA_PHIEU if empty/placeholder
+        FOR v_audit IN SELECT * FROM jsonb_array_elements(p_audits) LOOP
+          v_ma_phieu := v_audit->>'MA_PHIEU';
+          IF v_ma_phieu IS NULL OR v_ma_phieu = '' OR v_ma_phieu NOT SIMILAR TO 'PKK\\d+' THEN
+            v_ma_phieu := public.get_next_invoice_id('PKK', p_user_id);
+          END IF;
+
+          SELECT EXISTS (
+            SELECT 1 FROM public.b_kiemkho 
+            WHERE "MA_PHIEU" = v_ma_phieu AND "SKU" = (v_audit->>'SKU') AND "user_id" = p_user_id
+          ) INTO v_exists;
+
+          IF v_exists THEN
+            UPDATE public.b_kiemkho SET
+              "TON_HE_THONG" = (v_audit->>'TON_HE_THONG')::numeric,
+              "TON_THUC_TE" = (v_audit->>'TON_THUC_TE')::numeric,
+              "LECH" = (v_audit->>'LECH')::numeric,
+              "LOAI_BU" = v_audit->>'LOAI_BU',
+              "NGUOI_KIEM" = v_audit->>'NGUOI_KIEM',
+              "THOI_DIEM" = v_audit->>'THOI_DIEM',
+              "MA_NV" = v_audit->>'MA_NV',
+              "TEN_DANG_NHAP" = v_audit->>'TEN_DANG_NHAP'
+            WHERE "MA_PHIEU" = v_ma_phieu AND "SKU" = (v_audit->>'SKU') AND "user_id" = p_user_id;
+          ELSE
+            INSERT INTO public.b_kiemkho (
+              "MA_PHIEU", "SKU", "TON_HE_THONG", "TON_THUC_TE", "LECH", 
+              "LOAI_BU", "NGUOI_KIEM", "THOI_DIEM", "MA_NV", "TEN_DANG_NHAP", "user_id"
+            ) VALUES (
+              v_ma_phieu,
+              v_audit->>'SKU',
+              (v_audit->>'TON_HE_THONG')::numeric,
+              (v_audit->>'TON_THUC_TE')::numeric,
+              (v_audit->>'LECH')::numeric,
+              v_audit->>'LOAI_BU',
+              v_audit->>'NGUOI_KIEM',
+              v_audit->>'THOI_DIEM',
+              v_audit->>'MA_NV',
+              v_audit->>'TEN_DANG_NHAP',
+              p_user_id
+            );
+          END IF;
+        END LOOP;
+
+        -- 3. Insert adjustment headers (b_nhapxuat) and replace temporary IDs with nextval sequence IDs
+        FOR v_header IN SELECT * FROM jsonb_array_elements(p_headers) LOOP
+          v_old_hoa_don := v_header->>'HOA_DON';
+          IF v_old_hoa_don LIKE 'PNK%' THEN
+            v_prefix := 'PNK';
+          ELSE
+            v_prefix := 'PXK';
+          END IF;
+          
+          v_new_hoa_don := public.get_next_invoice_id(v_prefix, p_user_id);
+          v_adj_hoa_don_map := jsonb_set(v_adj_hoa_don_map, ARRAY[v_old_hoa_don], to_jsonb(v_new_hoa_don));
+
+          INSERT INTO public.b_nhapxuat (
+            "HOA_DON", "CHI_NHANH", "NGAY", "LOAI", "TONG_SL", 
+            "NGUOI_TAO", "TEN_NGUOI_TAO", "TG_TAO", "GHI_CHU", 
+            "MA_NV", "TEN_DANG_NHAP", "TRANG_THAI", "user_id"
+          ) VALUES (
+            v_new_hoa_don,
+            v_header->>'CHI_NHANH',
+            v_header->>'NGAY',
+            v_header->>'LOAI',
+            (v_header->>'TONG_SL')::integer,
+            v_header->>'NGUOI_TAO',
+            v_header->>'TEN_NGUOI_TAO',
+            v_header->>'TG_TAO',
+            v_header->>'GHI_CHU',
+            v_header->>'MA_NV',
+            v_header->>'TEN_DANG_NHAP',
+            COALESCE(v_header->>'TRANG_THAI', 'Hoàn tất'),
+            p_user_id
+          );
+        END LOOP;
+
+        -- 4. Insert adjustment details (b_nhapxuatct) mapping old to new sequence IDs
+        FOR v_item IN SELECT * FROM jsonb_array_elements(p_details) LOOP
+          v_old_hoa_don := v_item->>'HOA_DON';
+          v_new_hoa_don := v_adj_hoa_don_map->>v_old_hoa_don;
+          IF v_new_hoa_don IS NULL THEN
+            v_new_hoa_don := v_old_hoa_don;
+          END IF;
+
+          INSERT INTO public.b_nhapxuatct (
+            "id", "HOA_DON", "SKU", "TEN_SP", "THUONG_HIEU", 
+            "CHIET_XUAT", "TINH_NANG", "SPH", "CYL", "SO_LUONG", 
+            "DVT", "GHI_CHU", "LOAI", "NGAY", "user_id"
+          ) VALUES (
+            COALESCE(v_item->>'id', v_item->>'ID', 'CT_' || gen_random_uuid()::text),
+            v_new_hoa_don,
+            v_item->>'SKU',
+            v_item->>'TEN_SP',
+            v_item->>'THUONG_HIEU',
+            v_item->>'CHIET_XUAT',
+            v_item->>'TINH_NANG',
+            (v_item->>'SPH')::numeric,
+            (v_item->>'CYL')::numeric,
+            (v_item->>'SO_LUONG')::integer,
+            v_item->>'DVT',
+            v_item->>'GHI_CHU',
+            v_item->>'LOAI',
+            v_item->>'NGAY',
+            p_user_id
+          );
+        END LOOP;
+
+        -- 5. Recalculate stock atomically for all locked products
+        IF v_skus IS NOT NULL AND array_length(v_skus, 1) > 0 THEN
+          FOR v_sku IN SELECT unnest(v_skus) LOOP
+            -- Sum nhap
+            SELECT COALESCE(SUM("SO_LUONG"), 0)
+            FROM public.b_nhapxuatct d
+            JOIN public.b_nhapxuat h ON d."HOA_DON" = h."HOA_DON"
+            WHERE public.clean_sku_func(d."SKU") = public.clean_sku_func(v_sku)
+              AND d."LOAI" = 'NHẬP'
+              AND h."TRANG_THAI" != 'Đã hủy'
+              AND d."user_id" = p_user_id
+            INTO v_nhap;
+
+            -- Sum xuat
+            SELECT COALESCE(SUM("SO_LUONG"), 0)
+            FROM public.b_nhapxuatct d
+            JOIN public.b_nhapxuat h ON d."HOA_DON" = h."HOA_DON"
+            WHERE public.clean_sku_func(d."SKU") = public.clean_sku_func(v_sku)
+              AND d."LOAI" = 'XUẤT'
+              AND h."TRANG_THAI" != 'Đã hủy'
+              AND d."user_id" = p_user_id
+            INTO v_xuat;
+
+            -- Current TON_DAU
+            SELECT COALESCE("TON_DAU", 0) FROM public.b_sanpham
+            WHERE public.clean_sku_func("SKU") = public.clean_sku_func(v_sku) AND "user_id" = p_user_id
+            INTO v_current_ton;
+
+            v_temp_ton_cuoi := v_current_ton + v_nhap - v_xuat;
+
+            -- Rule 1 Enforce non-negative stock
+            IF v_temp_ton_cuoi < 0 THEN
+              RAISE EXCEPTION 'Lỗi (Rule 1): Không cho phép tồn kho âm. SKU [%] chỉ còn tồn % (yêu cầu điều chỉnh làm âm thành %)', v_sku, v_current_ton, v_temp_ton_cuoi;
+            END IF;
+
+            -- Update product stock
+            UPDATE public.b_sanpham
+            SET "NHAP" = v_nhap,
+                "XUAT" = v_xuat,
+                "TON_CUOI" = v_temp_ton_cuoi
+            WHERE public.clean_sku_func("SKU") = public.clean_sku_func(v_sku)
+              AND "user_id" = p_user_id;
+          END LOOP;
+        END IF;
+
+        RETURN jsonb_build_object('success', true);
+      END;
+      $func$ LANGUAGE plpgsql SECURITY DEFINER;
+
+      -- Transaction RPC for creating Gom Don and details
+      CREATE OR REPLACE FUNCTION public.create_gom_don_v2(
+        p_header jsonb,
+        p_details jsonb,
+        p_user_id uuid
+      ) RETURNS jsonb AS $func$
+      DECLARE
+        v_id text;
+        v_item jsonb;
+      BEGIN
+        v_id := p_header->>'id';
+        
+        -- Insert/update header b_gomdon
+        INSERT INTO public.b_gomdon (
+          "id", "branch", "original_text", "trang_thai", "so_phieu_xuat", "user_id"
+        ) VALUES (
+          v_id,
+          p_header->>'branch',
+          p_header->>'original_text',
+          COALESCE(p_header->>'trang_thai', 'Chờ xử lý'),
+          p_header->>'so_phieu_xuat',
+          p_user_id
+        )
+        ON CONFLICT ("id") DO UPDATE SET
+          "branch" = EXCLUDED."branch",
+          "original_text" = EXCLUDED."original_text",
+          "trang_thai" = EXCLUDED."trang_thai",
+          "so_phieu_xuat" = EXCLUDED."so_phieu_xuat";
+
+        -- Delete existing details of this gom_don to replace them
+        DELETE FROM public.b_gomdonct WHERE "gom_don_id" = v_id;
+
+        -- Insert details b_gomdonct
+        FOR v_item IN SELECT * FROM jsonb_array_elements(p_details) LOOP
+          INSERT INTO public.b_gomdonct (
+            "id", "gom_don_id", "raw_line", "brand", "chiet_xuat", 
+            "tinh_nang", "sph", "cyl", "quantity", "unit", 
+            "sku", "error", "user_id"
+          ) VALUES (
+            COALESCE(v_item->>'id', 'GDCT_' || gen_random_uuid()::text),
+            v_id,
+            v_item->>'raw_line',
+            v_item->>'brand',
+            v_item->>'chiet_xuat',
+            v_item->>'tinh_nang',
+            (v_item->>'sph')::numeric,
+            (v_item->>'cyl')::numeric,
+            COALESCE((v_item->>'quantity')::integer, 1),
+            COALESCE(v_item->>'unit', 'miếng'),
+            v_item->>'sku',
+            v_item->>'error',
+            p_user_id
+          );
+        END LOOP;
+
+        RETURN jsonb_build_object('success', true);
+      END;
+      $func$ LANGUAGE plpgsql SECURITY DEFINER;
+    `;
+
 
   try {
     const { error } = await supabase.rpc('exec_sql', { sql });
@@ -2474,3 +3068,128 @@ export async function fetchExportMappings(userId?: string): Promise<any[]> {
     return [];
   }
 }
+
+/**
+ * Giao dịch tạo phiếu và chi tiết đi kèm qua RPC PostgreSQL (An toàn tuyệt đối khỏi race condition)
+ */
+export async function rpcCreateTransaction(header: any, details: any[]) {
+  if (isOfflineMode) {
+    return { data: { success: true, hoa_don: header.HOA_DON }, error: null };
+  }
+  const userId = await resolveEffectiveUserId();
+  try {
+    const { data, error } = await supabase.rpc('create_transaction_v2', {
+      p_header: header,
+      p_details: details,
+      p_user_id: userId
+    });
+    if (error) {
+      console.error('Lỗi khi chạy create_transaction_v2 RPC:', error);
+      return { data: null, error };
+    }
+    return { data, error: null };
+  } catch (err: any) {
+    console.error('Exception khi chạy create_transaction_v2 RPC:', err);
+    return { data: null, error: err };
+  }
+}
+
+/**
+ * Giao dịch xóa phiếu và chi tiết đi kèm qua RPC PostgreSQL (Rollback tồn và an toàn tuyệt đối)
+ */
+export async function rpcDeleteTransaction(hoaDon: string) {
+  if (isOfflineMode) {
+    return { data: { success: true }, error: null };
+  }
+  const userId = await resolveEffectiveUserId();
+  try {
+    const { data, error } = await supabase.rpc('delete_transaction_v2', {
+      p_hoa_don: hoaDon,
+      p_user_id: userId
+    });
+    if (error) {
+      console.error('Lỗi khi chạy delete_transaction_v2 RPC:', error);
+      return { data: null, error };
+    }
+    return { data, error: null };
+  } catch (err: any) {
+    console.error('Exception khi chạy delete_transaction_v2 RPC:', err);
+    return { data: null, error: err };
+  }
+}
+
+/**
+ * Giao dịch lưu phiếu kiểm kê kho và xử lý bù trừ tồn kho đồng thời qua RPC PostgreSQL (BEGIN...COMMIT)
+ */
+export async function rpcSaveAudit(audits: any[], headers: any[], details: any[]) {
+  if (isOfflineMode) {
+    return { data: { success: true }, error: null };
+  }
+  const userId = await resolveEffectiveUserId();
+  try {
+    const { data, error } = await supabase.rpc('save_audit_v2', {
+      p_audits: audits,
+      p_headers: headers,
+      p_details: details,
+      p_user_id: userId
+    });
+    if (error) {
+      console.error('Lỗi khi chạy save_audit_v2 RPC:', error);
+      return { data: null, error };
+    }
+    return { data, error: null };
+  } catch (err: any) {
+    console.error('Exception khi chạy save_audit_v2 RPC:', err);
+    return { data: null, error: err };
+  }
+}
+
+/**
+ * Giao dịch lưu gom đơn tạm và chi tiết đi kèm qua RPC PostgreSQL
+ */
+export async function rpcCreateGomDon(header: any, details: any[]) {
+  if (isOfflineMode) {
+    return { data: { success: true }, error: null };
+  }
+  const userId = await resolveEffectiveUserId();
+  try {
+    const { data, error } = await supabase.rpc('create_gom_don_v2', {
+      p_header: header,
+      p_details: details,
+      p_user_id: userId
+    });
+    if (error) {
+      console.error('Lỗi khi chạy create_gom_don_v2 RPC:', error);
+      return { data: null, error };
+    }
+    return { data, error: null };
+  } catch (err: any) {
+    console.error('Exception khi chạy create_gom_don_v2 RPC:', err);
+    return { data: null, error: err };
+  }
+}
+
+/**
+ * Sinh mã phiếu tiếp theo từ PostgreSQL Sequence qua RPC
+ */
+export async function rpcGetNextInvoiceId(prefix: string): Promise<string> {
+  if (isOfflineMode) {
+    return prefix + Math.floor(Math.random() * 1000000).toString().padStart(6, '0');
+  }
+  const userId = await resolveEffectiveUserId();
+  try {
+    const { data, error } = await supabase.rpc('get_next_invoice_id', {
+      p_prefix: prefix,
+      p_user_id: userId
+    });
+    if (error) {
+      console.error('Lỗi khi lấy get_next_invoice_id RPC:', error);
+      return prefix + Math.floor(Math.random() * 1000000).toString().padStart(6, '0');
+    }
+    return data;
+  } catch (err) {
+    console.error('Exception khi lấy get_next_invoice_id:', err);
+    return prefix + Math.floor(Math.random() * 1000000).toString().padStart(6, '0');
+  }
+}
+

@@ -108,7 +108,12 @@ import {
   fetchSanPham,
   fetchKiemKho,
   fetchNhapXuat,
-  fetchNhapXuatCT
+  fetchNhapXuatCT,
+  rpcCreateTransaction,
+  rpcDeleteTransaction,
+  rpcSaveAudit,
+  rpcCreateGomDon,
+  rpcGetNextInvoiceId
 } from './supabaseSync';
 
 // Import Components con (lazy loaded for optimal bundle size)
@@ -1977,13 +1982,12 @@ export default function App() {
     loan?: number
   ) => {
     if (!(await ensureOnline())) return;
-    // 1. Xác định lệch
-    const lech = newTonThucTe - currentSystemTon;
+    const normSku = cleanSKU(sku);
     const timeNow = getVietnamDateTimeString();
     const dateNow = getVietnamDateString();
+    const lech = newTonThucTe - currentSystemTon;
 
-    // 2. Tạo bản cập nhật sản phẩm trước
-    const normSku = cleanSKU(sku);
+    // 1. Cập nhật cục bộ state trước để tăng độ nhạy UI
     let updatedProducts = sanPhams.map(p => {
       let isMatch = false;
       if (brand !== undefined && feature !== undefined && chietXuat !== undefined && can !== undefined && loan !== undefined) {
@@ -1997,211 +2001,105 @@ export default function App() {
       } else {
         isMatch = cleanSKU(p.SKU) === normSku;
       }
-
-      if (isMatch) {
-        return {
-          ...p,
-          TON_TOI_THIEU: newTonToiThieu
-        };
-      }
-      return p;
+      return isMatch ? { ...p, TON_TOI_THIEU: newTonToiThieu } : p;
     });
-
-    let newKiemKhos = [...kiemKhos];
-    let newHeaders = [...nhapXuats];
-    let newDetails = [...nhapXuatCTs];
-    
-    let createdAudit: KiemKho | null = null;
-    let createdAdjHeader: NhapXuat | null = null;
-    let createdAdjDetail: NhapXuatCT | null = null;
-
-    if (lech !== 0) {
-      // Sinh mã PKK tự động
-      let maxPKKNum = 0;
-      kiemKhos.forEach(k => {
-        if (k.MA_PHIEU.startsWith('PKK')) {
-          const numPart = parseInt(k.MA_PHIEU.substring(3), 10);
-          if (!isNaN(numPart) && numPart > maxPKKNum) {
-            maxPKKNum = numPart;
-          }
-        }
-      });
-      const newAuditId = `PKK${String(maxPKKNum + 1).padStart(6, '0')}`;
-
-      createdAudit = {
-        MA_PHIEU: newAuditId,
-        SKU: sku,
-        TON_HE_THONG: currentSystemTon,
-        TON_THUC_TE: newTonThucTe,
-        LECH: lech,
-        LOAI_BU: lech > 0 ? 'NHẬP BÙ' : 'XUẤT BÙ',
-        NGUOI_KIEM: currentUser?.username || 'admin',
-        THOI_DIEM: timeNow,
-        KHO: branchName || currentUser?.branch || 'Kho Trung Tâm',
-        MA_NV: currentUser?.id,
-        TEN_DANG_NHAP: currentUser?.username
-      };
-
-      // Tự động sinh phiếu điều chỉnh kho liên kết (PNK hoặc PXK)
-      const isPositive = lech > 0;
-      let maxPNKNum = 0;
-      let maxPXKNum = 0;
-      nhapXuats.forEach(h => {
-        if (h.HOA_DON.startsWith('PNK')) {
-          const numPart = parseInt(h.HOA_DON.substring(3), 10);
-          if (!isNaN(numPart) && numPart > maxPNKNum) {
-            maxPNKNum = numPart;
-          }
-        } else if (h.HOA_DON.startsWith('PXK')) {
-          const numPart = parseInt(h.HOA_DON.substring(3), 10);
-          if (!isNaN(numPart) && numPart > maxPXKNum) {
-            maxPXKNum = numPart;
-          }
-        }
-      });
-
-      let newAdjInvoiceId = '';
-      if (isPositive) {
-        newAdjInvoiceId = `PNK${String(maxPNKNum + 1).padStart(6, '0')}`;
-      } else {
-        newAdjInvoiceId = `PXK${String(maxPXKNum + 1).padStart(6, '0')}`;
-      }
-
-      const matchedP = updatedProducts.find(p => {
-        if (brand !== undefined && feature !== undefined && chietXuat !== undefined && can !== undefined && loan !== undefined) {
-          return (
-            p.THUONG_HIEU.trim().toLowerCase() === brand.trim().toLowerCase() &&
-            p.TINH_NANG.trim().toLowerCase() === feature.trim().toLowerCase() &&
-            compareChietXuat(p.CHIET_XUAT, chietXuat) &&
-            Math.abs(p.CAN - can) < 0.001 &&
-            Math.abs(p.LOAN - loan) < 0.001 &&
-            cleanSKU(p.SKU) === normSku
-          );
-        }
-        return cleanSKU(p.SKU) === normSku;
-      });
-
-      if (matchedP) {
-        createdAdjHeader = {
-          HOA_DON: newAdjInvoiceId,
-          CHI_NHANH: branchName || currentUser?.branch || 'Kho Trung Tâm',
-          NGAY: dateNow,
-          LOAI: isPositive ? 'NHẬP' : 'XUẤT',
-          TONG_SL: Math.abs(lech),
-          NGUOI_TAO: currentUser?.username || 'admin',
-          TEN_NGUOI_TAO: currentUser?.fullName || 'Người dùng',
-          TG_TAO: timeNow,
-          GHI_CHU: `Phiếu điều chỉnh kiểm kê nhanh từ ma trận độ ${newAuditId}. SKU: ${sku}, Tồn HT: ${currentSystemTon}, Tồn TT: ${newTonThucTe}, Lệch: ${lech > 0 ? '+' : ''}${lech}`,
-          MA_NV: currentUser?.id,
-          TEN_DANG_NHAP: currentUser?.username
-        };
-
-        createdAdjDetail = {
-          ID: `CT_ADJ_MATRIX_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
-          HOA_DON: newAdjInvoiceId,
-          SKU: sku,
-          TEN_SP: matchedP.TEN_SAN_PHAM,
-          THUONG_HIEU: matchedP.THUONG_HIEU,
-          CHIET_XUAT: matchedP.CHIET_XUAT,
-          TINH_NANG: matchedP.TINH_NANG,
-          SPH: matchedP.CAN,
-          CYL: matchedP.LOAN,
-          SO_LUONG: Math.abs(lech),
-          DVT: matchedP.DVT,
-          GHI_CHU: `Điều chỉnh kiểm kê nhanh từ ma trận độ ${newAuditId}`,
-          LOAI: isPositive ? 'NHẬP' : 'XUẤT',
-          NGAY: dateNow
-        };
-
-        newKiemKhos = [...newKiemKhos, createdAudit];
-        newHeaders = [...newHeaders, createdAdjHeader];
-        newDetails = [...newDetails, createdAdjDetail];
-      }
-
-      // 3. Tái tính toán và cập nhật lại tồn kho sản phẩm (chỉ chạy khi thực sự có chênh lệch tồn thực tế)
-      updatedProducts = updatedProducts.map(p => {
-        let isMatch = false;
-        if (brand !== undefined && feature !== undefined && chietXuat !== undefined && can !== undefined && loan !== undefined) {
-          isMatch = 
-            p.THUONG_HIEU.trim().toLowerCase() === brand.trim().toLowerCase() &&
-            p.TINH_NANG.trim().toLowerCase() === feature.trim().toLowerCase() &&
-            compareChietXuat(p.CHIET_XUAT, chietXuat) &&
-            Math.abs(p.CAN - can) < 0.001 &&
-            Math.abs(p.LOAN - loan) < 0.001 &&
-            cleanSKU(p.SKU) === normSku;
-        } else {
-          isMatch = cleanSKU(p.SKU) === normSku;
-        }
-
-        if (isMatch) {
-          const updatedP = recalculateProductState(sku, updatedProducts, newDetails, newKiemKhos, newHeaders);
-          return updatedP ? updatedP : p;
-        }
-        return p;
-      });
-    }
-
-    // Cập nhật State
     setSanPhams(updatedProducts);
-    setKiemKhos(newKiemKhos);
-    if (createdAdjHeader) {
-      setNhapXuats(newHeaders);
-      setNhapXuatCTs(newDetails);
-    }
 
-    setSuccessToast({ 
-      message: `Đã cập nhật ô độ ${sku} thành công!`, 
-      type: "success", 
-      id: `matrix-update-${sku}-${Date.now()}` 
+    const targetProd = updatedProducts.find(p => {
+      if (brand !== undefined && feature !== undefined && chietXuat !== undefined && can !== undefined && loan !== undefined) {
+        return (
+          p.THUONG_HIEU.trim().toLowerCase() === brand.trim().toLowerCase() &&
+          p.TINH_NANG.trim().toLowerCase() === feature.trim().toLowerCase() &&
+          compareChietXuat(p.CHIET_XUAT, chietXuat) &&
+          Math.abs(p.CAN - can) < 0.001 &&
+          Math.abs(p.LOAN - loan) < 0.001 &&
+          cleanSKU(p.SKU) === normSku
+        );
+      }
+      return cleanSKU(p.SKU) === normSku;
     });
 
-    // Đồng bộ Supabase
+    // 2. Đồng bộ Supabase qua cơ chế transaction PostgreSQL
     if (currentUser) {
       ignoreRealtimeRef.current = true;
       try {
         const uId = await getUserId();
         if (uId) {
-          const promises: Promise<any>[] = [];
-          
-          // Sync sản phẩm bị ảnh hưởng
-          const targetProd = updatedProducts.find(p => {
-            if (brand !== undefined && feature !== undefined && chietXuat !== undefined && can !== undefined && loan !== undefined) {
-              return (
-                p.THUONG_HIEU.trim().toLowerCase() === brand.trim().toLowerCase() &&
-                p.TINH_NANG.trim().toLowerCase() === feature.trim().toLowerCase() &&
-                compareChietXuat(p.CHIET_XUAT, chietXuat) &&
-                Math.abs(p.CAN - can) < 0.001 &&
-                Math.abs(p.LOAN - loan) < 0.001 &&
-                cleanSKU(p.SKU) === normSku
-              );
-            }
-            return cleanSKU(p.SKU) === normSku;
-          });
-
+          // Lưu Tồn tối thiểu
           if (targetProd) {
-            promises.push(syncSanPham(targetProd, uId));
+            await syncSanPham(targetProd, uId);
           }
 
-          // Sync phiếu PKK nếu có
-          if (createdAudit) {
-            promises.push(syncKiemKho(createdAudit, uId));
+          if (lech !== 0) {
+            const createdAudit = {
+              MA_PHIEU: 'PKK', // Sẽ được sinh mã tự động theo sequence từ database
+              SKU: sku,
+              TON_HE_THONG: currentSystemTon,
+              TON_THUC_TE: newTonThucTe,
+              LECH: lech,
+              LOAI_BU: lech > 0 ? 'NHẬP BÙ' : 'XUẤT BÙ',
+              NGUOI_KIEM: currentUser?.username || 'admin',
+              THOI_DIEM: timeNow,
+              KHO: branchName || currentUser?.branch || 'Kho Trung Tâm',
+              MA_NV: currentUser?.id,
+              TEN_DANG_NHAP: currentUser?.username
+            };
+
+            const isPositive = lech > 0;
+            const tempInvoiceId = isPositive ? 'PNK_TEMP' : 'PXK_TEMP';
+
+            if (targetProd) {
+              const adjHeader = {
+                HOA_DON: tempInvoiceId,
+                CHI_NHANH: branchName || currentUser?.branch || 'Kho Trung Tâm',
+                NGAY: dateNow,
+                LOAI: isPositive ? 'NHẬP' : 'XUẤT',
+                TONG_SL: Math.abs(lech),
+                NGUOI_TAO: currentUser?.username || 'admin',
+                TEN_NGUOI_TAO: currentUser?.fullName || 'Người dùng',
+                TG_TAO: timeNow,
+                GHI_CHU: `Phiếu điều chỉnh kiểm kê nhanh từ ma trận độ. SKU: ${sku}, Tồn HT: ${currentSystemTon}, Tồn TT: ${newTonThucTe}, Lệch: ${lech > 0 ? '+' : ''}${lech}`,
+                MA_NV: currentUser?.id,
+                TEN_DANG_NHAP: currentUser?.username
+              };
+
+              const adjDetail = {
+                ID: `CT_ADJ_MATRIX_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+                HOA_DON: tempInvoiceId,
+                SKU: sku,
+                TEN_SP: targetProd.TEN_SAN_PHAM,
+                THUONG_HIEU: targetProd.THUONG_HIEU,
+                CHIET_XUAT: targetProd.CHIET_XUAT,
+                TINH_NANG: targetProd.TINH_NANG,
+                SPH: targetProd.CAN,
+                CYL: targetProd.LOAN,
+                SO_LUONG: Math.abs(lech),
+                DVT: targetProd.DVT,
+                GHI_CHU: `Điều chỉnh kiểm kê nhanh từ ma trận độ`,
+                LOAI: isPositive ? 'NHẬP' : 'XUẤT',
+                NGAY: dateNow
+              };
+
+              const res = await rpcSaveAudit([createdAudit], [adjHeader], [adjDetail]);
+              if (res.error || !res.data?.success) {
+                const errMsg = res.error?.message || res.data?.message || 'Lỗi không xác định';
+                setSyncError({
+                  table: 'b_sanpham / b_kiemkho / b_nhapxuat',
+                  action: 'Cập nhật từ ma trận độ',
+                  message: errMsg
+                });
+                setSuccessToast({
+                  message: `Lỗi cập nhật ô độ: ${errMsg}`,
+                  type: "error",
+                  id: `matrix-update-fail-${sku}-${Date.now()}`
+                });
+                return;
+              }
+            }
           }
 
-          // Sync phiếu điều chỉnh nếu có
-          if (createdAdjHeader && createdAdjDetail) {
-            promises.push(syncNhapXuat(createdAdjHeader, uId));
-            promises.push(syncNhapXuatCTs([createdAdjDetail], uId));
-          }
-
-          const results = await Promise.all(promises);
-          const error = results.find(r => r && r.error)?.error;
-          if (error) {
-            setSyncError({
-              table: 'b_sanpham / b_kiemkho / b_nhapxuat',
-              action: 'Cập nhật từ ma trận độ',
-              message: error.message || JSON.stringify(error)
-            });
-          }
+          // Kéo dữ liệu đồng bộ mới nhất về để đồng nhất hoàn toàn client state
+          await syncAllDataFromSupabase(uId, currentUser.username || '', true);
         }
       } catch (err: any) {
         console.error('Lỗi sync từ ma trận độ:', err);
@@ -2216,6 +2114,12 @@ export default function App() {
         }, 3000);
       }
     }
+
+    setSuccessToast({ 
+      message: `Đã cập nhật ô độ ${sku} thành công!`, 
+      type: "success", 
+      id: `matrix-update-${sku}-${Date.now()}` 
+    });
   };
 
   /**
@@ -2292,60 +2196,38 @@ export default function App() {
       else if (header.HOA_DON.startsWith('PX')) prefix = 'PX';
     }
     
-    // Tìm số hóa đơn lớn nhất có cùng tiền tố
-    let maxNum = 0;
-    nhapXuats.forEach(h => {
-      if (h.HOA_DON.startsWith(prefix)) {
-        const numPart = parseInt(h.HOA_DON.substring(prefix.length), 10);
-        if (!isNaN(numPart) && numPart > maxNum) {
-          maxNum = numPart;
-        }
-      }
-    });
-
-    const newInvoiceId = `${prefix}${String(maxNum + 1).padStart(6, '0')}`;
-    
-    // Ghi nhận hóa đơn mới tạo trong phiên hiện tại để bảo toàn trong hàng đợi đồng bộ
-    sessionCreatedInvoiceIdsRef.current.add(newInvoiceId);
-    
-    // Gán số phiếu chuẩn cho Header và tất cả Chi tiết
-    const finalizedHeader: NhapXuat = {
+    // Gán tiền tố làm mã tạm thời để database tự sinh từ PostgreSQL Sequence
+    const headerToSave = {
       ...header,
-      HOA_DON: newInvoiceId
+      HOA_DON: prefix
     };
 
-    const finalizedDetails: NhapXuatCT[] = details.map(d => ({
-      ...d,
-      HOA_DON: newInvoiceId
-    }));
+    const res = await rpcCreateTransaction(headerToSave, details);
+    if (res.error || !res.data?.success) {
+      const errMsg = res.error?.message || res.data?.message || 'Lỗi không xác định';
+      setSyncError({
+        table: 'b_nhapxuat / b_nhapxuatct / b_sanpham',
+        action: 'Lưu hóa đơn',
+        message: errMsg
+      });
+      setSuccessToast({
+        message: `Lỗi: ${errMsg}`,
+        type: "error",
+        id: `save-tx-fail-${Date.now()}`
+      });
+      return;
+    }
 
-    // Cập nhật State danh sách hóa đơn
-    const updatedHeaders = [...nhapXuats, finalizedHeader];
-    const updatedDetails = [...nhapXuatCTs, ...finalizedDetails];
-
-    setNhapXuats(updatedHeaders);
-    setNhapXuatCTs(updatedDetails);
-
+    const newInvoiceId = res.data.hoa_don;
+    sessionCreatedInvoiceIdsRef.current.add(newInvoiceId);
+    
     // Kích hoạt Toast thông báo thành công chính giữa màn hình
-    const toastMsg = finalizedHeader.LOAI === 'NHẬP' ? 'Lưu phiếu nhập thành công' : 'Lưu phiếu xuất thành công';
+    const toastMsg = header.LOAI === 'NHẬP' ? 'Lưu phiếu nhập thành công' : 'Lưu phiếu xuất thành công';
     setSuccessToast({ 
       message: toastMsg, 
       type: "success", 
       id: `save-tx-${Date.now()}` 
     });
-
-    // Cập nhật số lượng nhập, xuất, và tồn cuối trực tiếp vào bảng sản phẩm ngay lập tức
-    const affectedSKUs = Array.from(new Set(finalizedDetails.map(d => cleanSKU(d.SKU))));
-    const updatedProductsList = sanPhams.map(p => {
-      const pSkuNorm = cleanSKU(p.SKU);
-      if (affectedSKUs.includes(pSkuNorm)) {
-        const updatedP = recalculateProductState(p.SKU, sanPhams, updatedDetails, kiemKhos, updatedHeaders);
-        return updatedP ? updatedP : p;
-      }
-      return p;
-    });
-
-    setSanPhams(updatedProductsList);
 
     // Đồng bộ Supabase
     if (currentUser) {
@@ -2353,40 +2235,17 @@ export default function App() {
       try {
         const uId = await getUserId();
         if (uId) {
-          const syncPromises: Promise<any>[] = [
-            syncNhapXuat(finalizedHeader, uId),
-            syncNhapXuatCTs(finalizedDetails, uId),
-            syncSanPhams(updatedProductsList.filter(p => affectedSKUs.includes(cleanSKU(p.SKU))), uId)
-          ];
-
           // Nếu có ID đơn hàng gom (b_gomdon) được liên kết để prefill
           if (prefilledGomDonId) {
             console.log(`Đồng bộ cập nhật trạng thái Đã xuất cho b_gomdon ID: ${prefilledGomDonId}`);
-            syncPromises.push(
-              (async () => {
-                const { error } = await supabase.from('b_gomdon')
-                  .update({ trang_thai: 'Đã xuất', so_phieu_xuat: newInvoiceId })
-                  .eq('id', prefilledGomDonId);
-                return { error };
-              })()
-            );
+            await supabase.from('b_gomdon')
+              .update({ trang_thai: 'Đã xuất', so_phieu_xuat: newInvoiceId })
+              .eq('id', prefilledGomDonId);
+            setPrefilledGomDonId(null);
           }
 
-          const results = await Promise.all(syncPromises);
-          setPrefilledGomDonId(null);
-
-          const error = results.find(r => r && r.error);
-          if (error) {
-            setSyncError({
-              table: 'b_nhapxuat / b_nhapxuatct / b_sanpham / b_gomdon',
-              action: 'Lưu hóa đơn',
-              message: error.message || JSON.stringify(error)
-            });
-          } else {
-            // Sau khi lưu thành công, thực hiện đồng bộ lại toàn bộ dữ liệu từ Supabase Cloud
-            // để đảm bảo 100% dữ liệu cục bộ trùng khớp tuyệt đối với database, không lo lệch state
-            await syncAllDataFromSupabase(uId, currentUser.username || '', true);
-          }
+          // Đồng bộ lại toàn bộ dữ liệu từ Supabase Cloud để dữ liệu client hoàn toàn khớp
+          await syncAllDataFromSupabase(uId, currentUser.username || '', true);
         }
       } catch (err: any) {
         console.error('Lỗi sync hóa đơn:', err);
@@ -2414,13 +2273,9 @@ export default function App() {
     if (!isSessionValid) return [];
     if (!(await ensureOnline())) return [];
 
-    let currentNhapXuats = [...nhapXuats];
-    let currentNhapXuatCTs = [...nhapXuatCTs];
-    let currentProducts = [...sanPhams];
-
-    const savedTransactions: { header: NhapXuat; details: NhapXuatCT[] }[] = [];
     const generatedInvoiceIds: string[] = [];
 
+    // Lưu tuần tự từng phiếu qua RPC PostgreSQL có transaction và khóa dòng
     for (const tx of transactions) {
       const { header, details } = tx;
       let prefix = header.LOAI === 'NHẬP' ? 'PN' : 'PX';
@@ -2431,51 +2286,19 @@ export default function App() {
         else if (header.HOA_DON.startsWith('PX')) prefix = 'PX';
       }
 
-      // Tìm số hóa đơn lớn nhất hiện tại
-      let maxNum = 0;
-      currentNhapXuats.forEach(h => {
-        if (h.HOA_DON.startsWith(prefix)) {
-          const numPart = parseInt(h.HOA_DON.substring(prefix.length), 10);
-          if (!isNaN(numPart) && numPart > maxNum) {
-            maxNum = numPart;
-          }
-        }
-      });
-
-      const newInvoiceId = `${prefix}${String(maxNum + 1).padStart(6, '0')}`;
-      generatedInvoiceIds.push(newInvoiceId);
-
-      const finalizedHeader: NhapXuat = {
+      const headerToSave = {
         ...header,
-        HOA_DON: newInvoiceId
+        HOA_DON: prefix
       };
 
-      const finalizedDetails: NhapXuatCT[] = details.map(d => ({
-        ...d,
-        HOA_DON: newInvoiceId
-      }));
-
-      currentNhapXuats.push(finalizedHeader);
-      currentNhapXuatCTs.push(...finalizedDetails);
-      savedTransactions.push({ header: finalizedHeader, details: finalizedDetails });
-    }
-
-    // Cập nhật State danh sách hóa đơn
-    setNhapXuats(currentNhapXuats);
-    setNhapXuatCTs(currentNhapXuatCTs);
-
-    // Cập nhật số lượng và tồn kho các SKU bị ảnh hưởng
-    const allAffectedSKUs = Array.from(new Set(savedTransactions.flatMap(tx => tx.details.map(d => cleanSKU(d.SKU)))));
-    const updatedProductsList = currentProducts.map(p => {
-      const pSkuNorm = cleanSKU(p.SKU);
-      if (allAffectedSKUs.includes(pSkuNorm)) {
-        const updatedP = recalculateProductState(p.SKU, currentProducts, currentNhapXuatCTs, kiemKhos, currentNhapXuats);
-        return updatedP ? updatedP : p;
+      const res = await rpcCreateTransaction(headerToSave, details);
+      if (res.error || !res.data?.success) {
+        const errMsg = res.error?.message || res.data?.message || 'Lỗi không xác định';
+        throw new Error(`Lỗi lưu hóa đơn hàng loạt: ${errMsg}`);
       }
-      return p;
-    });
 
-    setSanPhams(updatedProductsList);
+      generatedInvoiceIds.push(res.data.hoa_don);
+    }
 
     // Kích hoạt Toast thông báo thành công
     setSuccessToast({
@@ -2490,15 +2313,7 @@ export default function App() {
       try {
         const uId = await getUserId();
         if (uId) {
-          // Sync từng header, details và danh sách sản phẩm cập nhật
-          await Promise.all([
-            ...savedTransactions.map(tx => syncNhapXuat(tx.header, uId)),
-            ...savedTransactions.map(tx => syncNhapXuatCTs(tx.details, uId)),
-            syncSanPhams(updatedProductsList.filter(p => allAffectedSKUs.includes(cleanSKU(p.SKU))), uId)
-          ]);
-          
           // Sau khi lưu thành công hàng loạt, thực hiện đồng bộ lại toàn bộ dữ liệu từ Supabase Cloud
-          // để đảm bảo 100% dữ liệu cục bộ trùng khớp tuyệt đối với database, không lo lệch state
           await syncAllDataFromSupabase(uId, currentUser.username || '', true);
         }
       } catch (err: any) {
@@ -2529,130 +2344,83 @@ export default function App() {
     if (!(await ensureOnline())) return;
     const newAudits = Array.isArray(newAuditOrAudits) ? newAuditOrAudits : [newAuditOrAudits];
     
-    // 1. Sinh mã phiếu PKK tăng tự động chính xác cho từng phiếu kiểm kho
-    let maxPKKNum = 0;
-    kiemKhos.forEach(k => {
-      if (k.MA_PHIEU.startsWith('PKK')) {
-        const numPart = parseInt(k.MA_PHIEU.substring(3), 10);
-        if (!isNaN(numPart) && numPart > maxPKKNum) {
-          maxPKKNum = numPart;
-        }
-      }
-    });
-
-    let currentPKKNum = maxPKKNum;
-    const finalizedAudits: KiemKho[] = [];
-
-    // Chúng ta cũng cần sinh các phiếu bù trừ (nhập kiểm kho / xuất kiểm kho)
-    // Tên phiếu bù trừ: PNK0000001, PNK0000002... hoặc PXK0000001, PXK0000002...
-    let maxPNKNum = 0;
-    let maxPXKNum = 0;
-    nhapXuats.forEach(h => {
-      if (h.HOA_DON.startsWith('PNK')) {
-        const numPart = parseInt(h.HOA_DON.substring(3), 10);
-        if (!isNaN(numPart) && numPart > maxPNKNum) {
-          maxPNKNum = numPart;
-        }
-      } else if (h.HOA_DON.startsWith('PXK')) {
-        const numPart = parseInt(h.HOA_DON.substring(3), 10);
-        if (!isNaN(numPart) && numPart > maxPXKNum) {
-          maxPXKNum = numPart;
-        }
-      }
-    });
-
-    let currentPNKNum = maxPNKNum;
-    let currentPXKNum = maxPXKNum;
-
-    const newHeadersToSave: NhapXuat[] = [];
-    const newDetailsToSave: NhapXuatCT[] = [];
-
-    newAudits.forEach((audit, index) => {
-      currentPKKNum += 1;
-      const newAuditId = `PKK${String(currentPKKNum).padStart(6, '0')}`;
-      
-      const finalizedAudit: KiemKho = {
+    const auditsToSave = newAudits.map((audit) => {
+      return {
         ...audit,
-        MA_PHIEU: newAuditId,
+        MA_PHIEU: 'PKK', // Trình tạo mã tự động PostgreSQL Sequence sẽ sinh ra PKKxxxxxx
         MA_NV: currentUser?.id,
         TEN_DANG_NHAP: currentUser?.username
       };
-      finalizedAudits.push(finalizedAudit);
+    });
 
-      // Nếu có chênh lệch, tự động sinh phiếu điều chỉnh kho liên kết (PNK hoặc PXK)
-      if (finalizedAudit.LECH !== 0) {
-        const isPositive = finalizedAudit.LECH > 0;
-        let newAdjInvoiceId = '';
-        if (isPositive) {
-          currentPNKNum += 1;
-          newAdjInvoiceId = `PNK${String(currentPNKNum).padStart(6, '0')}`;
-        } else {
-          currentPXKNum += 1;
-          newAdjInvoiceId = `PXK${String(currentPXKNum).padStart(6, '0')}`;
-        }
+    const headersToSave: any[] = [];
+    const detailsToSave: any[] = [];
 
-        const matchedP = sanPhams.find(p => cleanSKU(p.SKU) === cleanSKU(finalizedAudit.SKU));
+    newAudits.forEach((audit, index) => {
+      if (audit.LECH !== 0) {
+        const isPositive = audit.LECH > 0;
+        const tempInvoiceId = isPositive ? `PNK_TEMP_${index}` : `PXK_TEMP_${index}`;
+
+        const matchedP = sanPhams.find(p => cleanSKU(p.SKU) === cleanSKU(audit.SKU));
         if (matchedP) {
-          const adjHeader: NhapXuat = {
-            HOA_DON: newAdjInvoiceId,
-            CHI_NHANH: finalizedAudit.KHO || currentUser?.branch || 'Kho Trung Tâm',
-            NGAY: finalizedAudit.THOI_DIEM.split(' ')[0], // YYYY-MM-DD
+          const adjHeader = {
+            HOA_DON: tempInvoiceId,
+            CHI_NHANH: audit.KHO || currentUser?.branch || 'Kho Trung Tâm',
+            NGAY: audit.THOI_DIEM.split(' ')[0], // YYYY-MM-DD
             LOAI: isPositive ? 'NHẬP' : 'XUẤT',
-            TONG_SL: Math.abs(finalizedAudit.LECH),
+            TONG_SL: Math.abs(audit.LECH),
             NGUOI_TAO: currentUser?.username || 'admin',
             TEN_NGUOI_TAO: currentUser?.fullName || 'Người dùng',
-            TG_TAO: finalizedAudit.THOI_DIEM,
-            GHI_CHU: `Phiếu điều chỉnh kiểm kê liên kết ${newAuditId}. SKU: ${finalizedAudit.SKU}, Tồn HT: ${finalizedAudit.TON_HE_THONG}, Tồn TT: ${finalizedAudit.TON_THUC_TE}, Lệch: ${finalizedAudit.LECH > 0 ? '+' : ''}${finalizedAudit.LECH}`,
+            TG_TAO: audit.THOI_DIEM,
+            GHI_CHU: `Phiếu điều chỉnh kiểm kê liên kết. SKU: ${audit.SKU}, Tồn HT: ${audit.TON_HE_THONG}, Tồn TT: ${audit.TON_THUC_TE}, Lệch: ${audit.LECH > 0 ? '+' : ''}${audit.LECH}`,
             MA_NV: currentUser?.id,
             TEN_DANG_NHAP: currentUser?.username
           };
 
-          const adjDetail: NhapXuatCT = {
+          const adjDetail = {
             ID: `CT_ADJ_${Date.now()}_${index}_${Math.random().toString(36).substring(2, 7)}`,
-            HOA_DON: newAdjInvoiceId,
-            SKU: finalizedAudit.SKU,
+            HOA_DON: tempInvoiceId,
+            SKU: audit.SKU,
             TEN_SP: matchedP.TEN_SAN_PHAM,
             THUONG_HIEU: matchedP.THUONG_HIEU,
             CHIET_XUAT: matchedP.CHIET_XUAT,
             TINH_NANG: matchedP.TINH_NANG,
             SPH: matchedP.CAN,
             CYL: matchedP.LOAN,
-            SO_LUONG: Math.abs(finalizedAudit.LECH),
+            SO_LUONG: Math.abs(audit.LECH),
             DVT: matchedP.DVT,
-            GHI_CHU: `Điều chỉnh kiểm kê liên kết ${newAuditId}`,
+            GHI_CHU: `Điều chỉnh kiểm kê liên kết`,
             LOAI: isPositive ? 'NHẬP' : 'XUẤT',
-            NGAY: finalizedAudit.THOI_DIEM.split(' ')[0]
+            NGAY: audit.THOI_DIEM.split(' ')[0]
           };
 
-          newHeadersToSave.push(adjHeader);
-          newDetailsToSave.push(adjDetail);
+          headersToSave.push(adjHeader);
+          detailsToSave.push(adjDetail);
         }
       }
     });
 
-    const updatedKiemKhos = [...kiemKhos, ...finalizedAudits];
-    const updatedHeaders = [...nhapXuats, ...newHeadersToSave];
-    const updatedDetails = [...nhapXuatCTs, ...newDetailsToSave];
-
-    // Cập nhật State cho PKK và điều chỉnh
-    setKiemKhos(updatedKiemKhos);
-    if (newHeadersToSave.length > 0) {
-      setNhapXuats(updatedHeaders);
-      setNhapXuatCTs(updatedDetails);
+    const res = await rpcSaveAudit(auditsToSave, headersToSave, detailsToSave);
+    if (res.error || !res.data?.success) {
+      const errMsg = res.error?.message || res.data?.message || 'Lỗi không xác định';
+      setSyncError({
+        table: 'b_kiemkho / b_sanpham / b_nhapxuat / b_nhapxuatct',
+        action: 'Lưu phiếu kiểm và điều chỉnh',
+        message: errMsg
+      });
+      setSuccessToast({
+        message: `Lỗi: ${errMsg}`,
+        type: "error",
+        id: `save-audit-fail-${Date.now()}`
+      });
+      return;
     }
 
-    // Tính toán và cập nhật lại tồn kho sản phẩm hoàn toàn chính xác
-    const affectedSKUs = Array.from(new Set(finalizedAudits.map(a => cleanSKU(a.SKU))));
-    const updatedProductsList = sanPhams.map(p => {
-      const pSkuNorm = cleanSKU(p.SKU);
-      if (affectedSKUs.includes(pSkuNorm)) {
-        const updatedP = recalculateProductState(p.SKU, sanPhams, updatedDetails, updatedKiemKhos, updatedHeaders);
-        return updatedP ? updatedP : p;
-      }
-      return p;
+    setSuccessToast({
+      message: `Đã lưu thành công phiếu kiểm kho & tự động tạo phiếu điều chỉnh tương ứng!`,
+      type: "success",
+      id: `save-audit-${Date.now()}`
     });
-
-    setSanPhams(updatedProductsList);
 
     // Đồng bộ Supabase và LocalStorage
     if (currentUser) {
@@ -2660,33 +2428,8 @@ export default function App() {
       try {
         const uId = await getUserId();
         if (uId) {
-          const promises: Promise<any>[] = [];
-          
-          // Sync từng phiếu PKK
-          finalizedAudits.forEach(audit => {
-            promises.push(syncKiemKho(audit, uId));
-          });
-
-          // Sync sản phẩm bị ảnh hưởng
-          promises.push(syncSanPhams(updatedProductsList.filter(p => affectedSKUs.includes(cleanSKU(p.SKU))), uId));
-
-          // Sync phiếu điều chỉnh nếu có
-          if (newHeadersToSave.length > 0) {
-            newHeadersToSave.forEach(h => {
-              promises.push(syncNhapXuat(h, uId));
-            });
-            promises.push(syncNhapXuatCTs(newDetailsToSave, uId));
-          }
-
-          const results = await Promise.all(promises);
-          const error = results.find(r => r && r.error)?.error;
-          if (error) {
-            setSyncError({
-              table: 'b_kiemkho / b_sanpham / b_nhapxuat / b_nhapxuatct',
-              action: 'Lưu phiếu kiểm và điều chỉnh',
-              message: error.message || JSON.stringify(error)
-            });
-          }
+          // Sau khi lưu thành công, đồng bộ lại toàn bộ dữ liệu từ Supabase Cloud để an tâm tuyệt đối
+          await syncAllDataFromSupabase(uId, currentUser.username || '', true);
         }
       } catch (err: any) {
         console.error('Lỗi sync kiểm kho và điều chỉnh:', err);
@@ -2831,55 +2574,32 @@ export default function App() {
     if (!isSessionValid) return false;
     if (!(await ensureOnline())) return false;
     try {
-      // 1. Cập nhật TRANG_THAI = 'Đã hủy' cho Header trong danh sách nhapXuats
-      const updatedHeaders = nhapXuats.map(h => h.HOA_DON === hoaDonId ? { ...h, TRANG_THAI: 'Đã hủy' } : h);
-      setNhapXuats(updatedHeaders);
+      const header = nhapXuats.find(h => h.HOA_DON === hoaDonId);
+      if (!header) return false;
 
-      // 2. Giữ nguyên chi tiết nhapXuatCTs để hiển thị được trong lịch sử giao dịch
+      const cancelledHeader = { ...header, TRANG_THAI: 'Đã hủy' };
+      const details = nhapXuatCTs.filter(d => d.HOA_DON === hoaDonId);
 
-      // 3. Tái tính toán khôi phục kho cho các SKU bị ảnh hưởng (Rollback hoàn toàn)
-      const normSkusToRecalc = skusToRecalc.map(s => cleanSKU(s));
-      const updatedProductsList = sanPhams.map(p => {
-        const pSkuNorm = cleanSKU(p.SKU);
-        if (normSkusToRecalc.includes(pSkuNorm)) {
-          // Pass the updated headers list so that the calculator knows this transaction has been cancelled!
-          const updatedP = recalculateProductState(p.SKU, sanPhams, nhapXuatCTs, kiemKhos, updatedHeaders);
-          return updatedP ? updatedP : p;
-        }
-        return p;
-      });
+      const res = await rpcCreateTransaction(cancelledHeader, details);
+      if (res.error || !res.data?.success) {
+        const errMsg = res.error?.message || res.data?.message || 'Lỗi không xác định';
+        setSyncError({
+          table: 'b_nhapxuat / b_sanpham',
+          action: 'Hủy hóa đơn',
+          message: errMsg
+        });
+        return false;
+      }
 
-      setSanPhams(updatedProductsList);
-
-      // Đồng bộ Supabase
       if (currentUser) {
         ignoreRealtimeRef.current = true;
         try {
           const uId = await getUserId();
           if (uId) {
-            const cancelledHeader = updatedHeaders.find(h => h.HOA_DON === hoaDonId);
-            const [resSyncHeader, resSyncProducts] = await Promise.all([
-              cancelledHeader ? syncNhapXuat(cancelledHeader, uId) : Promise.resolve({ error: null }),
-              syncSanPhams(updatedProductsList.filter(p => normSkusToRecalc.includes(cleanSKU(p.SKU))), uId)
-            ]);
-            const error = resSyncHeader.error || resSyncProducts.error;
-            if (error) {
-              setSyncError({
-                table: 'b_nhapxuat / b_sanpham',
-                action: 'Hủy hóa đơn',
-                message: error.message || JSON.stringify(error)
-              });
-              return false;
-            }
+            await syncAllDataFromSupabase(uId, currentUser.username || '', true);
           }
-        } catch (err: any) {
+        } catch (err) {
           console.error('Lỗi sync hủy hóa đơn:', err);
-          setSyncError({
-            table: 'b_nhapxuat / b_sanpham',
-            action: 'Hủy hóa đơn',
-            message: err.message || JSON.stringify(err)
-          });
-          return false;
         } finally {
           setTimeout(() => {
             ignoreRealtimeRef.current = false;
@@ -2904,64 +2624,26 @@ export default function App() {
   ): Promise<boolean> => {
     if (!(await ensureOnline())) return false;
     try {
-      // 1. Cập nhật nhapXuats (xóa khỏi danh sách)
-      const nextHeaders = nhapXuats.filter(h => h.HOA_DON !== hoaDonId);
-      setNhapXuats(nextHeaders);
-
-      // 2. Cập nhật nhapXuatCTs (xóa khỏi danh sách)
-      const nextDetails = nhapXuatCTs.filter(d => d.HOA_DON !== hoaDonId);
-      setNhapXuatCTs(nextDetails);
-
-      // 3. Tái tính toán khôi phục kho cho các SKU bị ảnh hưởng nếu cần rollback
-      let updatedProductsList = sanPhams;
-      const normSkusToRecalc = skusToRecalc.map(s => cleanSKU(s));
-      if (shouldRollbackStock) {
-        updatedProductsList = sanPhams.map(p => {
-          const pSkuNorm = cleanSKU(p.SKU);
-          if (normSkusToRecalc.includes(pSkuNorm)) {
-            const updatedP = recalculateProductState(p.SKU, sanPhams, nextDetails, kiemKhos, nextHeaders);
-            return updatedP ? updatedP : p;
-          }
-          return p;
+      const res = await rpcDeleteTransaction(hoaDonId);
+      if (res.error || !res.data?.success) {
+        const errMsg = res.error?.message || res.data?.message || 'Lỗi không xác định';
+        setSyncError({
+          table: 'b_nhapxuat / b_nhapxuatct / b_sanpham',
+          action: 'Xóa vĩnh viễn hóa đơn',
+          message: errMsg
         });
-        setSanPhams(updatedProductsList);
+        return false;
       }
 
-      // Đồng bộ Supabase
       if (currentUser) {
         ignoreRealtimeRef.current = true;
         try {
           const uId = await getUserId();
           if (uId) {
-            // Xóa phiếu và chi tiết trên Supabase
-            const { error: deleteError } = await deleteNhapXuatAndDetails(hoaDonId);
-            
-            // Sync sản phẩm nếu có thay đổi tồn kho
-            let syncProductsError = null;
-            if (shouldRollbackStock) {
-              const changedProducts = updatedProductsList.filter(p => normSkusToRecalc.includes(cleanSKU(p.SKU)));
-              const resSyncProducts = await syncSanPhams(changedProducts, uId);
-              syncProductsError = resSyncProducts.error;
-            }
-
-            const error = deleteError || syncProductsError;
-            if (error) {
-              setSyncError({
-                table: 'b_nhapxuat / b_nhapxuatct / b_sanpham',
-                action: 'Xóa vĩnh viễn hóa đơn',
-                message: error.message || JSON.stringify(error)
-              });
-              return false;
-            }
+            await syncAllDataFromSupabase(uId, currentUser.username || '', true);
           }
-        } catch (err: any) {
+        } catch (err) {
           console.error('Lỗi sync xóa vĩnh viễn hóa đơn:', err);
-          setSyncError({
-            table: 'b_nhapxuat / b_nhapxuatct / b_sanpham',
-            action: 'Xóa vĩnh viễn hóa đơn',
-            message: err.message || JSON.stringify(err)
-          });
-          return false;
         } finally {
           setTimeout(() => {
             ignoreRealtimeRef.current = false;
