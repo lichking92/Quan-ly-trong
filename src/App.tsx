@@ -1973,8 +1973,8 @@ export default function App() {
     brand?: string,
     feature?: string,
     chietXuat?: string,
-    sph?: number,
-    cyl?: number
+    can?: number,
+    loan?: number
   ) => {
     if (!(await ensureOnline())) return;
     // 1. Xác định lệch
@@ -1986,13 +1986,13 @@ export default function App() {
     const normSku = cleanSKU(sku);
     let updatedProducts = sanPhams.map(p => {
       let isMatch = false;
-      if (brand !== undefined && feature !== undefined && chietXuat !== undefined && sph !== undefined && cyl !== undefined) {
+      if (brand !== undefined && feature !== undefined && chietXuat !== undefined && can !== undefined && loan !== undefined) {
         isMatch = 
           p.THUONG_HIEU.trim().toLowerCase() === brand.trim().toLowerCase() &&
           p.TINH_NANG.trim().toLowerCase() === feature.trim().toLowerCase() &&
           compareChietXuat(p.CHIET_XUAT, chietXuat) &&
-          Math.abs(p.CAN - sph) < 0.001 &&
-          Math.abs(p.LOAN - cyl) < 0.001 &&
+          Math.abs(p.CAN - can) < 0.001 &&
+          Math.abs(p.LOAN - loan) < 0.001 &&
           cleanSKU(p.SKU) === normSku;
       } else {
         isMatch = cleanSKU(p.SKU) === normSku;
@@ -2068,13 +2068,13 @@ export default function App() {
       }
 
       const matchedP = updatedProducts.find(p => {
-        if (brand !== undefined && feature !== undefined && chietXuat !== undefined && sph !== undefined && cyl !== undefined) {
+        if (brand !== undefined && feature !== undefined && chietXuat !== undefined && can !== undefined && loan !== undefined) {
           return (
             p.THUONG_HIEU.trim().toLowerCase() === brand.trim().toLowerCase() &&
             p.TINH_NANG.trim().toLowerCase() === feature.trim().toLowerCase() &&
             compareChietXuat(p.CHIET_XUAT, chietXuat) &&
-            Math.abs(p.CAN - sph) < 0.001 &&
-            Math.abs(p.LOAN - cyl) < 0.001 &&
+            Math.abs(p.CAN - can) < 0.001 &&
+            Math.abs(p.LOAN - loan) < 0.001 &&
             cleanSKU(p.SKU) === normSku
           );
         }
@@ -2121,13 +2121,13 @@ export default function App() {
       // 3. Tái tính toán và cập nhật lại tồn kho sản phẩm (chỉ chạy khi thực sự có chênh lệch tồn thực tế)
       updatedProducts = updatedProducts.map(p => {
         let isMatch = false;
-        if (brand !== undefined && feature !== undefined && chietXuat !== undefined && sph !== undefined && cyl !== undefined) {
+        if (brand !== undefined && feature !== undefined && chietXuat !== undefined && can !== undefined && loan !== undefined) {
           isMatch = 
             p.THUONG_HIEU.trim().toLowerCase() === brand.trim().toLowerCase() &&
             p.TINH_NANG.trim().toLowerCase() === feature.trim().toLowerCase() &&
             compareChietXuat(p.CHIET_XUAT, chietXuat) &&
-            Math.abs(p.CAN - sph) < 0.001 &&
-            Math.abs(p.LOAN - cyl) < 0.001 &&
+            Math.abs(p.CAN - can) < 0.001 &&
+            Math.abs(p.LOAN - loan) < 0.001 &&
             cleanSKU(p.SKU) === normSku;
         } else {
           isMatch = cleanSKU(p.SKU) === normSku;
@@ -2165,13 +2165,13 @@ export default function App() {
           
           // Sync sản phẩm bị ảnh hưởng
           const targetProd = updatedProducts.find(p => {
-            if (brand !== undefined && feature !== undefined && chietXuat !== undefined && sph !== undefined && cyl !== undefined) {
+            if (brand !== undefined && feature !== undefined && chietXuat !== undefined && can !== undefined && loan !== undefined) {
               return (
                 p.THUONG_HIEU.trim().toLowerCase() === brand.trim().toLowerCase() &&
                 p.TINH_NANG.trim().toLowerCase() === feature.trim().toLowerCase() &&
                 compareChietXuat(p.CHIET_XUAT, chietXuat) &&
-                Math.abs(p.CAN - sph) < 0.001 &&
-                Math.abs(p.LOAN - cyl) < 0.001 &&
+                Math.abs(p.CAN - can) < 0.001 &&
+                Math.abs(p.LOAN - loan) < 0.001 &&
                 cleanSKU(p.SKU) === normSku
               );
             }
@@ -2768,46 +2768,16 @@ export default function App() {
     const nextHeaders = nhapXuats.map(h => h.HOA_DON === updatedHeader.HOA_DON ? updatedHeader : h);
     setNhapXuats(nextHeaders);
     
-    // 2. Ghi đè lại toàn bộ chi tiết mới
+    // 2. Ghi đè lại toàn bộ chi tiết mới (chỉ chứa sự thay đổi của dòng trong phiếu)
     setNhapXuatCTs(updatedDetails);
 
-    // 3. Tái tính toán cục bộ cho các SKU bị ảnh hưởng theo delta = so_luong_moi - so_luong_cu
-    const oldInvoiceDetails = nhapXuatCTs.filter(d => d.HOA_DON === updatedHeader.HOA_DON);
-    const newInvoiceDetails = updatedDetails.filter(d => d.HOA_DON === updatedHeader.HOA_DON);
-
-    const allAffectedSkus = Array.from(new Set([
-      ...oldInvoiceDetails.map(d => cleanSKU(d.SKU)),
-      ...newInvoiceDetails.map(d => cleanSKU(d.SKU))
-    ]));
-
+    // 3. Tái tính toán cục bộ cho các SKU bị ảnh hưởng
+    const normSkusToRecalc = skusToRecalc.map(s => cleanSKU(s));
     const updatedProductsList = sanPhams.map(p => {
       const pSkuNorm = cleanSKU(p.SKU);
-      if (allAffectedSkus.includes(pSkuNorm)) {
-        const SL_cu = oldInvoiceDetails
-          .filter(d => cleanSKU(d.SKU) === pSkuNorm)
-          .reduce((sum, d) => sum + (Number(d.SO_LUONG) || 0), 0);
-        const SL_moi = newInvoiceDetails
-          .filter(d => cleanSKU(d.SKU) === pSkuNorm)
-          .reduce((sum, d) => sum + (Number(d.SO_LUONG) || 0), 0);
-        const delta = SL_moi - SL_cu;
-
-        let newNhap = p.NHAP || 0;
-        let newXuat = p.XUAT || 0;
-
-        if (updatedHeader.LOAI === 'NHẬP') {
-          newNhap = (p.NHAP || 0) + delta;
-        } else if (updatedHeader.LOAI === 'XUẤT') {
-          newXuat = (p.XUAT || 0) + delta;
-        }
-
-        const newTonCuoi = (p.TON_DAU || 0) + newNhap - newXuat;
-
-        return {
-          ...p,
-          NHAP: newNhap,
-          XUAT: newXuat,
-          TON_CUOI: newTonCuoi
-        };
+      if (normSkusToRecalc.includes(pSkuNorm)) {
+        const updatedP = recalculateProductState(p.SKU, sanPhams, updatedDetails, kiemKhos, nextHeaders);
+        return updatedP ? updatedP : p;
       }
       return p;
     });
@@ -2826,7 +2796,7 @@ export default function App() {
           ]);
           const [res2, res3] = await Promise.all([
             syncNhapXuatCTs(updatedDetails.filter(d => d.HOA_DON === updatedHeader.HOA_DON), uId),
-            syncSanPhams(updatedProductsList.filter(p => allAffectedSkus.includes(cleanSKU(p.SKU))), uId)
+            syncSanPhams(updatedProductsList.filter(p => normSkusToRecalc.includes(cleanSKU(p.SKU))), uId)
           ]);
           const error = res1.error || resDel.error || res2.error || res3.error;
           if (error) {

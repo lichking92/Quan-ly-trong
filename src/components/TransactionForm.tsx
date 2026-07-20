@@ -67,7 +67,7 @@ interface CartItem {
   tinhNang: string;
   sph: number;
   cyl: number;
-  soLuong: number | '';
+  soLuong: number;
   dvt: string;
   ghiChu: string;
 }
@@ -129,7 +129,7 @@ export default function TransactionForm({
   const [selectDoSphType, setSelectDoSphType] = useState<'CẬN' | 'VIỄN'>('CẬN');
   const [selectDoSph, setSelectDoSph] = useState<number>(-2.00);
   const [selectDoCyl, setSelectDoCyl] = useState<number>(0.00);
-  const [selectSoLuong, setSelectSoLuong] = useState<number | ''>(1);
+  const [selectSoLuong, setSelectSoLuong] = useState<number>(1);
   const [selectDvt, setSelectDvt] = useState<string>('miếng');
   const [selectGhiChuDong, setSelectGhiChuDong] = useState<string>('');
 
@@ -363,14 +363,13 @@ export default function TransactionForm({
 
   // --- 5. TÍNH TỔNG SỐ LƯỢNG GIỎ HÀNG (BẢNG 3) ---
   const totalCartQty = useMemo(() => {
-    return cart.reduce((sum, item) => sum + (Number(item.soLuong) || 0), 0);
+    return cart.reduce((sum, item) => sum + item.soLuong, 0);
   }, [cart]);
 
   // Dự đoán tồn kho sau khi giao dịch thành công để cảnh báo sớm (Tab Xuất)
   const estimatedPostStock = useMemo(() => {
     if (!matchedProductInDB) return 0;
-    const qty = Number(selectSoLuong) || 0;
-    return matchedProductInDB.TON_CUOI - (loaiPhieu === 'XUẤT' ? qty : 0);
+    return matchedProductInDB.TON_CUOI - (loaiPhieu === 'XUẤT' ? selectSoLuong : 0);
   }, [matchedProductInDB, loaiPhieu, selectSoLuong]);
 
   const isWarningLowStock = useMemo(() => {
@@ -410,10 +409,7 @@ export default function TransactionForm({
       return;
     }
 
-    const sanitizedQty = selectSoLuong === '' || isNaN(Number(selectSoLuong)) || Number(selectSoLuong) < 1 ? 1 : Math.floor(Number(selectSoLuong));
-    setSelectSoLuong(sanitizedQty);
-
-    if (sanitizedQty <= 0) {
+    if (selectSoLuong <= 0) {
       setErrorMsg('Lỗi: Số lượng sản phẩm thêm vào phiếu phải lớn hơn 0.');
       return;
     }
@@ -421,9 +417,9 @@ export default function TransactionForm({
     // Tính lượng đã có sẵn trong giỏ của SKU này để kiểm tra tồn dồn tích
     const existingQtyInCart = cart
       .filter(item => cleanSKU(item.sku) === cleanSKU(calculatedSKU))
-      .reduce((sum, item) => sum + (Number(item.soLuong) || 0), 0);
+      .reduce((sum, item) => sum + item.soLuong, 0);
 
-    const totalRequestedQty = existingQtyInCart + sanitizedQty;
+    const totalRequestedQty = existingQtyInCart + selectSoLuong;
 
     // Rule 1: Không cho xuất âm kho
     if (loaiPhieu === 'XUẤT') {
@@ -444,7 +440,7 @@ export default function TransactionForm({
       tinhNang: matchedProductInDB.TINH_NANG,
       sph: matchedProductInDB.CAN,
       cyl: matchedProductInDB.LOAN,
-      soLuong: sanitizedQty,
+      soLuong: selectSoLuong,
       dvt: selectDvt,
       ghiChu: selectGhiChuDong || 'Giao dịch chuẩn'
     };
@@ -466,10 +462,11 @@ export default function TransactionForm({
   };
 
   // Cập nhật số lượng cho dòng sản phẩm trong giỏ hàng chờ trực tiếp
-  const handleUpdateCartItemQty = (id: string, newQty: number | '') => {
+  const handleUpdateCartItemQty = (id: string, newQty: number) => {
+    const finalQty = Math.max(1, newQty);
     setCart(prev => prev.map(item => {
       if (item.id === id) {
-        return { ...item, soLuong: newQty };
+        return { ...item, soLuong: finalQty };
       }
       return item;
     }));
@@ -482,9 +479,8 @@ export default function TransactionForm({
       if (loaiPhieu === 'XUẤT') {
         const prod = sanPhams.find(p => cleanSKU(p.SKU) === cleanSKU(item.sku));
         const stock = prod ? prod.TON_CUOI : 0;
-        const qty = Number(item.soLuong) || 0;
-        if (qty > stock) {
-          errors[item.id] = `Yêu cầu (${qty} miếng) vượt quá tồn kho hiện có (${stock} miếng).`;
+        if (item.soLuong > stock) {
+          errors[item.id] = `Yêu cầu (${item.soLuong} miếng) vượt quá tồn kho hiện có (${stock} miếng).`;
         }
       }
     });
@@ -504,27 +500,14 @@ export default function TransactionForm({
       return;
     }
 
-    // Sanitize quantities
-    const sanitizedCart = cart.map(item => {
-      const num = Number(item.soLuong);
-      const val = (isNaN(num) || num < 1) ? 1 : Math.floor(num);
-      return { ...item, soLuong: val };
-    });
-    setCart(sanitizedCart);
-
-    if (sanitizedCart.length === 0) {
+    if (cart.length === 0) {
       setErrorMsg('Lỗi: Bạn chưa chọn bất kỳ sản phẩm nào để tạo phiếu.');
       return;
     }
 
     // Kiểm tra không cho xuất âm kho dồn dính
     if (loaiPhieu === 'XUẤT') {
-      // Re-calculate stock errors for sanitized items
-      const hasErrors = sanitizedCart.some(item => {
-        const prod = sanPhams.find(p => cleanSKU(p.SKU) === cleanSKU(item.sku));
-        const stock = prod ? prod.TON_CUOI : 0;
-        return (item.soLuong || 0) > stock;
-      });
+      const hasErrors = Object.keys(cartItemStockErrors).length > 0;
       if (hasErrors) {
         setErrorMsg('Lỗi nghiêm trọng (Rule 1): Có sản phẩm trong phiếu xuất vượt quá tồn kho thực tế khả dụng. Vui lòng điều chỉnh lại số lượng trước khi lưu phiếu.');
         return;
@@ -546,13 +529,12 @@ export default function TransactionForm({
       // HOA_DON sẽ được gán số phiếu cụ thể ở tầng cha App, ở đây ta để tạm hoặc tạo chuỗi ngẫu nhiên độc bản để App thay thế
       const tempHoaDonId = `${headerPrefix}_TEMP_${Date.now()}`;
 
-      const sanitizedTotalQty = sanitizedCart.reduce((sum, item) => sum + (Number(item.soLuong) || 0), 0);
       const newHeader: NhapXuat = {
         HOA_DON: tempHoaDonId, // Sẽ được App.tsx định dạng lại thành số phiếu tăng dần chính xác
         CHI_NHANH: selectedBranch,
         NGAY: ngayLap,
         LOAI: loaiPhieu,
-        TONG_SL: sanitizedTotalQty,
+        TONG_SL: totalCartQty,
         NGUOI_TAO: currentUser.username,
         TEN_NGUOI_TAO: currentUser.fullName,
         TG_TAO: getVietnamDateTimeString(),
@@ -562,7 +544,7 @@ export default function TransactionForm({
       };
 
       // 3. Tạo Danh sách Chi tiết dòng (B_NHAPXUATCT)
-      const detailRows: NhapXuatCT[] = sanitizedCart.map((item, idx) => ({
+      const detailRows: NhapXuatCT[] = cart.map((item, idx) => ({
         ID: `CT_${Date.now()}_${idx}`,
         HOA_DON: tempHoaDonId,
         SKU: item.sku,
@@ -572,7 +554,7 @@ export default function TransactionForm({
         TINH_NANG: item.tinhNang,
         SPH: item.sph,
         CYL: item.cyl,
-        SO_LUONG: Number(item.soLuong) || 1,
+        SO_LUONG: item.soLuong,
         DVT: item.dvt,
         GHI_CHU: item.ghiChu,
         LOAI: loaiPhieu,
@@ -919,7 +901,7 @@ export default function TransactionForm({
                     <div className="flex items-center gap-1 bg-slate-50 border border-slate-200 rounded-xl p-1.5">
                       <button
                         type="button"
-                        onClick={() => setSelectSoLuong(prev => Math.max(1, (Number(prev) || 0) - 1))}
+                        onClick={() => setSelectSoLuong(prev => Math.max(1, prev - 1))}
                         className="w-8 h-8 flex items-center justify-center bg-white text-slate-600 rounded-lg font-bold border border-slate-200"
                       >
                         -
@@ -928,27 +910,12 @@ export default function TransactionForm({
                         type="number"
                         min={1}
                         value={selectSoLuong}
-                        onChange={(e) => {
-                          const raw = e.target.value;
-                          if (raw === '') {
-                            setSelectSoLuong('');
-                          } else {
-                            const val = parseInt(raw, 10);
-                            setSelectSoLuong(isNaN(val) ? '' : val);
-                          }
-                        }}
-                        onBlur={() => {
-                          if (selectSoLuong === '' || isNaN(Number(selectSoLuong)) || Number(selectSoLuong) < 1) {
-                            setSelectSoLuong(1);
-                          } else {
-                            setSelectSoLuong(Math.floor(Number(selectSoLuong)));
-                          }
-                        }}
+                        onChange={(e) => setSelectSoLuong(Math.max(1, parseInt(e.target.value) || 1))}
                         className="flex-1 text-center text-sm font-extrabold text-slate-700 bg-transparent font-mono focus:outline-hidden"
                       />
                       <button
                         type="button"
-                        onClick={() => setSelectSoLuong(prev => (Number(prev) || 0) + 1)}
+                        onClick={() => setSelectSoLuong(prev => prev + 1)}
                         className="w-8 h-8 flex items-center justify-center bg-white text-slate-600 rounded-lg font-bold border border-slate-200"
                       >
                         +
@@ -1081,7 +1048,7 @@ export default function TransactionForm({
                             <button
                               type="button"
                               onClick={() => {
-                                handleUpdateCartItemQty(item.id, Math.max(1, (Number(item.soLuong) || 0) - 1));
+                                handleUpdateCartItemQty(item.id, item.soLuong - 1);
                               }}
                               className="w-5 h-5 flex items-center justify-center text-xs font-bold text-slate-500"
                             >
@@ -1092,27 +1059,15 @@ export default function TransactionForm({
                               min={1}
                               value={item.soLuong}
                               onChange={(e) => {
-                                const raw = e.target.value;
-                                if (raw === '') {
-                                  handleUpdateCartItemQty(item.id, '');
-                                } else {
-                                  const val = parseInt(raw, 10);
-                                  handleUpdateCartItemQty(item.id, isNaN(val) ? '' : val);
-                                }
-                              }}
-                              onBlur={() => {
-                                if (item.soLuong === '' || isNaN(Number(item.soLuong)) || Number(item.soLuong) < 1) {
-                                  handleUpdateCartItemQty(item.id, 1);
-                                } else {
-                                  handleUpdateCartItemQty(item.id, Math.floor(Number(item.soLuong)));
-                                }
+                                const val = parseInt(e.target.value, 10);
+                                handleUpdateCartItemQty(item.id, isNaN(val) ? 1 : val);
                               }}
                               className="w-10 text-center text-xs font-bold text-slate-700 bg-transparent font-mono focus:outline-hidden [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
                             />
                             <button
                               type="button"
                               onClick={() => {
-                                handleUpdateCartItemQty(item.id, (Number(item.soLuong) || 0) + 1);
+                                handleUpdateCartItemQty(item.id, item.soLuong + 1);
                               }}
                               className="w-5 h-5 flex items-center justify-center text-xs font-bold text-slate-500"
                             >
@@ -1563,7 +1518,7 @@ export default function TransactionForm({
               <div className="col-span-2 flex items-center gap-1.5">
                 <button
                   type="button"
-                  onClick={() => setSelectSoLuong(prev => Math.max(1, (Number(prev) || 0) - 1))}
+                  onClick={() => setSelectSoLuong(prev => Math.max(1, prev - 1))}
                   className="w-8 h-8 flex items-center justify-center bg-slate-100 active:bg-slate-200 text-slate-600 rounded-lg hover:bg-slate-200 font-bold text-sm cursor-pointer shrink-0 transition-colors"
                 >
                   -
@@ -1572,27 +1527,12 @@ export default function TransactionForm({
                   type="number"
                   min={1}
                   value={selectSoLuong}
-                  onChange={(e) => {
-                    const raw = e.target.value;
-                    if (raw === '') {
-                      setSelectSoLuong('');
-                    } else {
-                      const val = parseInt(raw, 10);
-                      setSelectSoLuong(isNaN(val) ? '' : val);
-                    }
-                  }}
-                  onBlur={() => {
-                    if (selectSoLuong === '' || isNaN(Number(selectSoLuong)) || Number(selectSoLuong) < 1) {
-                      setSelectSoLuong(1);
-                    } else {
-                      setSelectSoLuong(Math.floor(Number(selectSoLuong)));
-                    }
-                  }}
+                  onChange={(e) => setSelectSoLuong(Math.max(1, parseInt(e.target.value) || 1))}
                   className="w-full text-center text-base md:text-xs font-bold text-slate-700 bg-slate-50 border border-slate-100 p-1.5 sm:p-2 rounded-lg font-mono"
                 />
                 <button
                   type="button"
-                  onClick={() => setSelectSoLuong(prev => (Number(prev) || 0) + 1)}
+                  onClick={() => setSelectSoLuong(prev => prev + 1)}
                   className="w-8 h-8 flex items-center justify-center bg-slate-100 active:bg-slate-200 text-slate-600 rounded-lg hover:bg-slate-200 font-bold text-sm cursor-pointer shrink-0 transition-colors"
                 >
                   +
@@ -1751,7 +1691,7 @@ export default function TransactionForm({
                       <div className="inline-flex items-center justify-center gap-1.5 bg-slate-50 border border-slate-200/80 rounded-xl p-1 shadow-2xs">
                         <button
                           type="button"
-                          onClick={() => handleUpdateCartItemQty(item.id, Math.max(1, (Number(item.soLuong) || 0) - 1))}
+                          onClick={() => handleUpdateCartItemQty(item.id, item.soLuong - 1)}
                           className="w-6 h-6 flex items-center justify-center bg-white border border-slate-200 text-slate-600 rounded-lg hover:bg-slate-100 font-bold text-xs cursor-pointer transition-colors"
                         >
                           -
@@ -1761,26 +1701,14 @@ export default function TransactionForm({
                           min={1}
                           value={item.soLuong}
                           onChange={(e) => {
-                            const raw = e.target.value;
-                            if (raw === '') {
-                              handleUpdateCartItemQty(item.id, '');
-                            } else {
-                              const val = parseInt(raw, 10);
-                              handleUpdateCartItemQty(item.id, isNaN(val) ? '' : val);
-                            }
-                          }}
-                          onBlur={() => {
-                            if (item.soLuong === '' || isNaN(Number(item.soLuong)) || Number(item.soLuong) < 1) {
-                              handleUpdateCartItemQty(item.id, 1);
-                            } else {
-                              handleUpdateCartItemQty(item.id, Math.floor(Number(item.soLuong)));
-                            }
+                            const val = parseInt(e.target.value, 10);
+                            handleUpdateCartItemQty(item.id, isNaN(val) ? 1 : val);
                           }}
                           className="w-12 text-center text-xs font-bold text-slate-700 bg-transparent font-mono focus:outline-hidden [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
                         />
                         <button
                           type="button"
-                          onClick={() => handleUpdateCartItemQty(item.id, (Number(item.soLuong) || 0) + 1)}
+                          onClick={() => handleUpdateCartItemQty(item.id, item.soLuong + 1)}
                           className="w-6 h-6 flex items-center justify-center bg-white border border-slate-200 text-slate-600 rounded-lg hover:bg-slate-100 font-bold text-xs cursor-pointer transition-colors"
                         >
                           +

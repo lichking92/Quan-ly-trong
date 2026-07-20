@@ -112,10 +112,10 @@ export default function TransactionHistory({
   const [formBranch, setFormBranch] = useState<string>('');
   const [formDate, setFormDate] = useState<string>('');
   const [formGhiChu, setFormGhiChu] = useState<string>('');
-  const [formItems, setFormItems] = useState<(Omit<NhapXuatCT, 'SO_LUONG'> & { SO_LUONG: number | '' })[]>([]);
+  const [formItems, setFormItems] = useState<NhapXuatCT[]>([]);
   
   const [editorSearchSku, setEditorSearchSku] = useState<string>('');
-  const [editorAddQty, setEditorAddQty] = useState<number | ''>(1);
+  const [editorAddQty, setEditorAddQty] = useState<number>(1);
   const [editorAddGhiChu, setEditorAddGhiChu] = useState<string>('');
 
   // States for Audit Logs
@@ -223,60 +223,19 @@ export default function TransactionHistory({
     setSuccessMsg('');
 
     if (!activeHeader) return;
-
-    // Sanitize quantities
-    const sanitizedFormItems = formItems.map(item => {
-      const num = Number(item.SO_LUONG);
-      const val = (isNaN(num) || num < 1) ? 1 : Math.floor(num);
-      return { ...item, SO_LUONG: val };
-    });
-    setFormItems(sanitizedFormItems);
-
-    if (sanitizedFormItems.length === 0) {
+    if (formItems.length === 0) {
       setErrorMsg('Phiếu không được bỏ trống danh sách tròng kính. Phải có ít nhất 1 mặt hàng.');
       return;
     }
 
     // Validate quantities
-    if (sanitizedFormItems.some(i => i.SO_LUONG <= 0)) {
+    if (formItems.some(i => i.SO_LUONG <= 0)) {
       setErrorMsg('Số lượng của tất cả mặt hàng phải lớn hơn 0.');
       return;
     }
 
-    // 1. Precise validation of adjustments (chênh lệch) to prevent negative inventory
-    const affectedSKUsForCheck = Array.from(new Set([
-      ...activeDetails.map(d => d.SKU),
-      ...sanitizedFormItems.map(d => d.SKU)
-    ]));
-
-    for (const sku of affectedSKUsForCheck) {
-      const product = sanPhams.find(p => p.SKU === sku);
-      const TON_KHA_DUNG = product ? (Number(product.TON_CUOI) || 0) : 0;
-
-      const SL_cu = activeDetails.filter(d => d.SKU === sku).reduce((sum, d) => sum + (Number(d.SO_LUONG) || 0), 0);
-      const SL_moi = sanitizedFormItems.filter(d => d.SKU === sku).reduce((sum, d) => sum + (Number(d.SO_LUONG) || 0), 0);
-      const delta = SL_moi - SL_cu;
-
-      if (activeHeader.LOAI === 'XUẤT') {
-        if (delta > 0) {
-          if (TON_KHA_DUNG < delta) {
-            setErrorMsg(`Không đủ tồn kho để tăng số lượng xuất.`);
-            return;
-          }
-        }
-      } else if (activeHeader.LOAI === 'NHẬP') {
-        if (delta < 0) {
-          const decreaseAmount = Math.abs(delta);
-          if (TON_KHA_DUNG < decreaseAmount) {
-            setErrorMsg(`Không thể giảm số lượng nhập vì sẽ làm tồn kho âm.`);
-            return;
-          }
-        }
-      }
-    }
-
     // Check simulated stock
-    const checkResult = checkSimulatedStock(formInvoiceId, sanitizedFormItems as NhapXuatCT[]);
+    const checkResult = checkSimulatedStock(formInvoiceId, formItems);
     if (!checkResult.success) {
       setErrorMsg(`Lỗi (Rule 1): Không cho phép tồn kho âm. SKU [${checkResult.errorSku}] sẽ có tồn kho sau khi sửa đổi là ${checkResult.negativeValue} cái.`);
       return;
@@ -293,7 +252,7 @@ export default function TransactionHistory({
       onConfirm: () => {
         setConfirmModal(prev => ({ ...prev, isOpen: false }));
         try {
-          const newTotalQty = sanitizedFormItems.reduce((sum, d) => sum + Number(d.SO_LUONG), 0);
+          const newTotalQty = formItems.reduce((sum, d) => sum + d.SO_LUONG, 0);
           const updatedHeader: NhapXuat = {
             ...activeHeader,
             CHI_NHANH: formBranch,
@@ -302,7 +261,7 @@ export default function TransactionHistory({
             TONG_SL: newTotalQty
           };
 
-          const updatedFormItems = sanitizedFormItems.map(d => ({
+          const updatedFormItems = formItems.map(d => ({
             ...d,
             CHI_NHANH: formBranch,
             NGAY: formDate,
@@ -314,18 +273,18 @@ export default function TransactionHistory({
 
           const affectedSKUs = Array.from(new Set([
             ...activeDetails.map(d => d.SKU),
-            ...sanitizedFormItems.map(d => d.SKU)
+            ...formItems.map(d => d.SKU)
           ]));
 
           // Perform Update
-          onUpdateTransaction(updatedHeader, updatedDetailsList as NhapXuatCT[], affectedSKUs);
+          onUpdateTransaction(updatedHeader, updatedDetailsList, affectedSKUs);
 
           // Save Audit Log
           addAuditLog(
             'SỬA', 
             formInvoiceId, 
             { header: activeHeader, details: activeDetails }, 
-            { header: updatedHeader, details: updatedFormItems as NhapXuatCT[] }, 
+            { header: updatedHeader, details: updatedFormItems }, 
             `Chỉnh sửa thông tin phiếu của ${currentUser.username}`
           );
 
@@ -343,20 +302,12 @@ export default function TransactionHistory({
     setErrorMsg('');
     setSuccessMsg('');
 
-    // Sanitize quantities
-    const sanitizedFormItems = formItems.map(item => {
-      const num = Number(item.SO_LUONG);
-      const val = (isNaN(num) || num < 1) ? 1 : Math.floor(num);
-      return { ...item, SO_LUONG: val };
-    });
-    setFormItems(sanitizedFormItems);
-
-    if (sanitizedFormItems.length === 0) {
+    if (formItems.length === 0) {
       setErrorMsg('Vui lòng thêm ít nhất 1 mặt hàng vào phiếu.');
       return;
     }
 
-    if (sanitizedFormItems.some(i => i.SO_LUONG <= 0)) {
+    if (formItems.some(i => i.SO_LUONG <= 0)) {
       setErrorMsg('Số lượng của tất cả mặt hàng phải lớn hơn 0.');
       return;
     }
@@ -367,7 +318,7 @@ export default function TransactionHistory({
     const loai: LoaiPhieu = isNhap ? 'NHẬP' : 'XUẤT';
 
     // Check simulated stock
-    const checkResult = checkSimulatedStock('', sanitizedFormItems as NhapXuatCT[]);
+    const checkResult = checkSimulatedStock('', formItems);
     if (!checkResult.success) {
       setErrorMsg(`Lỗi (Rule 1): Không cho phép tồn kho âm. SKU [${checkResult.errorSku}] sẽ có tồn kho sau khi tạo phiếu là ${checkResult.negativeValue} cái.`);
       return;
@@ -402,20 +353,20 @@ export default function TransactionHistory({
             CHI_NHANH: formBranch,
             NGAY: formDate,
             LOAI: loai,
-            TONG_SL: sanitizedFormItems.reduce((sum, d) => sum + Number(d.SO_LUONG), 0),
+            TONG_SL: formItems.reduce((sum, d) => sum + d.SO_LUONG, 0),
             NGUOI_TAO: currentUser.username,
             TEN_NGUOI_TAO: currentUser.fullName || currentUser.username,
             TG_TAO: getVietnamDateTimeString(),
             GHI_CHU: formGhiChu
           };
 
-          const newDetails: NhapXuatCT[] = sanitizedFormItems.map((item, idx) => ({
+          const newDetails: NhapXuatCT[] = formItems.map((item, idx) => ({
             ...item,
             ID: `CT_NEW_${Date.now()}_${idx}`,
             HOA_DON: tempId,
             LOAI: loai,
             NGAY: formDate
-          })) as NhapXuatCT[];
+          }));
 
           if (onSaveTransaction) {
             await onSaveTransaction(newHeader, newDetails);
@@ -456,8 +407,10 @@ export default function TransactionHistory({
       return;
     }
 
-    const sanitizedQty = editorAddQty === '' || isNaN(Number(editorAddQty)) || Number(editorAddQty) < 1 ? 1 : Math.floor(Number(editorAddQty));
-    setEditorAddQty(sanitizedQty);
+    if (editorAddQty <= 0) {
+      setErrorMsg('Số lượng bổ sung phải lớn hơn 0.');
+      return;
+    }
 
     if (formItems.some(item => item.SKU === editorSearchSku)) {
       setErrorMsg('Sản phẩm SKU này đã tồn tại trong phiếu. Hãy điều chỉnh số lượng ở bảng bên dưới.');
@@ -467,7 +420,7 @@ export default function TransactionHistory({
     const isNhap = (isCreatingInvoice && (createInvoiceType === 'NHẬP' || createInvoiceType === 'NHẬP_KIEM_KHO')) || (isEditingInvoice && activeHeader?.LOAI === 'NHẬP');
     const loai: LoaiPhieu = isNhap ? 'NHẬP' : 'XUẤT';
 
-    const newItem: any = {
+    const newItem: NhapXuatCT = {
       ID: `CT_TEMP_${Date.now()}`,
       HOA_DON: formInvoiceId || 'TEMP',
       SKU: targetProduct.SKU,
@@ -477,7 +430,7 @@ export default function TransactionHistory({
       TINH_NANG: targetProduct.TINH_NANG,
       SPH: targetProduct.CAN,
       CYL: targetProduct.LOAN,
-      SO_LUONG: sanitizedQty,
+      SO_LUONG: editorAddQty,
       DVT: targetProduct.DVT || 'Cái',
       GHI_CHU: editorAddGhiChu || 'Ghi chú bổ sung',
       LOAI: loai,
@@ -496,7 +449,7 @@ export default function TransactionHistory({
   };
 
   // Update a quantity in the form details
-  const updateItemQtyInForm = (sku: string, val: number | '') => {
+  const updateItemQtyInForm = (sku: string, val: number) => {
     setFormItems(prev => prev.map(i => i.SKU === sku ? { ...i, SO_LUONG: val } : i));
   };
 
@@ -685,12 +638,12 @@ export default function TransactionHistory({
 
   // Trạng thái cho Form Sửa/Thêm dòng trong phiếu chi tiết
   const [editingRowId, setEditingRowId] = useState<string | null>(null);
-  const [editQty, setEditQty] = useState<number | ''>(0);
+  const [editQty, setEditQty] = useState<number>(0);
   const [editGhiChu, setEditGhiChu] = useState<string>('');
   
   const [showAddRowForm, setShowAddRowForm] = useState<boolean>(false);
   const [newRowSKU, setNewRowSKU] = useState<string>('');
-  const [newRowQty, setNewRowQty] = useState<number | ''>(10);
+  const [newRowQty, setNewRowQty] = useState<number>(10);
   const [newRowGhiChu, setNewRowGhiChu] = useState<string>('');
   
   const [errorMsg, setErrorMsg] = useState<string>('');
@@ -905,29 +858,32 @@ export default function TransactionHistory({
     setErrorMsg('');
     setSuccessMsg('');
 
-    const sanitizedQty = editQty === '' || isNaN(Number(editQty)) || Number(editQty) < 1 ? 1 : Math.floor(Number(editQty));
-    setEditQty(sanitizedQty);
+    if (editQty <= 0) {
+      setErrorMsg('Số lượng sửa đổi bắt buộc phải lớn hơn 0.');
+      return;
+    }
 
     if (!activeHeader) return;
 
-    const targetProduct = sanPhams.find(p => p.SKU === row.SKU);
-    const TON_KHA_DUNG = targetProduct ? (Number(targetProduct.TON_CUOI) || 0) : 0;
-    const SL_cu = Number(row.SO_LUONG) || 0;
-    const SL_moi = sanitizedQty;
-    const delta = SL_moi - SL_cu;
-
     if (activeHeader.LOAI === 'XUẤT') {
-      if (delta > 0) {
-        if (TON_KHA_DUNG < delta) {
-          setErrorMsg(`Không đủ tồn kho để tăng số lượng xuất.`);
+      const targetProduct = sanPhams.find(p => p.SKU === row.SKU);
+      if (targetProduct) {
+        const delta = editQty - row.SO_LUONG;
+        const tonKhaDung = targetProduct.TON_CUOI || 0;
+        if (delta > 0 && tonKhaDung < delta) {
+          setErrorMsg("Không đủ tồn kho. Số lượng điều chỉnh vượt quá tồn khả dụng.");
           return;
         }
       }
-    } else if (activeHeader.LOAI === 'NHẬP') {
-      if (delta < 0) {
-        const decreaseAmount = Math.abs(delta);
-        if (TON_KHA_DUNG < decreaseAmount) {
-          setErrorMsg(`Không thể giảm số lượng nhập vì sẽ làm tồn kho âm.`);
+    }
+
+    if (activeHeader.LOAI === 'NHẬP') {
+      const targetProduct = sanPhams.find(p => p.SKU === row.SKU);
+      if (targetProduct) {
+        const delta = editQty - row.SO_LUONG;
+        const tonHienTai = targetProduct.TON_CUOI || 0;
+        if (delta < 0 && (tonHienTai + delta < 0)) {
+          setErrorMsg("Không thể giảm số lượng nhập vì sẽ làm tồn kho âm.");
           return;
         }
       }
@@ -935,7 +891,7 @@ export default function TransactionHistory({
 
     const updatedDetails = nhapXuatCTs.map(d => {
       if (d.ID === row.ID) {
-        return { ...d, SO_LUONG: sanitizedQty, GHI_CHU: editGhiChu };
+        return { ...d, SO_LUONG: editQty, GHI_CHU: editGhiChu };
       }
       return d;
     });
@@ -958,11 +914,13 @@ export default function TransactionHistory({
     setErrorMsg('');
     setSuccessMsg('');
 
-    const sanitizedQty = newRowQty === '' || isNaN(Number(newRowQty)) || Number(newRowQty) < 1 ? 1 : Math.floor(Number(newRowQty));
-    setNewRowQty(sanitizedQty);
-
     if (!newRowSKU) {
       setErrorMsg('Vui lòng chọn SKU tròng kính cần bổ sung vào phiếu.');
+      return;
+    }
+
+    if (newRowQty <= 0) {
+      setErrorMsg('Số lượng bổ sung phải lớn hơn 0.');
       return;
     }
 
@@ -981,8 +939,8 @@ export default function TransactionHistory({
     }
 
     if (activeHeader.LOAI === 'XUẤT') {
-      if (sanitizedQty > targetProduct.TON_CUOI) {
-        setErrorMsg(`Không đủ tồn kho để tăng số lượng xuất.`);
+      if (newRowQty > targetProduct.TON_CUOI) {
+        setErrorMsg(`Lỗi (Rule 1): Không cho xuất âm kho. SKU [${newRowSKU}] chỉ còn tồn ${targetProduct.TON_CUOI} ${targetProduct.DVT}.`);
         return;
       }
     }
@@ -997,7 +955,7 @@ export default function TransactionHistory({
       TINH_NANG: targetProduct.TINH_NANG,
       SPH: targetProduct.CAN,
       CYL: targetProduct.LOAN,
-      SO_LUONG: sanitizedQty,
+      SO_LUONG: newRowQty,
       DVT: targetProduct.DVT,
       GHI_CHU: newRowGhiChu || 'Bổ sung dòng sau lập phiếu',
       LOAI: activeHeader.LOAI,
@@ -1027,16 +985,6 @@ export default function TransactionHistory({
     if (activeDetails.length <= 1) {
       setErrorMsg('Phiếu nhập xuất bắt buộc phải chứa ít nhất 1 mặt hàng. Bạn không thể xóa dòng cuối cùng. Hãy chọn "Hủy Phiếu" nếu muốn hủy bỏ toàn bộ.');
       return;
-    }
-
-    if (activeHeader.LOAI === 'NHẬP') {
-      const targetProduct = sanPhams.find(p => p.SKU === row.SKU);
-      const TON_KHA_DUNG = targetProduct ? (Number(targetProduct.TON_CUOI) || 0) : 0;
-      const decreaseAmount = Number(row.SO_LUONG) || 0;
-      if (TON_KHA_DUNG < decreaseAmount) {
-        setErrorMsg(`Không thể giảm số lượng nhập vì sẽ làm tồn kho âm.`);
-        return;
-      }
     }
 
     setConfirmModal({
@@ -1205,45 +1153,7 @@ export default function TransactionHistory({
           </div>
 
           <div className="flex items-center gap-2">
-            {(hasPerm('history.edit') || hasPerm('history.delete')) && (
-              <>
-                {hasPerm('history.edit') && (
-                  <button
-                    onClick={handleStartEditInvoice}
-                    className="flex items-center gap-1 text-[11px] font-bold py-1.5 px-3 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 text-slate-600 cursor-pointer transition-all"
-                  >
-                    <Edit2 className="w-3.5 h-3.5 text-indigo-500" /> Sửa Phiếu
-                  </button>
-                )}
-
-                {hasPerm('history.edit') && (
-                  <button
-                    onClick={() => setShowAddRowForm(!showAddRowForm)}
-                    className="flex items-center gap-1 text-[11px] font-bold py-1.5 px-3 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 text-slate-600 cursor-pointer transition-all"
-                  >
-                    <Plus className="w-3.5 h-3.5 text-blue-500" /> Thêm Dòng
-                  </button>
-                )}
-
-                {hasPerm('history.delete') && (
-                  <button
-                    onClick={handleDeleteEntireInvoice}
-                    className="flex items-center gap-1 text-[11px] font-bold py-1.5 px-3 rounded-lg bg-rose-50 text-rose-600 hover:bg-rose-100 cursor-pointer transition-all"
-                  >
-                    <Trash2 className="w-3.5 h-3.5" /> Hủy Phiếu
-                  </button>
-                )}
-
-                {hasPerm('history.delete') && (
-                  <button
-                    onClick={handleHardDeleteEntireInvoice}
-                    className="flex items-center gap-1 text-[11px] font-bold py-1.5 px-3 rounded-lg bg-rose-600 text-white hover:bg-rose-700 cursor-pointer transition-all"
-                  >
-                    <Trash2 className="w-3.5 h-3.5" /> Xóa Phiếu
-                  </button>
-                )}
-              </>
-            )}
+            {/* Chức năng Sửa, Hủy, Xóa đã được ẩn trong Tab lịch sử để chỉ giữ tra cứu và xem chi tiết */}
           </div>
         </div>
 
@@ -1287,22 +1197,7 @@ export default function TransactionHistory({
                     type="number"
                     min={1}
                     value={newRowQty}
-                    onChange={(e) => {
-                      const raw = e.target.value;
-                      if (raw === '') {
-                        setNewRowQty('');
-                      } else {
-                        const val = parseInt(raw, 10);
-                        setNewRowQty(isNaN(val) ? '' : val);
-                      }
-                    }}
-                    onBlur={() => {
-                      if (newRowQty === '' || isNaN(Number(newRowQty)) || Number(newRowQty) < 1) {
-                        setNewRowQty(1);
-                      } else {
-                        setNewRowQty(Math.floor(Number(newRowQty)));
-                      }
-                    }}
+                    onChange={(e) => setNewRowQty(Math.max(1, parseInt(e.target.value) || 1))}
                     className="w-full text-xs font-bold text-slate-700 bg-white border border-slate-200 rounded p-1.5 font-mono"
                   />
                 </div>
@@ -1346,7 +1241,8 @@ export default function TransactionHistory({
                 <th className="py-2.5 px-3">Thông tin Tròng kính (SKU)</th>
                 <th className="py-2.5 px-3 text-center w-28">Số Lượng</th>
                 <th className="py-2.5 px-3">Ghi Chú</th>
-                {hasPerm('history.edit') && (
+                {/* Ẩn cột tác vụ theo yêu cầu chỉ xem chi tiết */}
+                {false && (
                   <th className="py-2.5 px-3 text-center w-24">Tác vụ</th>
                 )}
               </tr>
@@ -1371,22 +1267,7 @@ export default function TransactionHistory({
                           type="number"
                           min={1}
                           value={editQty}
-                          onChange={(e) => {
-                            const raw = e.target.value;
-                            if (raw === '') {
-                              setEditQty('');
-                            } else {
-                              const val = parseInt(raw, 10);
-                              setEditQty(isNaN(val) ? '' : val);
-                            }
-                          }}
-                          onBlur={() => {
-                            if (editQty === '' || isNaN(Number(editQty)) || Number(editQty) < 1) {
-                              setEditQty(1);
-                            } else {
-                              setEditQty(Math.floor(Number(editQty)));
-                            }
-                          }}
+                          onChange={(e) => setEditQty(Math.max(1, parseInt(e.target.value) || 1))}
                           className="w-16 p-1 text-center border border-slate-300 rounded font-bold bg-white"
                         />
                       ) : (
@@ -1407,7 +1288,8 @@ export default function TransactionHistory({
                         </span>
                       )}
                     </td>
-                    {hasPerm('history.edit') && (
+                    {/* Ẩn tác vụ dòng theo yêu cầu chỉ xem chi tiết */}
+                    {false && (
                       <td className="py-3 px-3 text-center">
                         {isEditing ? (
                           <div className="flex items-center justify-center gap-1">
@@ -1932,22 +1814,7 @@ export default function TransactionHistory({
                 type="number"
                 min="1"
                 value={editorAddQty}
-                onChange={(e) => {
-                  const raw = e.target.value;
-                  if (raw === '') {
-                    setEditorAddQty('');
-                  } else {
-                    const val = parseInt(raw, 10);
-                    setEditorAddQty(isNaN(val) ? '' : val);
-                  }
-                }}
-                onBlur={() => {
-                  if (editorAddQty === '' || isNaN(Number(editorAddQty)) || Number(editorAddQty) < 1) {
-                    setEditorAddQty(1);
-                  } else {
-                    setEditorAddQty(Math.floor(Number(editorAddQty)));
-                  }
-                }}
+                onChange={(e) => setEditorAddQty(Math.max(1, parseInt(e.target.value, 10) || 1))}
                 className="w-full text-xs font-mono font-bold text-slate-700 bg-white border border-slate-200 rounded-xl px-3 py-2 focus:outline-hidden"
               />
             </div>
@@ -2011,7 +1878,7 @@ export default function TransactionHistory({
                       <div className="flex items-center justify-center gap-1.5">
                         <button
                           type="button"
-                          onClick={() => updateItemQtyInForm(item.SKU, Math.max(1, (Number(item.SO_LUONG) || 0) - 1))}
+                          onClick={() => updateItemQtyInForm(item.SKU, Math.max(1, item.SO_LUONG - 1))}
                           className="w-6 h-6 rounded-full border border-slate-200 flex items-center justify-center text-slate-500 font-bold hover:bg-slate-50 cursor-pointer"
                         >
                           -
@@ -2020,27 +1887,12 @@ export default function TransactionHistory({
                           type="number"
                           min="1"
                           value={item.SO_LUONG}
-                          onChange={(e) => {
-                            const raw = e.target.value;
-                            if (raw === '') {
-                              updateItemQtyInForm(item.SKU, '');
-                            } else {
-                              const val = parseInt(raw, 10);
-                              updateItemQtyInForm(item.SKU, isNaN(val) ? '' : val);
-                            }
-                          }}
-                          onBlur={() => {
-                            if (item.SO_LUONG === '' || isNaN(Number(item.SO_LUONG)) || Number(item.SO_LUONG) < 1) {
-                              updateItemQtyInForm(item.SKU, 1);
-                            } else {
-                              updateItemQtyInForm(item.SKU, Math.floor(Number(item.SO_LUONG)));
-                            }
-                          }}
+                          onChange={(e) => updateItemQtyInForm(item.SKU, Math.max(1, parseInt(e.target.value, 10) || 1))}
                           className="w-16 text-center font-mono font-bold text-xs border border-slate-200 rounded py-1"
                         />
                         <button
                           type="button"
-                          onClick={() => updateItemQtyInForm(item.SKU, (Number(item.SO_LUONG) || 0) + 1)}
+                          onClick={() => updateItemQtyInForm(item.SKU, item.SO_LUONG + 1)}
                           className="w-6 h-6 rounded-full border border-slate-200 flex items-center justify-center text-slate-500 font-bold hover:bg-slate-50 cursor-pointer"
                         >
                           +
@@ -2087,7 +1939,18 @@ export default function TransactionHistory({
   return (
     <div className="space-y-6">
 
-
+      {/* HEADER TAB LỊCH SỬ CHỈ TRA CỨU VÀ XEM CHI TIẾT */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-slate-50 p-4 rounded-2xl border border-slate-150 shadow-2xs">
+        <div className="text-left col-span-2">
+          <h2 className="text-sm font-extrabold text-slate-800 flex items-center gap-2">
+            <History className="w-5 h-5 text-red-650" />
+            Lịch sử Giao dịch Nhập Xuất Kho
+          </h2>
+          <p className="text-[11px] text-slate-500 font-semibold leading-normal">
+            Tra cứu lịch sử và xem chi tiết các phiếu nhập xuất kho trong toàn hệ thống.
+          </p>
+        </div>
+      </div>
 
       {/* 1. KHU VỰC BỘ LỌC VÀ TÌM KIẾM PHIẾU */}
       <div className="bg-white rounded-2xl border border-slate-100 p-4 shadow-2xs space-y-4">

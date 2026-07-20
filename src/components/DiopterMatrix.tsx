@@ -7,22 +7,17 @@ import React, { useState, useMemo } from 'react';
 import { 
   Filter, 
   MapPin, 
-  Eye, 
-  Grid, 
-  X, 
-  Info, 
-  HelpCircle, 
   LayoutGrid, 
   CheckCircle, 
-  SlidersHorizontal, 
   RefreshCw, 
   AlertTriangle,
-  Boxes,
-  Compass
+  Compass,
+  X,
+  Info
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { SanPham, NhapXuat, NhapXuatCT, KiemKho, ThuongHieu } from '../types';
-import { formatDop, generateSKUString, generateSphOptions } from '../data/mockData';
+import { formatDop, generateSKUString, generateSphOptions, cleanSKU } from '../data/mockData';
 import { normalizeChietXuat } from '../utils/chietXuatHelper';
 
 interface DiopterMatrixProps {
@@ -44,8 +39,8 @@ interface DiopterMatrixProps {
     brand?: string,
     feature?: string,
     chietXuat?: string,
-    sph?: number,
-    cyl?: number
+    can?: number,
+    loan?: number
   ) => Promise<void>;
 }
 
@@ -65,17 +60,18 @@ export default function DiopterMatrix({
     if (hasPermission) return hasPermission(p);
     return currentUser?.writeAccess !== false;
   };
+
   // --- 1. QUẢN LÝ BỘ LỌC CHUYÊN BIỆT ---
   const [selectedBrand, setSelectedBrand] = useState<string>(() => {
     return thuongHieus.length > 0 ? thuongHieus[0] : 'Blick';
   });
   
-  // Lấy các tính năng khả dụng của thương hiệu được chọn
+  // Lấy các tính năng khả dụng của thương hiệu được chọn (quy chuẩn so khớp không phân biệt hoa thường)
   const availableFeatures = useMemo(() => {
     if (!brandList || brandList.length === 0) return ['ĐM', 'ASX'];
     const featuresSet = new Set<string>();
     brandList
-      .filter(b => b.THUONG_HIEU.trim() === selectedBrand.trim())
+      .filter(b => b.THUONG_HIEU.trim().toLowerCase() === selectedBrand.trim().toLowerCase())
       .forEach(b => {
         const valStr = b.TINH_NANG_MAC_DINH || b.TINH_NANG || '';
         if (valStr) {
@@ -100,7 +96,7 @@ export default function DiopterMatrix({
     if (!brandList || brandList.length === 0) return ['1.56', '1.60', '1.61', '1.67', '1.74'];
     const cxSet = new Set<string>();
     brandList
-      .filter(b => b.THUONG_HIEU.trim() === selectedBrand.trim())
+      .filter(b => b.THUONG_HIEU.trim().toLowerCase() === selectedBrand.trim().toLowerCase())
       .forEach(b => {
         const valStr = b.CHIET_XUAT_MAC_DINH || '';
         if (valStr) {
@@ -120,6 +116,21 @@ export default function DiopterMatrix({
     }
   }, [availableChietXuats, selectedChietXuat]);
 
+  // Đồng bộ tức thời để loại bỏ triệt để độ trễ (lag) hoặc trùng chéo dữ liệu giữa các thương hiệu
+  const currentFeature = useMemo(() => {
+    if (availableFeatures.includes(selectedFeature)) {
+      return selectedFeature;
+    }
+    return availableFeatures[0] || 'ĐM';
+  }, [availableFeatures, selectedFeature]);
+
+  const currentChietXuat = useMemo(() => {
+    if (availableChietXuats.includes(selectedChietXuat)) {
+      return selectedChietXuat;
+    }
+    return availableChietXuats[0] || '1.56';
+  }, [availableChietXuats, selectedChietXuat]);
+
   // Kho hàng / chi nhánh
   const [selectedBranch, setSelectedBranch] = useState<string>('Tất cả');
 
@@ -131,8 +142,8 @@ export default function DiopterMatrix({
 
   // Trạng thái hiển thị modal chi tiết ô
   const [selectedCellDetail, setSelectedCellDetail] = useState<{
-    sph: number;
-    cyl: number;
+    can: number;
+    loan: number;
     sku: string;
     exists: boolean;
     tonCuoi: number;
@@ -184,11 +195,11 @@ export default function DiopterMatrix({
         actualStock,
         selectedCellDetail.tonCuoi,
         selectedBranch === 'Tất cả' ? 'Kho Trung Tâm' : selectedBranch,
-        selectedCellDetail.product?.THUONG_HIEU,
-        selectedCellDetail.product?.TINH_NANG,
-        selectedCellDetail.product?.CHIET_XUAT,
-        selectedCellDetail.product?.CAN,
-        selectedCellDetail.product?.LOAN
+        selectedCellDetail.product?.THUONG_HIEU || selectedBrand,
+        selectedCellDetail.product?.TINH_NANG || currentFeature,
+        selectedCellDetail.product?.CHIET_XUAT || currentChietXuat,
+        selectedCellDetail.can,
+        selectedCellDetail.loan
       );
       setSelectedCellDetail(null);
     } catch (error: any) {
@@ -199,65 +210,88 @@ export default function DiopterMatrix({
     }
   };
 
-  // --- 2. XÁC ĐỊNH TRỤC SPH (Y) VÀ CYL (X) ---
-  const sphList = useMemo(() => {
-    return generateSphOptions(selectedBrand, selectedChietXuat, brandList || [], diopterType);
-  }, [selectedBrand, selectedChietXuat, brandList, diopterType]);
+  // --- 2. XÁC ĐỊNH DANH SÁCH ĐỘ CẬN (Y) VÀ ĐỘ LOẠN (X) ---
+  const canList = useMemo(() => {
+    const defaultOptions = generateSphOptions(selectedBrand, currentChietXuat, brandList || [], diopterType);
+    const set = new Set<number>(defaultOptions);
 
-  const cylList = useMemo(() => {
-    const list: number[] = [];
-    // 0.00 -> -2.00 bước nhảy 0.25
-    for (let c = 0.00; c >= -2.00; c -= 0.25) {
-      list.push(Number(c.toFixed(2)));
-    }
-    return list;
-  }, []);
-
-  // --- 3. ĐỒNG BỘ DỮ LIỆU SẢN PHẨM & TÍNH TỒN KHO THEO BỘ LỌC ---
-  // Để tối ưu hiệu năng, chúng ta build một Map tra cứu nhanh dựa trên SPH và CYL
-  const filteredProductsMap = useMemo(() => {
-    const map = new Map<string, SanPham>();
-    const normalizedSelected = normalizeChietXuat(selectedChietXuat);
-    
+    const normalizedSelected = normalizeChietXuat(currentChietXuat);
     sanPhams.forEach(p => {
       const matchBrand = p.THUONG_HIEU.trim().toLowerCase() === selectedBrand.trim().toLowerCase();
-      const matchFeature = p.TINH_NANG.trim().toLowerCase() === selectedFeature.trim().toLowerCase();
+      const matchFeature = p.TINH_NANG.trim().toLowerCase() === currentFeature.trim().toLowerCase();
       const normalizedProductIdx = normalizeChietXuat(p.CHIET_XUAT);
       const matchChietXuat = normalizedProductIdx === normalizedSelected;
-      
-      // Logging debug as requested to track down any misaligned values
-      if (matchBrand && matchFeature) {
-        console.log({
-          selectedIndex: selectedChietXuat,
-          normalizedSelectedIndex: normalizedSelected,
-          productIndex: p.CHIET_XUAT,
-          normalizedProductIndex: normalizedProductIdx,
-          matched: matchChietXuat,
-          sku: p.SKU
-        });
-      }
-      
+
       if (matchBrand && matchFeature && matchChietXuat) {
-        const key = `${p.CAN.toFixed(2)}_${p.LOAN.toFixed(2)}`;
-        map.set(key, p);
+        if (diopterType === 'CẬN' && p.CAN <= 0) {
+          set.add(p.CAN);
+        } else if (diopterType === 'VIỄN' && p.CAN > 0) {
+          set.add(p.CAN);
+        }
       }
     });
 
-    return map;
-  }, [sanPhams, selectedBrand, selectedFeature, selectedChietXuat]);
+    const list = Array.from(set).map(v => Number(v.toFixed(2)));
+    if (diopterType === 'CẬN') {
+      return list.sort((a, b) => b - a); // 0.00, -0.25, -0.50...
+    } else {
+      return list.sort((a, b) => a - b); // 0.25, 0.50, 0.75...
+    }
+  }, [sanPhams, selectedBrand, currentChietXuat, currentFeature, brandList, diopterType]);
 
-  // Hàm tính toán tồn kho cho một SPH và CYL cụ thể
-  const getCellStockInfo = (sph: number, cyl: number) => {
-    const key = `${sph.toFixed(2)}_${cyl.toFixed(2)}`;
-    const product = filteredProductsMap.get(key);
+  const loanList = useMemo(() => {
+    const set = new Set<number>();
+    for (let c = 0.00; c >= -2.00; c -= 0.25) {
+      set.add(Number(c.toFixed(2)));
+    }
+
+    const normalizedSelected = normalizeChietXuat(currentChietXuat);
+    sanPhams.forEach(p => {
+      const matchBrand = p.THUONG_HIEU.trim().toLowerCase() === selectedBrand.trim().toLowerCase();
+      const matchFeature = p.TINH_NANG.trim().toLowerCase() === currentFeature.trim().toLowerCase();
+      const normalizedProductIdx = normalizeChietXuat(p.CHIET_XUAT);
+      const matchChietXuat = normalizedProductIdx === normalizedSelected;
+
+      if (matchBrand && matchFeature && matchChietXuat) {
+        set.add(p.LOAN);
+      }
+    });
+
+    return Array.from(set).map(v => Number(v.toFixed(2))).sort((a, b) => b - a);
+  }, [sanPhams, selectedBrand, currentChietXuat, currentFeature]);
+
+  // --- 3. ĐỒNG BỘ DỮ LIỆU SẢN PHẨM & TÍNH TỒN KHO THEO BỘ LỌC BẰNG SKU ĐÚNG ---
+  // Ta xây dựng bản đồ tra cứu O(1) cực nhanh từ bảng sản phẩm b_sanpham bằng SKU đã chuẩn hóa
+  const lookupMaps = useMemo(() => {
+    const skuMap = new Map<string, SanPham>();
+    
+    sanPhams.forEach(p => {
+      const cleanedSkuKey = cleanSKU(p.SKU);
+      if (cleanedSkuKey) {
+        skuMap.set(cleanedSkuKey, p);
+      }
+    });
+    
+    return { skuMap };
+  }, [sanPhams]);
+
+  // Hàm tính toán tồn kho cho một CAN và LOAN cụ thể bằng SKU lookup trực tiếp
+  const getCellStockInfo = (can: number, loan: number) => {
+    // Bước 1: Ghép SKU từ bộ lọc hiện tại và tọa độ ô:
+    const expectedSku = generateSKUString(selectedBrand, currentChietXuat, currentFeature, can, loan);
+    const cleanExpected = cleanSKU(expectedSku);
+
+    // Bước 2: Dùng SKU vừa tạo để lookup chính xác vào bảng sản phẩm:
+    const product = lookupMaps.skuMap.get(cleanExpected);
 
     if (!product) {
       return {
-        sku: generateSKUString(selectedBrand, selectedChietXuat, selectedFeature, sph, cyl),
+        sku: expectedSku,
         exists: false,
         tonCuoi: 0,
         tonToiThieu: 0,
-        status: 'Hết hàng' as const
+        status: 'Hết hàng' as const,
+        product: undefined
       };
     }
 
@@ -279,13 +313,10 @@ export default function DiopterMatrix({
         .filter(d => d.LOAI === 'XUẤT')
         .reduce((sum, d) => sum + d.SO_LUONG, 0);
 
-      const finalNhap = totalNhap;
-      const finalXuat = totalXuat;
-
       const isDefaultBranch = selectedBranch === 'Kho Trung Tâm';
       const branchTonDau = isDefaultBranch ? product.TON_DAU : 0;
 
-      tonCuoi = Math.max(0, branchTonDau + finalNhap - finalXuat);
+      tonCuoi = Math.max(0, branchTonDau + totalNhap - totalXuat);
     }
 
     // Xác định trạng thái màu dựa trên tồn tối thiểu
@@ -342,35 +373,30 @@ export default function DiopterMatrix({
 
     if (ratio < 0.5) {
       status = 'Nguy cấp';
-      // Tỷ lệ từ 0 đến 0.5: Chuyển từ Đỏ (Red 500: 239, 68, 68) sang Cam (Orange 400: 251, 146, 60)
       const t = ratio / 0.5;
       r = Math.round(239 + (251 - 239) * t);
       g = Math.round(68 + (146 - 68) * t);
       b = Math.round(68 + (60 - 68) * t);
     } else if (ratio < 1.0) {
       status = 'Thấp';
-      // Tỷ lệ từ 0.5 đến 1.0: Chuyển từ Cam (Orange 400: 251, 146, 60) sang Vàng (Yellow 300: 253, 224, 71)
       const t = (ratio - 0.5) / 0.5;
       r = Math.round(251 + (253 - 251) * t);
       g = Math.round(146 + (224 - 146) * t);
       b = Math.round(60 + (71 - 60) * t);
     } else if (ratio < 1.5) {
       status = 'Đạt yêu cầu';
-      // Tỷ lệ từ 1.0 đến 1.5: Chuyển từ Vàng (Yellow 300: 253, 224, 71) sang Xanh lá nhạt (Green 500: 34, 197, 94)
       const t = (ratio - 1.0) / 0.5;
       r = Math.round(253 + (34 - 253) * t);
       g = Math.round(224 + (197 - 224) * t);
       b = Math.round(71 + (94 - 71) * t);
     } else {
       status = 'An toàn';
-      // Tỷ lệ từ 1.5 trở lên: Chuyển từ Xanh lá (Green 500: 34, 197, 94) sang Xanh lá đậm (Green 750: 21, 115, 55)
       const t = Math.min(1, (ratio - 1.5) / 1.5);
       r = Math.round(34 + (21 - 34) * t);
       g = Math.round(197 + (115 - 197) * t);
       b = Math.round(94 + (55 - 94) * t);
     }
 
-    // Tự động tính độ sáng tương phản để chữ luôn sắc nét, dễ đọc trên cả Light & Dark modes
     const brightness = (r * 299 + g * 587 + b * 114) / 1000;
     const textColor = brightness > 145 ? '#0f172a' : '#ffffff';
 
@@ -384,14 +410,6 @@ export default function DiopterMatrix({
       } as React.CSSProperties,
       status
     };
-  };
-
-  // Trả về style màu cho ô tương ứng làm dự phòng
-  const getCellClasses = (status: 'Hết hàng' | 'Nguy cấp' | 'Thấp' | 'Đạt yêu cầu' | 'An toàn', exists: boolean) => {
-    if (!exists) {
-      return 'bg-slate-100 dark:bg-slate-800/40 text-slate-350 dark:text-slate-650 border-slate-200 dark:border-slate-800 cursor-not-allowed opacity-40';
-    }
-    return '';
   };
 
   const getStatusLabel = (status: string) => {
@@ -416,18 +434,6 @@ export default function DiopterMatrix({
     }
   };
 
-  const getStatusColorDot = (status: string) => {
-    switch (status) {
-      case 'Hết hàng': return 'bg-red-600 border border-red-700';
-      case 'Nguy cấp': return 'bg-red-200 border border-red-300';
-      case 'Thấp': return 'bg-orange-400 border border-orange-500';
-      case 'Đạt yêu cầu': return 'bg-yellow-300 border border-yellow-400';
-      case 'An toàn': return 'bg-emerald-500 border border-emerald-600';
-      default: return 'bg-slate-300';
-    }
-  };
-
-  // Khôi phục bộ lọc về mặc định
   const handleResetFilters = () => {
     if (thuongHieus.length > 0) {
       setSelectedBrand(thuongHieus[0]);
@@ -449,7 +455,7 @@ export default function DiopterMatrix({
             <LayoutGrid className="w-6 h-6" />
           </div>
           <div>
-            <h1 className="font-sans font-bold text-slate-850 text-lg">Bảng Độ (Ma Trận SPH/CYL)</h1>
+            <h1 className="font-sans font-bold text-slate-850 text-lg">Bảng Độ (Ma Trận CẬN/LOẠN)</h1>
             <p className="text-xs text-slate-400 font-mono">Tra cứu trực quan tồn kho kính mắt theo tọa độ khúc xạ chuyên sâu</p>
           </div>
         </div>
@@ -493,7 +499,7 @@ export default function DiopterMatrix({
               Tính năng
             </label>
             <select
-              value={selectedFeature}
+              value={currentFeature}
               onChange={(e) => setSelectedFeature(e.target.value)}
               className="w-full text-xs font-bold text-slate-700 bg-slate-50 border border-slate-150 rounded-lg py-2 px-2.5 focus:outline-hidden cursor-pointer"
             >
@@ -509,7 +515,7 @@ export default function DiopterMatrix({
               Chiết suất
             </label>
             <select
-              value={selectedChietXuat}
+              value={currentChietXuat}
               onChange={(e) => setSelectedChietXuat(e.target.value)}
               className="w-full text-xs font-bold text-slate-700 bg-slate-50 border border-slate-150 rounded-lg py-2 px-2.5 focus:outline-hidden cursor-pointer"
             >
@@ -536,10 +542,10 @@ export default function DiopterMatrix({
             </select>
           </div>
 
-          {/* Loại độ (Cận / Viễn) */}
+          {/* Loại độ CẬN / VIỄN */}
           <div className="space-y-1">
             <label className="text-[10px] uppercase font-bold text-slate-400 flex items-center gap-1">
-              Loại độ cầu (SPH)
+              Loại độ CẬN / VIỄN
             </label>
             <div className="grid grid-cols-2 bg-slate-100 p-1 rounded-lg">
               <button
@@ -564,41 +570,48 @@ export default function DiopterMatrix({
           </div>
         </div>
 
-        {/* Cấu hình hiển thị nhanh */}
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-4 mt-4 border-t border-slate-100">
-          <div className="flex items-center gap-2">
-            <span className="text-[10px] uppercase font-bold text-slate-400">Chế độ hiển thị ô:</span>
-            <div className="flex bg-slate-100 p-1 rounded-lg">
-              <button
-                type="button"
-                onClick={() => setDisplayMode('QUANTITY')}
-                className={`text-[10px] font-bold px-3 py-1.5 rounded-md transition-all cursor-pointer flex items-center gap-1 ${
-                  displayMode === 'QUANTITY' ? 'bg-slate-850 text-white shadow-xs' : 'text-slate-500 hover:text-slate-850'
-                }`}
-              >
-                <Grid className="w-3 h-3" />
-                Số lượng tồn
-              </button>
-              <button
-                type="button"
-                onClick={() => setDisplayMode('STATUS')}
-                className={`text-[10px] font-bold px-3 py-1.5 rounded-md transition-all cursor-pointer flex items-center gap-1 ${
-                  displayMode === 'STATUS' ? 'bg-slate-850 text-white shadow-xs' : 'text-slate-500 hover:text-slate-850'
-                }`}
-              >
-                <Eye className="w-3 h-3" />
-                Màu trạng thái
-              </button>
+        {/* Chế độ hiển thị lượng/màu */}
+        <div className="flex flex-wrap items-center justify-between gap-4 mt-5 pt-4 border-t border-slate-100">
+          <div className="flex items-center gap-5">
+            <span className="text-[11px] font-extrabold text-slate-400 uppercase tracking-wider font-mono">Chế độ xem ma trận:</span>
+            <div className="flex items-center gap-4">
+              <label className="flex items-center gap-1.5 text-xs font-semibold text-slate-650 cursor-pointer">
+                <input
+                  type="radio"
+                  name="displayMode"
+                  checked={displayMode === 'QUANTITY'}
+                  onChange={() => setDisplayMode('QUANTITY')}
+                  className="w-3.5 h-3.5 text-blue-600 focus:ring-blue-500 cursor-pointer"
+                />
+                Hiện số lượng tồn
+              </label>
+              <label className="flex items-center gap-1.5 text-xs font-semibold text-slate-650 cursor-pointer">
+                <input
+                  type="radio"
+                  name="displayMode"
+                  checked={displayMode === 'STATUS'}
+                  onChange={() => setDisplayMode('STATUS')}
+                  className="w-3.5 h-3.5 text-blue-600 focus:ring-blue-500 cursor-pointer"
+                />
+                Hiện trạng thái cảnh báo màu
+              </label>
             </div>
           </div>
 
-          {/* Chú giải ý nghĩa màu */}
-          <div className="flex flex-wrap items-center gap-2.5 text-[9px] font-bold text-slate-500 uppercase tracking-wide">
-            <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-full bg-red-600 border border-red-700 shrink-0" /> Hết hàng</span>
-            <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-full bg-red-200 border border-red-300 shrink-0" /> Nguy cấp</span>
-            <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-full bg-orange-400 border border-orange-500 shrink-0" /> Thấp</span>
-            <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-full bg-yellow-300 border border-yellow-400 shrink-0" /> Đạt</span>
-            <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-full bg-emerald-500 border border-emerald-600 shrink-0" /> An toàn</span>
+          <div className="flex flex-wrap items-center gap-3 bg-slate-50 p-1.5 px-3 rounded-xl border border-slate-150">
+            <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider font-mono mr-1">Chú giải màu:</span>
+            {[
+              { label: 'Hết', bg: 'bg-red-600' },
+              { label: 'Nguy cấp', bg: 'bg-red-300' },
+              { label: 'Thấp', bg: 'bg-orange-400' },
+              { label: 'Đạt', bg: 'bg-yellow-300' },
+              { label: 'An toàn', bg: 'bg-emerald-500' }
+            ].map(item => (
+              <div key={item.label} className="flex items-center gap-1 text-[10px] font-bold text-slate-600">
+                <span className={`w-2.5 h-2.5 rounded-full ${item.bg}`} />
+                {item.label}
+              </div>
+            ))}
           </div>
         </div>
       </div>
@@ -608,57 +621,57 @@ export default function DiopterMatrix({
         
         {/* Tiêu đề hiển thị tổ hợp lọc đang áp dụng */}
         <div className="bg-slate-50/50 px-4 py-2 border-b border-slate-100 flex justify-between items-center text-slate-500 text-[10px] uppercase font-bold tracking-wider font-mono">
-          <span>{selectedBrand} {selectedChietXuat} {selectedFeature} ({diopterType})</span>
+          <span>{selectedBrand} {currentChietXuat} {currentFeature} ({diopterType})</span>
           <span>Kho: {selectedBranch}</span>
         </div>
 
         {/* Wrapper cho phép cuộn ngang dọc đồng thời và hỗ trợ cố định trục */}
         <div className="overflow-auto max-h-[550px] scrollbar-thin">
-          <table className="w-full border-collapse text-left relative table-fixed min-w-[700px]">
+          <table key={`${selectedBrand}_${currentChietXuat}_${currentFeature}_${diopterType}`} className="w-full border-collapse text-left relative table-fixed min-w-[700px]">
             
-            {/* Header dòng trên cùng: Trục loạn (CYL) */}
+            {/* Header dòng trên cùng: Trục loạn (LOẠN) */}
             <thead className="sticky top-0 z-20">
               <tr className="bg-slate-50/90 border-b border-slate-150 backdrop-blur-xs">
                 {/* Ô góc giao nhau Top-Left */}
                 <th className="sticky left-0 top-0 z-30 bg-slate-100 border-r border-slate-200 p-2.5 text-center font-bold font-sans text-[11px] text-slate-800 w-24 shadow-[2px_0_5px_rgba(0,0,0,0.03)] shrink-0">
                   <div className="flex flex-col items-center justify-center leading-none">
-                    <span className="text-[8px] text-slate-400 font-bold self-end uppercase">CYL →</span>
+                    <span className="text-[8px] text-slate-400 font-bold self-end uppercase">LOẠN →</span>
                     <div className="h-[1px] w-full bg-slate-200 my-1" />
-                    <span className="text-[8px] text-slate-400 font-bold self-start uppercase">← SPH</span>
+                    <span className="text-[8px] text-slate-400 font-bold self-start uppercase">← CẬN</span>
                   </div>
                 </th>
                 
                 {/* Các cột độ loạn */}
-                {cylList.map(cyl => (
-                  <th key={cyl} className="p-2.5 border-r border-slate-200 text-center font-mono font-bold text-[10px] text-slate-600 w-16">
-                    {formatDop(cyl)}
+                {loanList.map(loan => (
+                  <th key={loan} className="p-2.5 border-r border-slate-200 text-center font-mono font-bold text-[10px] text-slate-600 w-16">
+                    {formatDop(loan)}
                   </th>
                 ))}
               </tr>
             </thead>
 
-            {/* Thân bảng: Các dòng độ cầu (SPH) */}
+            {/* Thân bảng: Các dòng độ cận/viễn (CẬN) */}
             <tbody>
-              {sphList.map(sph => (
-                <tr key={sph} className="border-b border-slate-150 hover:bg-slate-50/30 transition-colors">
+              {canList.map(can => (
+                <tr key={can} className="border-b border-slate-150 hover:bg-slate-50/30 transition-colors">
                   
-                  {/* Cột đầu tiên: Trục độ cầu SPH (Sticky Trái) */}
+                  {/* Cột đầu tiên: Trục độ cận SPH (Sticky Trái) */}
                   <td className="sticky left-0 z-10 bg-slate-50/95 border-r border-slate-200 p-2.5 text-center font-mono font-bold text-[10px] text-slate-700 shadow-[2px_0_5px_rgba(0,0,0,0.02)] backdrop-blur-xs">
-                    {formatDop(sph)}
+                    {formatDop(can)}
                   </td>
 
                   {/* Các ô giá trị tương ứng */}
-                  {cylList.map(cyl => {
-                    const info = getCellStockInfo(sph, cyl);
+                  {loanList.map(loan => {
+                    const info = getCellStockInfo(can, loan);
                     const dyn = getInventoryDynamicStyle(info.tonCuoi, info.tonToiThieu, info.exists);
                     return (
                       <td
-                        key={`${sph}_${cyl}`}
+                        key={`${can}_${loan}`}
                         onClick={() => {
                           if (info.exists) {
                             setSelectedCellDetail({
-                              sph,
-                              cyl,
+                              can,
+                              loan,
                               sku: info.sku,
                               exists: info.exists,
                               tonCuoi: info.tonCuoi,
@@ -681,7 +694,6 @@ export default function DiopterMatrix({
                             displayMode === 'QUANTITY' ? (
                               <span className="font-extrabold tracking-tight">{info.tonCuoi}</span>
                             ) : (
-                              // Chế độ màu trạng thái: Chỉ cần nhìn dải màu của ô, hoặc hiển thị chấm tròn đồng nhất nếu muốn
                               <span className="w-2.5 h-2.5 rounded-full bg-white/75 shadow-xs animate-pulse" />
                             )
                           ) : (
@@ -749,7 +761,7 @@ export default function DiopterMatrix({
                   )}
                 </div>
 
-                      {/* Phân nhóm thuộc tính danh mục */}
+                {/* Phân nhóm thuộc tính danh mục */}
                 <div className="grid grid-cols-3 gap-2 text-center text-xs">
                   <div className="bg-slate-50/40 border border-slate-100 p-2 rounded-lg">
                     <div className="text-[8px] uppercase font-bold text-slate-400">Thương hiệu</div>
@@ -757,11 +769,23 @@ export default function DiopterMatrix({
                   </div>
                   <div className="bg-slate-50/40 border border-slate-100 p-2 rounded-lg">
                     <div className="text-[8px] uppercase font-bold text-slate-400">Tính năng</div>
-                    <div className="font-bold text-slate-700 truncate mt-0.5">{selectedFeature}</div>
+                    <div className="font-bold text-slate-700 truncate mt-0.5">{currentFeature}</div>
                   </div>
                   <div className="bg-slate-50/40 border border-slate-100 p-2 rounded-lg">
                     <div className="text-[8px] uppercase font-bold text-slate-400">Chiết suất</div>
-                    <div className="font-bold text-slate-700 truncate mt-0.5">{selectedChietXuat}</div>
+                    <div className="font-bold text-slate-700 truncate mt-0.5">{currentChietXuat}</div>
+                  </div>
+                </div>
+
+                {/* Độ CẬN & Độ LOẠN */}
+                <div className="grid grid-cols-2 gap-2 text-center text-xs">
+                  <div className="bg-slate-50/40 border border-slate-100 p-2 rounded-lg">
+                    <div className="text-[8px] uppercase font-bold text-slate-400">Độ CẬN / VIỄN</div>
+                    <div className="font-mono font-bold text-slate-700 mt-0.5">{formatDop(selectedCellDetail.can)}</div>
+                  </div>
+                  <div className="bg-slate-50/40 border border-slate-100 p-2 rounded-lg">
+                    <div className="text-[8px] uppercase font-bold text-slate-400">Độ LOẠN</div>
+                    <div className="font-mono font-bold text-slate-700 mt-0.5">{formatDop(selectedCellDetail.loan)}</div>
                   </div>
                 </div>
 
