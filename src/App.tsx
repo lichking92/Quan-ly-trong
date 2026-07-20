@@ -810,6 +810,20 @@ export default function App() {
     try {
       console.log('Bắt đầu đồng bộ dữ liệu mới nhất từ Supabase Cloud cho tài khoản:', email, silent ? '(âm thầm)' : '(hiện thị loading)');
       monitor.trackSupabaseQuery('all_tables', 'select_onboard');
+
+      // Tải trực tiếp dữ liệu sản phẩm & phiếu mới nhất khi lưu/xóa hóa đơn hoặc khi các bảng này đã hoạt động để tránh lag cache
+      const hasLoadedTx = cache.nhapxuat !== null && cache.nhapxuatct !== null;
+      if (hasLoadedTx || silent) {
+        console.log('[Sync] Tải dữ liệu sản phẩm và phiếu trực tuyến mới nhất để đảm bảo UI đồng bộ tức thì...');
+        await Promise.all([
+          fetchSanPham(true),
+          fetchNhapXuat(true),
+          fetchNhapXuatCT(true)
+        ]);
+      } else {
+        await fetchSanPham(true);
+      }
+
       const payload = await ensureUserOnboarded(userId);
       const uniqueProducts = deduplicateProducts(payload.sanPhams);
       setSanPhams(uniqueProducts);

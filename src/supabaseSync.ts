@@ -1561,7 +1561,7 @@ export async function fetchNhanVien(force = false): Promise<any[]> {
     try {
       const { data, error } = await supabase
         .from('b_nhanvien')
-        .select('MA_NV, HO_TEN, CHUC_VU, BO_PHAN, CHI_NHANH, EMAIL, ROLE, PERMISSIONS, WRITE_ACCESS, TEN_DANG_NHAP, MAT_KHAU, TRANG_THAI, YEU_CAU_RESET, ROLES, user_id, active');
+        .select('MA_NV, HO_TEN, CHUC_VU, BO_PHAN, CHI_NHANH, EMAIL, ROLE, PERMISSIONS, WRITE_ACCESS, TEN_DANG_NHAP, MAT_KHAU, TRANG_THAI, YEU_CAU_RESET, ROLES, user_id, active, NGAY_DANG_KY');
       if (error) throw error;
       const mapped = data || [];
       updateInMemoryAndCentralCache('nhanvien', mapped);
@@ -2592,7 +2592,7 @@ export async function syncNhanVien(n: NhanVien, userId: string) {
       "CHI_NHANH": n.CHI_NHANH,
       "EMAIL": n.EMAIL || '',
       "ROLE": n.ROLE,
-      "PERMISSIONS": [],
+      "PERMISSIONS": n.PERMISSIONS || [],
       "WRITE_ACCESS": n.WRITE_ACCESS,
       "TEN_DANG_NHAP": n.TEN_DANG_NHAP || '',
       "MAT_KHAU": n.MAT_KHAU || '',
@@ -2600,7 +2600,7 @@ export async function syncNhanVien(n: NhanVien, userId: string) {
       "TRANG_THAI": n.TRANG_THAI || 'Hoạt động',
       "ROLES": n.ROLES || [],
       "active": n.active !== false,
-      "NGAY_DANG_KY": (n.NGAY_DANG_KY && n.NGAY_DANG_KY.trim() !== '') ? n.NGAY_DANG_KY : null,
+      "NGAY_DANG_KY": (n.NGAY_DANG_KY && String(n.NGAY_DANG_KY).trim() !== '') ? String(n.NGAY_DANG_KY).trim() : null,
       user_id: targetUserId
     };
 
@@ -3674,17 +3674,26 @@ export async function rpcCreateTransaction(header: any, details: any[]) {
       if (isRpcNotFoundError(error)) {
         console.warn('RPC create_transaction_v2 missing, falling back to client-side transaction...');
         const res = await fallbackCreateTransaction(header, details, userId);
+        invalidateCache('nhapxuat');
+        invalidateCache('nhapxuatct');
+        invalidateCache('sanpham');
         return { data: res, error: null };
       }
       console.error('Lỗi khi chạy create_transaction_v2 RPC:', error);
       return { data: null, error };
     }
+    invalidateCache('nhapxuat');
+    invalidateCache('nhapxuatct');
+    invalidateCache('sanpham');
     return { data, error: null };
   } catch (err: any) {
     if (isRpcNotFoundError(err)) {
       console.warn('RPC create_transaction_v2 exception, falling back to client-side transaction...');
       try {
         const res = await fallbackCreateTransaction(header, details, userId);
+        invalidateCache('nhapxuat');
+        invalidateCache('nhapxuatct');
+        invalidateCache('sanpham');
         return { data: res, error: null };
       } catch (fallbackErr: any) {
         return { data: null, error: fallbackErr };
@@ -3712,17 +3721,26 @@ export async function rpcDeleteTransaction(hoaDon: string) {
       if (isRpcNotFoundError(error)) {
         console.warn('RPC delete_transaction_v2 missing, falling back to client-side deletion...');
         const res = await fallbackDeleteTransaction(hoaDon, userId);
+        invalidateCache('nhapxuat');
+        invalidateCache('nhapxuatct');
+        invalidateCache('sanpham');
         return { data: res, error: null };
       }
       console.error('Lỗi khi chạy delete_transaction_v2 RPC:', error);
       return { data: null, error };
     }
+    invalidateCache('nhapxuat');
+    invalidateCache('nhapxuatct');
+    invalidateCache('sanpham');
     return { data, error: null };
   } catch (err: any) {
     if (isRpcNotFoundError(err)) {
       console.warn('RPC delete_transaction_v2 exception, falling back to client-side deletion...');
       try {
         const res = await fallbackDeleteTransaction(hoaDon, userId);
+        invalidateCache('nhapxuat');
+        invalidateCache('nhapxuatct');
+        invalidateCache('sanpham');
         return { data: res, error: null };
       } catch (fallbackErr: any) {
         return { data: null, error: fallbackErr };
@@ -3752,17 +3770,29 @@ export async function rpcSaveAudit(audits: any[], headers: any[], details: any[]
       if (isRpcNotFoundError(error)) {
         console.warn('RPC save_audit_v2 missing, falling back to client-side audit...');
         const res = await fallbackSaveAudit(audits, headers, details, userId);
+        invalidateCache('kiemkho');
+        invalidateCache('nhapxuat');
+        invalidateCache('nhapxuatct');
+        invalidateCache('sanpham');
         return { data: res, error: null };
       }
       console.error('Lỗi khi chạy save_audit_v2 RPC:', error);
       return { data: null, error };
     }
+    invalidateCache('kiemkho');
+    invalidateCache('nhapxuat');
+    invalidateCache('nhapxuatct');
+    invalidateCache('sanpham');
     return { data, error: null };
   } catch (err: any) {
     if (isRpcNotFoundError(err)) {
       console.warn('RPC save_audit_v2 exception, falling back to client-side audit...');
       try {
         const res = await fallbackSaveAudit(audits, headers, details, userId);
+        invalidateCache('kiemkho');
+        invalidateCache('nhapxuat');
+        invalidateCache('nhapxuatct');
+        invalidateCache('sanpham');
         return { data: res, error: null };
       } catch (fallbackErr: any) {
         return { data: null, error: fallbackErr };
