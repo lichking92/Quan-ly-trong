@@ -2234,6 +2234,31 @@ export default function App() {
 
     const newInvoiceId = res.data.hoa_don;
     sessionCreatedInvoiceIdsRef.current.add(newInvoiceId);
+
+    // Cập nhật state cục bộ ngay lập tức để tránh độ trễ đồng bộ
+    const completedHeader: NhapXuat = {
+      ...header,
+      HOA_DON: newInvoiceId,
+      TG_TAO: header.TG_TAO || getVietnamDateString(),
+      TRANG_THAI: header.TRANG_THAI || 'Hoàn tất'
+    };
+
+    const completedDetails: NhapXuatCT[] = details.map((d, index) => ({
+      ...d,
+      ID: d.ID || (d as any).id || `CT_TEMP_${newInvoiceId}_${index}`,
+      HOA_DON: newInvoiceId
+    }));
+
+    setNhapXuats(prev => {
+      const exists = prev.some(h => h.HOA_DON === newInvoiceId);
+      if (exists) return prev;
+      return [completedHeader, ...prev];
+    });
+
+    setNhapXuatCTs(prev => {
+      const filtered = prev.filter(d => d.HOA_DON !== newInvoiceId);
+      return [...completedDetails, ...filtered];
+    });
     
     // Kích hoạt Toast thông báo thành công chính giữa màn hình
     const toastMsg = header.LOAI === 'NHẬP' ? 'Lưu phiếu nhập thành công' : 'Lưu phiếu xuất thành công';

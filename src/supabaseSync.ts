@@ -1849,8 +1849,12 @@ export async function fetchNhapXuatCT(force = false): Promise<any[]> {
         }
       }
 
-      updateInMemoryAndCentralCache('nhapxuatct', allData);
-      return allData;
+      const mappedData = allData.map(item => ({
+        ...item,
+        ID: item.id !== undefined ? item.id : item.ID
+      }));
+      updateInMemoryAndCentralCache('nhapxuatct', mappedData);
+      return mappedData;
     } catch (err) {
       console.error("Lỗi fetchNhapXuatCT:", err);
       return inMemoryCache['B_NHAPXUATCT'] || [];

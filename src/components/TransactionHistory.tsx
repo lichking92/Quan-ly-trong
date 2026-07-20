@@ -25,7 +25,8 @@ import {
   History,
   ArrowLeft,
   Save,
-  CheckSquare
+  CheckSquare,
+  Ban
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { NhapXuat, NhapXuatCT, SanPham, LoaiPhieu, User as UserType, KiemKho } from '../types';
@@ -1152,8 +1153,54 @@ export default function TransactionHistory({
             </p>
           </div>
 
-          <div className="flex items-center gap-2">
-            {/* Chức năng Sửa, Hủy, Xóa đã được ẩn trong Tab lịch sử để chỉ giữ tra cứu và xem chi tiết */}
+          <div className="flex flex-wrap items-center gap-2">
+            {hasPerm('history.edit') && activeHeader.TRANG_THAI !== 'Đã hủy' && (
+              <>
+                <button
+                  onClick={handleStartEditInvoice}
+                  className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-50 text-blue-700 hover:bg-blue-100 rounded-lg text-xs font-bold transition-all cursor-pointer border border-blue-200"
+                  title="Sửa thông tin phiếu"
+                >
+                  <Edit2 className="w-3.5 h-3.5" />
+                  Sửa phiếu
+                </button>
+
+                <button
+                  onClick={() => setShowAddRowForm(prev => !prev)}
+                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer border ${
+                    showAddRowForm
+                      ? 'bg-blue-600 text-white border-blue-600 hover:bg-blue-700'
+                      : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-50'
+                  }`}
+                  title="Bổ sung dòng tròng kính mới"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  Thêm dòng
+                </button>
+              </>
+            )}
+
+            {activeHeader.TRANG_THAI !== 'Đã hủy' && (
+              <button
+                onClick={handleDeleteEntireInvoice}
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-amber-50 text-amber-700 hover:bg-amber-100 rounded-lg text-xs font-bold transition-all cursor-pointer border border-amber-200"
+                title="Hủy toàn bộ phiếu (hoàn trả tồn kho)"
+              >
+                <Ban className="w-3.5 h-3.5" />
+                Hủy phiếu
+              </button>
+            )}
+
+            {hasPerm('history.delete') && (
+              <button
+                onClick={handleHardDeleteEntireInvoice}
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-rose-50 text-rose-700 hover:bg-rose-100 rounded-lg text-xs font-bold transition-all cursor-pointer border border-rose-200"
+                title="Xóa vĩnh viễn phiếu khỏi hệ thống"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                Xóa vĩnh viễn
+              </button>
+            )}
           </div>
         </div>
 
@@ -1241,8 +1288,7 @@ export default function TransactionHistory({
                 <th className="py-2.5 px-3">Thông tin Tròng kính (SKU)</th>
                 <th className="py-2.5 px-3 text-center w-28">Số Lượng</th>
                 <th className="py-2.5 px-3">Ghi Chú</th>
-                {/* Ẩn cột tác vụ theo yêu cầu chỉ xem chi tiết */}
-                {false && (
+                {hasPerm('history.edit') && activeHeader.TRANG_THAI !== 'Đã hủy' && (
                   <th className="py-2.5 px-3 text-center w-24">Tác vụ</th>
                 )}
               </tr>
@@ -1288,8 +1334,7 @@ export default function TransactionHistory({
                         </span>
                       )}
                     </td>
-                    {/* Ẩn tác vụ dòng theo yêu cầu chỉ xem chi tiết */}
-                    {false && (
+                    {hasPerm('history.edit') && activeHeader.TRANG_THAI !== 'Đã hủy' && (
                       <td className="py-3 px-3 text-center">
                         {isEditing ? (
                           <div className="flex items-center justify-center gap-1">
