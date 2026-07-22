@@ -16,7 +16,8 @@ import {
   CheckCircle,
   Eye,
   ShieldAlert,
-  ArrowRight
+  ArrowRight,
+  RotateCcw
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { SanPham, ThuongHieu } from '../types';
@@ -63,58 +64,121 @@ export default function ProductManagement({
   const [sortColumn, setSortColumn] = useState<string>('');
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('asc');
 
-  // --- TRẠNG THÁI KÍCH THƯỚC CỘT (RESIZABLE) ---
-  const [columnWidths, setColumnWidths] = useState<Record<string, number>>(() => {
-    const saved = localStorage.getItem('PRODUCT_TABLE_COLUMN_WIDTHS');
+  // --- NHẬN DIỆN MÀN HÌNH MOBILE / DESKTOP ---
+  const [isMobile, setIsMobile] = useState<boolean>(() => typeof window !== 'undefined' && window.innerWidth < 768);
+
+  React.useEffect(() => {
+    const handleResize = () => {
+      setIsMobile(window.innerWidth < 768);
+    };
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
+
+  // Mặc định kích thước cột cho Desktop & Mobile
+  const DEFAULT_DESKTOP_WIDTHS: Record<string, number> = useMemo(() => ({
+    sku: 280,
+    sph: 110,
+    cyl: 110,
+    tonDau: 100,
+    nhapXuat: 130,
+    tonCuoi: 125,
+    tonToiThieu: 145,
+    status: 160
+  }), []);
+
+  const DEFAULT_MOBILE_WIDTHS: Record<string, number> = useMemo(() => ({
+    sku: 210,
+    sph: 95,
+    cyl: 95,
+    tonDau: 80,
+    nhapXuat: 105,
+    tonCuoi: 95,
+    tonToiThieu: 110,
+    status: 125
+  }), []);
+
+  // --- TRẠNG THÁI KÍCH THƯỚC CỘT (RESIZABLE CHO MOBILE VÀ DESKTOP) ---
+  const [desktopWidths, setDesktopWidths] = useState<Record<string, number>>(() => {
+    const saved = localStorage.getItem('PRODUCT_TABLE_COLUMN_WIDTHS_DESKTOP') || localStorage.getItem('PRODUCT_TABLE_COLUMN_WIDTHS');
     if (saved) {
       try {
         const parsed = JSON.parse(saved);
-        if (parsed.name || (parsed.sku && parsed.sku < 350)) {
-          const skuWidth = (parsed.sku || 190) + (parsed.name || 320);
-          delete parsed.name;
-          parsed.sku = Math.max(skuWidth, 480);
-          localStorage.setItem('PRODUCT_TABLE_COLUMN_WIDTHS', JSON.stringify(parsed));
-        }
-        return parsed;
-      } catch (e) {
-        // fallback
-      }
+        if (parsed.name) delete parsed.name;
+        // Nếu giá trị SKU trên desktop quá cũ, đảm bảo tối thiểu 220px
+        if (parsed.sku && parsed.sku < 220) parsed.sku = 280;
+        return { ...DEFAULT_DESKTOP_WIDTHS, ...parsed };
+      } catch (e) {}
     }
-    return {
-      sku: 510,
-      sph: 110,
-      cyl: 110,
-      tonDau: 100,
-      nhapXuat: 130,
-      tonCuoi: 125,
-      tonToiThieu: 145,
-      status: 160
-    };
+    return DEFAULT_DESKTOP_WIDTHS;
   });
 
-  // Hàm xử lý kéo mép cột thay đổi kích thước
-  const handleMouseDown = (colKey: string, e: React.MouseEvent) => {
-    e.preventDefault();
-    const startX = e.pageX;
-    const startWidth = columnWidths[colKey] || 100;
+  const [mobileWidths, setMobileWidths] = useState<Record<string, number>>(() => {
+    const saved = localStorage.getItem('PRODUCT_TABLE_COLUMN_WIDTHS_MOBILE');
+    if (saved) {
+      try {
+        const parsed = JSON.parse(saved);
+        if (parsed.name) delete parsed.name;
+        return { ...DEFAULT_MOBILE_WIDTHS, ...parsed };
+      } catch (e) {}
+    }
+    return DEFAULT_MOBILE_WIDTHS;
+  });
 
-    const handleMouseMove = (moveEvent: MouseEvent) => {
-      const deltaX = moveEvent.pageX - startX;
-      const newWidth = Math.max(60, startWidth + deltaX); // Tối thiểu 60px
-      setColumnWidths(prev => {
-        const next = { ...prev, [colKey]: newWidth };
-        localStorage.setItem('PRODUCT_TABLE_COLUMN_WIDTHS', JSON.stringify(next));
-        return next;
-      });
+  // Lấy kích thước cột hiện tại theo loại thiết bị
+  const columnWidths = isMobile ? mobileWidths : desktopWidths;
+
+  // Xử lý kéo mép cột thay đổi kích thước (Hỗ trợ cả MouseEvent và TouchEvent cho Mobile)
+  const handleStartResize = (colKey: string, e: React.MouseEvent | React.TouchEvent) => {
+    const startX = 'touches' in e ? e.touches[0].clientX : (e as React.MouseEvent).clientX;
+    const currentWidths = isMobile ? mobileWidths : desktopWidths;
+    const startWidth = currentWidths[colKey] || 100;
+
+    const handleMove = (moveEvent: MouseEvent | TouchEvent) => {
+      const currentX = 'touches' in moveEvent 
+        ? (moveEvent as TouchEvent).touches[0].clientX 
+        : (moveEvent as MouseEvent).clientX;
+      const deltaX = currentX - startX;
+      const newWidth = Math.max(60, startWidth + deltaX); // Width tối thiểu 60px
+
+      if (isMobile) {
+        setMobileWidths(prev => {
+          const next = { ...prev, [colKey]: newWidth };
+          localStorage.setItem('PRODUCT_TABLE_COLUMN_WIDTHS_MOBILE', JSON.stringify(next));
+          return next;
+        });
+      } else {
+        setDesktopWidths(prev => {
+          const next = { ...prev, [colKey]: newWidth };
+          localStorage.setItem('PRODUCT_TABLE_COLUMN_WIDTHS_DESKTOP', JSON.stringify(next));
+          return next;
+        });
+      }
     };
 
-    const handleMouseUp = () => {
-      document.removeEventListener('mousemove', handleMouseMove);
-      document.removeEventListener('mouseup', handleMouseUp);
+    const handleEnd = () => {
+      window.removeEventListener('mousemove', handleMove as any);
+      window.removeEventListener('mouseup', handleEnd);
+      window.removeEventListener('touchmove', handleMove as any);
+      window.removeEventListener('touchend', handleEnd);
     };
 
-    document.addEventListener('mousemove', handleMouseMove);
-    document.addEventListener('mouseup', handleMouseUp);
+    window.addEventListener('mousemove', handleMove as any);
+    window.addEventListener('mouseup', handleEnd);
+    window.addEventListener('touchmove', handleMove as any, { passive: true });
+    window.addEventListener('touchend', handleEnd);
+  };
+
+  // Nút đặt lại kích thước cột (Reset về mặc định)
+  const handleResetColumnWidths = () => {
+    if (isMobile) {
+      setMobileWidths(DEFAULT_MOBILE_WIDTHS);
+      localStorage.removeItem('PRODUCT_TABLE_COLUMN_WIDTHS_MOBILE');
+    } else {
+      setDesktopWidths(DEFAULT_DESKTOP_WIDTHS);
+      localStorage.removeItem('PRODUCT_TABLE_COLUMN_WIDTHS_DESKTOP');
+      localStorage.removeItem('PRODUCT_TABLE_COLUMN_WIDTHS');
+    }
   };
 
   // --- PHÂN TRANG CHO SẢN PHẨM (TỐI ƯU HÓA TRÁNH LAG) ---
@@ -515,8 +579,19 @@ export default function ProductManagement({
         </div>
 
         {/* Bộ lọc & Nút Thêm mới */}
-        <div className="flex flex-wrap items-center gap-3 w-full sm:w-auto justify-end">
+        <div className="flex flex-wrap items-center gap-2.5 w-full sm:w-auto justify-end">
           
+          {/* Nút đặt lại kích thước cột */}
+          <button
+            onClick={handleResetColumnWidths}
+            className="flex items-center gap-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold text-xs py-2 px-3 rounded-xl cursor-pointer transition-all border border-slate-200 shrink-0 active:scale-95"
+            title="Đặt lại kích thước tất cả các cột về mặc định"
+          >
+            <RotateCcw className="w-3.5 h-3.5 text-slate-500" />
+            <span className="hidden sm:inline">Đặt lại cột</span>
+            <span className="sm:hidden text-xs">Reset cột</span>
+          </button>
+
           {/* Lọc thương hiệu */}
           <select
             value={filterBrand}
@@ -570,10 +645,13 @@ export default function ProductManagement({
                 >
                   {renderSortHeader('sku', 'Mã SKU')}
                   <div 
-                    onMouseDown={(e) => handleMouseDown('sku', e)}
-                    className="absolute right-0 top-0 bottom-0 w-2 cursor-col-resize hover:bg-red-500/40 active:bg-red-600 z-20"
-                    title="Kéo rộng cột"
-                  />
+                    onMouseDown={(e) => handleStartResize('sku', e)}
+                    onTouchStart={(e) => handleStartResize('sku', e)}
+                    className="absolute right-0 top-0 bottom-0 w-3 md:w-2 cursor-col-resize hover:bg-red-500/40 active:bg-red-600 z-20 touch-none select-none flex items-center justify-center"
+                    title="Kéo rộng hoặc thu nhỏ cột SKU"
+                  >
+                    <div className="w-0.5 h-3 bg-slate-300 rounded-full md:hidden" />
+                  </div>
                 </th>
 
                 {/* SPH */}
@@ -583,10 +661,13 @@ export default function ProductManagement({
                 >
                   {renderSortHeader('can', 'Độ Cầu (SPH)')}
                   <div 
-                    onMouseDown={(e) => handleMouseDown('sph', e)}
-                    className="absolute right-0 top-0 bottom-0 w-2 cursor-col-resize hover:bg-red-500/40 active:bg-red-600 z-20"
+                    onMouseDown={(e) => handleStartResize('sph', e)}
+                    onTouchStart={(e) => handleStartResize('sph', e)}
+                    className="absolute right-0 top-0 bottom-0 w-3 md:w-2 cursor-col-resize hover:bg-red-500/40 active:bg-red-600 z-20 touch-none select-none flex items-center justify-center"
                     title="Kéo rộng cột"
-                  />
+                  >
+                    <div className="w-0.5 h-3 bg-slate-300 rounded-full md:hidden" />
+                  </div>
                 </th>
 
                 {/* CYL */}
@@ -596,10 +677,13 @@ export default function ProductManagement({
                 >
                   {renderSortHeader('loan', 'Độ Loạn (CYL)')}
                   <div 
-                    onMouseDown={(e) => handleMouseDown('cyl', e)}
-                    className="absolute right-0 top-0 bottom-0 w-2 cursor-col-resize hover:bg-red-500/40 active:bg-red-600 z-20"
+                    onMouseDown={(e) => handleStartResize('cyl', e)}
+                    onTouchStart={(e) => handleStartResize('cyl', e)}
+                    className="absolute right-0 top-0 bottom-0 w-3 md:w-2 cursor-col-resize hover:bg-red-500/40 active:bg-red-600 z-20 touch-none select-none flex items-center justify-center"
                     title="Kéo rộng cột"
-                  />
+                  >
+                    <div className="w-0.5 h-3 bg-slate-300 rounded-full md:hidden" />
+                  </div>
                 </th>
 
                 {/* Tồn đầu */}
@@ -609,10 +693,13 @@ export default function ProductManagement({
                 >
                   {renderSortHeader('tonDau', 'Tồn Đầu')}
                   <div 
-                    onMouseDown={(e) => handleMouseDown('tonDau', e)}
-                    className="absolute right-0 top-0 bottom-0 w-2 cursor-col-resize hover:bg-red-500/40 active:bg-red-600 z-20"
+                    onMouseDown={(e) => handleStartResize('tonDau', e)}
+                    onTouchStart={(e) => handleStartResize('tonDau', e)}
+                    className="absolute right-0 top-0 bottom-0 w-3 md:w-2 cursor-col-resize hover:bg-red-500/40 active:bg-red-600 z-20 touch-none select-none flex items-center justify-center"
                     title="Kéo rộng cột"
-                  />
+                  >
+                    <div className="w-0.5 h-3 bg-slate-300 rounded-full md:hidden" />
+                  </div>
                 </th>
 
                 {/* Nhập/Xuất */}
@@ -622,10 +709,13 @@ export default function ProductManagement({
                 >
                   <div className="flex justify-center gap-1 font-bold">Nhập / Xuất</div>
                   <div 
-                    onMouseDown={(e) => handleMouseDown('nhapXuat', e)}
-                    className="absolute right-0 top-0 bottom-0 w-2 cursor-col-resize hover:bg-red-500/40 active:bg-red-600 z-20"
+                    onMouseDown={(e) => handleStartResize('nhapXuat', e)}
+                    onTouchStart={(e) => handleStartResize('nhapXuat', e)}
+                    className="absolute right-0 top-0 bottom-0 w-3 md:w-2 cursor-col-resize hover:bg-red-500/40 active:bg-red-600 z-20 touch-none select-none flex items-center justify-center"
                     title="Kéo rộng cột"
-                  />
+                  >
+                    <div className="w-0.5 h-3 bg-slate-300 rounded-full md:hidden" />
+                  </div>
                 </th>
 
                 {/* Tồn cuối */}
@@ -635,10 +725,13 @@ export default function ProductManagement({
                 >
                   {renderSortHeader('tonCuoi', 'Tồn Cuối')}
                   <div 
-                    onMouseDown={(e) => handleMouseDown('tonCuoi', e)}
-                    className="absolute right-0 top-0 bottom-0 w-2 cursor-col-resize hover:bg-red-500/40 active:bg-red-600 z-20"
+                    onMouseDown={(e) => handleStartResize('tonCuoi', e)}
+                    onTouchStart={(e) => handleStartResize('tonCuoi', e)}
+                    className="absolute right-0 top-0 bottom-0 w-3 md:w-2 cursor-col-resize hover:bg-red-500/40 active:bg-red-600 z-20 touch-none select-none flex items-center justify-center"
                     title="Kéo rộng cột"
-                  />
+                  >
+                    <div className="w-0.5 h-3 bg-slate-300 rounded-full md:hidden" />
+                  </div>
                 </th>
 
                 {/* Tồn tối thiểu */}
@@ -648,10 +741,13 @@ export default function ProductManagement({
                 >
                   {renderSortHeader('tonToiThieu', 'Tồn Tối Thiểu')}
                   <div 
-                    onMouseDown={(e) => handleMouseDown('tonToiThieu', e)}
-                    className="absolute right-0 top-0 bottom-0 w-2 cursor-col-resize hover:bg-red-500/40 active:bg-red-600 z-20"
+                    onMouseDown={(e) => handleStartResize('tonToiThieu', e)}
+                    onTouchStart={(e) => handleStartResize('tonToiThieu', e)}
+                    className="absolute right-0 top-0 bottom-0 w-3 md:w-2 cursor-col-resize hover:bg-red-500/40 active:bg-red-600 z-20 touch-none select-none flex items-center justify-center"
                     title="Kéo rộng cột"
-                  />
+                  >
+                    <div className="w-0.5 h-3 bg-slate-300 rounded-full md:hidden" />
+                  </div>
                 </th>
 
                 {/* Trạng thái */}
@@ -661,10 +757,13 @@ export default function ProductManagement({
                 >
                   {renderSortHeader('status', 'Trạng Thái')}
                   <div 
-                    onMouseDown={(e) => handleMouseDown('status', e)}
-                    className="absolute right-0 top-0 bottom-0 w-2 cursor-col-resize hover:bg-red-500/40 active:bg-red-600 z-20"
+                    onMouseDown={(e) => handleStartResize('status', e)}
+                    onTouchStart={(e) => handleStartResize('status', e)}
+                    className="absolute right-0 top-0 bottom-0 w-3 md:w-2 cursor-col-resize hover:bg-red-500/40 active:bg-red-600 z-20 touch-none select-none flex items-center justify-center"
                     title="Kéo rộng cột"
-                  />
+                  >
+                    <div className="w-0.5 h-3 bg-slate-300 rounded-full md:hidden" />
+                  </div>
                 </th>
 
               </tr>
