@@ -104,6 +104,7 @@ import {
   resolveEffectiveUserId,
   inMemoryCache,
   cache,
+  isCacheValid,
   invalidateCache,
   fetchSanPham,
   fetchKiemKho,
@@ -497,9 +498,9 @@ export default function App() {
           const backupTimeoutId = setTimeout(() => backupController.abort(), 3000);
           
           try {
-            // Thử một câu truy vấn bảng thực tế (nhẹ nhất có thể) để xác nhận kết nối
-            const backupResponse = await fetch(`${cleanUrl}/rest/v1/b_sanpham?select=id&limit=1`, {
-              method: "GET",
+            // Thử HTTP HEAD trên REST gateway để xác nhận kết nối mạng mà không truy vấn dữ liệu bảng
+            const backupResponse = await fetch(`${cleanUrl}/rest/v1/`, {
+              method: "HEAD",
               signal: backupController.signal,
               headers: {
                 "apikey": anonKey,
@@ -509,7 +510,7 @@ export default function App() {
             });
             clearTimeout(backupTimeoutId);
             
-            if (backupResponse.ok || backupResponse.status === 200) {
+            if (backupResponse.ok || backupResponse.status < 500) {
               lastPingResult = true;
               lastPingTime = Date.now();
               return true;
@@ -813,7 +814,7 @@ export default function App() {
   }, [currentUser]);
 
   // Hàm tải dữ liệu chuyên biệt từ Supabase Cloud và gán đồng bộ vào State và LocalStorage
-  const syncAllDataFromSupabase = async (userId: string, email: string, silent = false) => {
+  const syncAllDataFromSupabase = async (userId: string, email: string, silent = false, forceRefresh = false) => {
     if (isSyncingRef.current) {
       console.log('Đang có một tiến trình đồng bộ khác đang chạy. Bỏ qua yêu cầu đồng bộ trùng lặp.');
       return;
@@ -826,7 +827,7 @@ export default function App() {
       console.log('Bắt đầu đồng bộ dữ liệu mới nhất từ Supabase Cloud cho tài khoản:', email, silent ? '(âm thầm)' : '(hiện thị loading)');
       monitor.trackSupabaseQuery('all_tables', 'select_onboard');
 
-      const forceFetch = silent || (cache.nhapxuat !== null && cache.nhapxuatct !== null);
+      const forceFetch = forceRefresh;
 
       safeTime('loadInventory');
       safeTime('loadDashboard');
@@ -1576,11 +1577,11 @@ export default function App() {
 
       // 1. Lazy load b_sanpham
       const needsProducts = ['PRODUCT', 'MATRIX', 'ORDER_PARSER', 'TRANSACTION_NHAP', 'TRANSACTION_XUAT', 'DASHBOARD', 'AUDIT'].includes(activeTab);
-      if (needsProducts && (!cache.sanpham || forceRefresh) && !lazyLoadingRef.current.sanpham) {
+      if (needsProducts && !isCacheValid('sanpham') && !lazyLoadingRef.current.sanpham) {
         lazyLoadingRef.current.sanpham = true;
         try {
-          console.log(`[ORDER_PARSER FLOW] ${forceRefresh ? 'Forcing' : 'Lazy loading'} fresh fetch for b_sanpham from DB...`);
-          const data = await fetchSanPham(forceRefresh);
+          console.log(`[ORDER_PARSER FLOW] Lazy loading fresh fetch for b_sanpham from DB...`);
+          const data = await fetchSanPham(false);
           setSanPhams(deduplicateProducts(data));
         } catch (err) {
           console.error("Lỗi lazy load b_sanpham:", err);
@@ -1591,7 +1592,7 @@ export default function App() {
 
       // 2. Lazy load b_kiemkho
       const needsKiemKho = activeTab === 'AUDIT';
-      if (needsKiemKho && !cache.kiemkho && !lazyLoadingRef.current.kiemkho) {
+      if (needsKiemKho && !isCacheValid('kiemkho') && !lazyLoadingRef.current.kiemkho) {
         lazyLoadingRef.current.kiemkho = true;
         try {
           const data = await fetchKiemKho();
@@ -1605,13 +1606,13 @@ export default function App() {
 
       // 3. Lazy load b_nhapxuat và b_nhapxuatct
       const needsTransactions = ['DASHBOARD', 'TRANSACTION_NHAP', 'TRANSACTION_XUAT', 'HISTORY', 'ORDER_PARSER'].includes(activeTab);
-      if (needsTransactions && (!cache.nhapxuat || !cache.nhapxuatct || forceRefresh) && !lazyLoadingRef.current.transactions) {
+      if (needsTransactions && (!isCacheValid('nhapxuat') || !isCacheValid('nhapxuatct')) && !lazyLoadingRef.current.transactions) {
         lazyLoadingRef.current.transactions = true;
         try {
-          console.log(`[ORDER_PARSER FLOW] ${forceRefresh ? 'Forcing' : 'Lazy loading'} fresh fetch for transactions from DB...`);
+          console.log(`[ORDER_PARSER FLOW] Lazy loading fresh fetch for transactions from DB...`);
           const [dataNx, dataNxCt] = await Promise.all([
-            fetchNhapXuat(forceRefresh),
-            fetchNhapXuatCT(forceRefresh)
+            fetchNhapXuat(false),
+            fetchNhapXuatCT(false)
           ]);
           setNhapXuats(dataNx);
           setNhapXuatCTs(dataNxCt);
@@ -1624,7 +1625,7 @@ export default function App() {
 
       // 4. Lazy load b_emaillog
       const needsEmailLogs = activeTab === 'CATEGORY' && activeCategorySubTab === 'EMAILLOG';
-      if (needsEmailLogs && !cache.emaillog && !lazyLoadingRef.current.emaillog) {
+      if (needsEmailLogs && !isCacheValid('emaillog') && !lazyLoadingRef.current.emaillog) {
         lazyLoadingRef.current.emaillog = true;
         try {
           const data = await fetchEmailLogs(activeOwnerId);

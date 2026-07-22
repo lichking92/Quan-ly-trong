@@ -1571,7 +1571,7 @@ export function isCacheValid(key: keyof typeof cache): boolean {
 
 export async function fetchNhanVien(force = false): Promise<any[]> {
   if (isOfflineMode) return inMemoryCache['B_NHANVIEN'] || [];
-  if (!force && cache.nhanvien) return cache.nhanvien;
+  if (!force && isCacheValid('nhanvien')) return cache.nhanvien!;
   if (activePromises.nhanvien) return activePromises.nhanvien;
 
   const promise = (async () => {
@@ -1597,7 +1597,7 @@ export async function fetchNhanVien(force = false): Promise<any[]> {
 
 export async function fetchRole(force = false): Promise<any[]> {
   if (isOfflineMode) return inMemoryCache['B_ROLE'] || [];
-  if (!force && cache.role) return cache.role;
+  if (!force && isCacheValid('role')) return cache.role!;
   if (activePromises.role) return activePromises.role;
 
   const userId = await resolveEffectiveUserId();
@@ -1627,7 +1627,7 @@ export async function fetchRole(force = false): Promise<any[]> {
 
 export async function fetchThuongHieu(force = false): Promise<any[]> {
   if (isOfflineMode) return inMemoryCache['B_THUONGHIEU'] || [];
-  if (!force && cache.thuonghieu) return cache.thuonghieu;
+  if (!force && isCacheValid('thuonghieu')) return cache.thuonghieu!;
   if (activePromises.thuonghieu) return activePromises.thuonghieu;
 
   const userId = await resolveEffectiveUserId();
@@ -1657,7 +1657,7 @@ export async function fetchThuongHieu(force = false): Promise<any[]> {
 
 export async function fetchChiNhanh(force = false): Promise<any[]> {
   if (isOfflineMode) return inMemoryCache['B_CHINHANH'] || [];
-  if (!force && cache.chinhanh) return cache.chinhanh;
+  if (!force && isCacheValid('chinhanh')) return cache.chinhanh!;
   if (activePromises.chinhanh) return activePromises.chinhanh;
 
   const userId = await resolveEffectiveUserId();
@@ -1737,7 +1737,7 @@ export async function fetchSanPham(force = false): Promise<any[]> {
 
 export async function fetchKiemKho(force = false): Promise<any[]> {
   if (isOfflineMode) return inMemoryCache['B_KIEMKHO'] || [];
-  if (!force && cache.kiemkho) return cache.kiemkho;
+  if (!force && isCacheValid('kiemkho')) return cache.kiemkho!;
   if (activePromises.kiemkho) return activePromises.kiemkho;
 
   const userId = await resolveEffectiveUserId();
@@ -1767,7 +1767,7 @@ export async function fetchKiemKho(force = false): Promise<any[]> {
 
 export async function fetchEmailLogs(userId: string, force = false): Promise<any[]> {
   if (isOfflineMode) return inMemoryCache['B_EMAILLOG'] || [];
-  if (!force && cache.emaillog) return cache.emaillog;
+  if (!force && isCacheValid('emaillog')) return cache.emaillog!;
   if (activePromises.emaillog) return activePromises.emaillog;
 
   if (!isValidUuid(userId)) return inMemoryCache['B_EMAILLOG'] || [];
