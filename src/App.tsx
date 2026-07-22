@@ -277,16 +277,24 @@ let lastPingTime = 0;
 let lastPingResult = true;
 let activePingPromise: Promise<boolean> | null = null;
 
-// Helper đo thời gian an toàn, đảm bảo không bị lỗi "Timer 'xxx' does not exist"
+// Helper đo thời gian an toàn, đảm bảo không bao giờ bị warning "Timer 'xxx' already exists" hoặc "does not exist"
 const activeTimers = new Set<string>();
 const safeTime = (label: string) => {
+  const isDebug = typeof window !== 'undefined' && ((window as any).__DEBUG_MODE__ || localStorage.getItem('DEBUG_MODE') === 'true');
+  if (!isDebug) return;
+  if (activeTimers.has(label)) {
+    try { console.timeEnd(label); } catch (e) {}
+    activeTimers.delete(label);
+  }
   activeTimers.add(label);
-  console.time(label);
+  try { console.time(label); } catch (e) {}
 };
 const safeTimeEnd = (label: string) => {
+  const isDebug = typeof window !== 'undefined' && ((window as any).__DEBUG_MODE__ || localStorage.getItem('DEBUG_MODE') === 'true');
+  if (!isDebug) return;
   if (activeTimers.has(label)) {
     activeTimers.delete(label);
-    console.timeEnd(label);
+    try { console.timeEnd(label); } catch (e) {}
   }
 };
 
@@ -826,17 +834,20 @@ export default function App() {
       safeTime('loadPermissions');
 
       // Tải trực tiếp tất cả dữ liệu sản phẩm, phiếu, người dùng và vai trò song song 1 lần duy nhất bằng Promise.all
-      const [payload, sanPhamsData, nhapXuatsData, nhapXuatCTsData] = await Promise.all([
-        ensureUserOnboarded(userId),
-        fetchSanPham(forceFetch),
-        fetchNhapXuat(forceFetch),
-        fetchNhapXuatCT(forceFetch)
-      ]);
-
-      safeTimeEnd('loadInventory');
-      safeTimeEnd('loadDashboard');
-      safeTimeEnd('loadRoles');
-      safeTimeEnd('loadPermissions');
+      let payload, sanPhamsData, nhapXuatsData, nhapXuatCTsData;
+      try {
+        [payload, sanPhamsData, nhapXuatsData, nhapXuatCTsData] = await Promise.all([
+          ensureUserOnboarded(userId),
+          fetchSanPham(forceFetch),
+          fetchNhapXuat(forceFetch),
+          fetchNhapXuatCT(forceFetch)
+        ]);
+      } finally {
+        safeTimeEnd('loadInventory');
+        safeTimeEnd('loadDashboard');
+        safeTimeEnd('loadRoles');
+        safeTimeEnd('loadPermissions');
+      }
 
       const uniqueProducts = deduplicateProducts(sanPhamsData.length > 0 ? sanPhamsData : payload.sanPhams);
       setSanPhams(uniqueProducts);
@@ -993,11 +1004,10 @@ export default function App() {
         console.log('Không tìm thấy CURRENT_USER lưu cục bộ. Giữ nguyên trạng thái chưa đăng nhập trên giao diện.');
         setCurrentUser(null);
       }
-      safeTimeEnd('syncAllDataFromSupabase');
     } catch (err) {
       console.error('Lỗi khi tải dữ liệu từ Supabase Cloud:', err);
-      safeTimeEnd('syncAllDataFromSupabase');
     } finally {
+      safeTimeEnd('syncAllDataFromSupabase');
       isSyncingRef.current = false;
       lastSyncTimeRef.current = Date.now();
       if (!silent) setLoadingDb(false);
