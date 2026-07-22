@@ -478,3 +478,13 @@
   border-top-color: var(--border-color) !important;
   color: var(--text-muted) !important;
 }
+
+/* Optimization for mobile input UX: Prevent iOS Safari auto-zoom on input focus */
+@media screen and (max-width: 767px) {
+  input:not([type="checkbox"]):not([type="radio"]),
+  select,
+  textarea {
+    font-size: 16px !important;
+  }
+}
+

@@ -26,7 +26,8 @@ import {
   ArrowLeft,
   Save,
   CheckSquare,
-  Ban
+  Ban,
+  ChevronsUp
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { NhapXuat, NhapXuatCT, SanPham, LoaiPhieu, User as UserType, KiemKho } from '../types';
@@ -614,14 +615,14 @@ export default function TransactionHistory({
 
   const [columnWidths, setColumnWidths] = useState<Record<string, number>>(() => {
     const defaultWidths = {
-      invoiceNo: 140,
-      type: 110,
-      status: 110,
-      datetime: 170,
-      branch: 160,
-      creator: 160,
-      totalQty: 90,
-      note: 200
+      invoiceNo: 105,
+      type: 75,
+      status: 80,
+      datetime: 120,
+      branch: 125,
+      creator: 110,
+      totalQty: 80,
+      note: 130
     };
     const saved = localStorage.getItem(`${currentUser.username}_HISTORY_TABLE_COLUMN_WIDTHS`);
     if (saved) {
@@ -1399,12 +1400,12 @@ export default function TransactionHistory({
   }> = {
     invoiceNo: {
       label: 'Số phiếu',
-      defaultWidth: 140,
+      defaultWidth: 105,
       renderHeader: (width, onMouseDown, onDoubleClick) => (
         <th 
           key="invoiceNo"
           style={{ width, minWidth: width, maxWidth: width }}
-          className="py-2.5 px-3 relative sticky left-0 bg-slate-50 z-20 shadow-[2px_0_5px_rgba(0,0,0,0.04)] border-r border-slate-200 font-bold uppercase tracking-wider text-[10px]"
+          className="py-2.5 px-2 relative sticky left-0 bg-slate-50 z-20 shadow-[2px_0_5px_rgba(0,0,0,0.04)] border-r border-slate-200 font-bold uppercase tracking-wider text-[10px]"
         >
           Số phiếu
           <div 
@@ -1416,19 +1417,19 @@ export default function TransactionHistory({
         </th>
       ),
       renderCell: (h) => (
-        <td key="invoiceNo" className="py-3 px-3 font-mono font-bold text-slate-800 sticky left-0 bg-white z-10 shadow-[2px_0_5px_rgba(0,0,0,0.04)] border-r border-slate-200">
+        <td key="invoiceNo" className="py-2.5 px-2 font-mono font-bold text-slate-800 text-xs sticky left-0 bg-white z-10 shadow-[2px_0_5px_rgba(0,0,0,0.04)] border-r border-slate-200">
           {h.HOA_DON}
         </td>
       )
     },
     type: {
       label: 'Loại',
-      defaultWidth: 110,
+      defaultWidth: 75,
       renderHeader: (width, onMouseDown, onDoubleClick) => (
         <th 
           key="type"
           style={{ width, minWidth: width, maxWidth: width }}
-          className="py-2.5 px-3 relative font-bold uppercase tracking-wider text-[10px]"
+          className="py-2.5 px-2 relative font-bold uppercase tracking-wider text-[10px]"
         >
           Loại
           <div 
@@ -1439,8 +1440,8 @@ export default function TransactionHistory({
         </th>
       ),
       renderCell: (h, isSelected, badgeColor) => (
-        <td key="type" className="py-3 px-3">
-          <span className={`text-[9px] font-bold py-0.5 px-2 rounded-full border uppercase tracking-wider ${badgeColor}`}>
+        <td key="type" className="py-2.5 px-2">
+          <span className={`text-[9px] font-bold py-0.5 px-1.5 rounded-full border uppercase tracking-wider ${badgeColor}`}>
             {h.LOAI}
           </span>
         </td>
@@ -1448,12 +1449,12 @@ export default function TransactionHistory({
     },
     status: {
       label: 'Trạng thái',
-      defaultWidth: 110,
+      defaultWidth: 80,
       renderHeader: (width, onMouseDown, onDoubleClick) => (
         <th 
           key="status"
           style={{ width, minWidth: width, maxWidth: width }}
-          className="py-2.5 px-3 relative font-bold uppercase tracking-wider text-[10px]"
+          className="py-2.5 px-2 relative font-bold uppercase tracking-wider text-[10px]"
         >
           Trạng thái
           <div 
@@ -1469,8 +1470,8 @@ export default function TransactionHistory({
           ? 'bg-rose-50 text-rose-700 border-rose-200'
           : 'bg-emerald-50 text-emerald-700 border-emerald-200';
         return (
-          <td key="status" className="py-3 px-3">
-            <span className={`text-[9px] font-bold py-0.5 px-2 rounded-full border uppercase tracking-wider ${colorClass}`}>
+          <td key="status" className="py-2.5 px-2">
+            <span className={`text-[9px] font-bold py-0.5 px-1.5 rounded-full border uppercase tracking-wider ${colorClass}`}>
               {isCancelled ? 'Đã hủy' : 'Hoàn tất'}
             </span>
           </td>
@@ -1479,12 +1480,12 @@ export default function TransactionHistory({
     },
     datetime: {
       label: 'Ngày giờ tạo',
-      defaultWidth: 170,
+      defaultWidth: 120,
       renderHeader: (width, onMouseDown, onDoubleClick) => (
         <th 
           key="datetime"
           style={{ width, minWidth: width, maxWidth: width }}
-          className="py-2.5 px-3 relative font-bold uppercase tracking-wider text-[10px]"
+          className="py-2.5 px-2 relative font-bold uppercase tracking-wider text-[10px]"
         >
           Ngày giờ tạo
           <div 
@@ -1495,19 +1496,19 @@ export default function TransactionHistory({
         </th>
       ),
       renderCell: (h) => (
-        <td key="datetime" className="py-3 px-3 font-mono text-slate-500">
+        <td key="datetime" className="py-2.5 px-2 font-mono text-[11px] text-slate-500 whitespace-nowrap">
           {formatDateTime(h.TG_TAO || h.NGAY)}
         </td>
       )
     },
     branch: {
       label: 'Chi nhánh',
-      defaultWidth: 160,
+      defaultWidth: 125,
       renderHeader: (width, onMouseDown, onDoubleClick) => (
         <th 
           key="branch"
           style={{ width, minWidth: width, maxWidth: width }}
-          className="py-2.5 px-3 relative font-bold uppercase tracking-wider text-[10px]"
+          className="py-2.5 px-2 relative font-bold uppercase tracking-wider text-[10px]"
         >
           Chi nhánh
           <div 
@@ -1518,19 +1519,22 @@ export default function TransactionHistory({
         </th>
       ),
       renderCell: (h) => (
-        <td key="branch" className="py-3 px-3 text-slate-700 font-semibold truncate" title={h.CHI_NHANH}>
-          {h.CHI_NHANH}
+        <td key="branch" className="py-2.5 px-2 text-blue-600 font-bold truncate" title={h.CHI_NHANH}>
+          <div className="flex items-center gap-1 truncate text-xs">
+            <MapPin className="w-3.5 h-3.5 text-blue-500 shrink-0" />
+            <span className="truncate">{h.CHI_NHANH}</span>
+          </div>
         </td>
       )
     },
     creator: {
       label: 'Người tạo phiếu',
-      defaultWidth: 160,
+      defaultWidth: 110,
       renderHeader: (width, onMouseDown, onDoubleClick) => (
         <th 
           key="creator"
           style={{ width, minWidth: width, maxWidth: width }}
-          className="py-2.5 px-3 relative font-bold uppercase tracking-wider text-[10px]"
+          className="py-2.5 px-2 relative font-bold uppercase tracking-wider text-[10px]"
         >
           Người tạo phiếu
           <div 
@@ -1541,19 +1545,19 @@ export default function TransactionHistory({
         </th>
       ),
       renderCell: (h) => (
-        <td key="creator" className="py-3 px-3 text-slate-600 font-medium truncate" title={h.TEN_NGUOI_TAO}>
+        <td key="creator" className="py-2.5 px-2 text-slate-600 font-medium text-xs truncate" title={h.TEN_NGUOI_TAO}>
           {h.TEN_NGUOI_TAO}
         </td>
       )
     },
     totalQty: {
       label: 'Tổng SL',
-      defaultWidth: 90,
+      defaultWidth: 80,
       renderHeader: (width, onMouseDown, onDoubleClick) => (
         <th 
           key="totalQty"
           style={{ width, minWidth: width, maxWidth: width }}
-          className="py-2.5 px-3 text-right relative font-bold uppercase tracking-wider text-[10px]"
+          className="py-2.5 px-2 text-right relative font-bold uppercase tracking-wider text-[10px]"
         >
           Tổng SL
           <div 
@@ -1563,20 +1567,28 @@ export default function TransactionHistory({
           />
         </th>
       ),
-      renderCell: (h) => (
-        <td key="totalQty" className="py-3 px-3 text-right font-mono font-bold text-slate-700">
-          {h.TONG_SL}
-        </td>
-      )
+      renderCell: (h) => {
+        const isHighQty = h.TONG_SL > 15;
+        return (
+          <td key="totalQty" className="py-2.5 px-2 text-right">
+            <div className={`inline-flex items-center justify-end gap-1 font-mono font-extrabold text-xs sm:text-sm ${
+              isHighQty ? 'text-emerald-600' : 'text-slate-700'
+            }`}>
+              {isHighQty && <ChevronsUp className="w-3.5 h-3.5 text-emerald-600 shrink-0" />}
+              <span>{h.TONG_SL}</span>
+            </div>
+          </td>
+        );
+      }
     },
     note: {
       label: 'Ghi chú',
-      defaultWidth: 200,
+      defaultWidth: 130,
       renderHeader: (width, onMouseDown, onDoubleClick) => (
         <th 
           key="note"
           style={{ width, minWidth: width, maxWidth: width }}
-          className="py-2.5 px-3 relative font-bold uppercase tracking-wider text-[10px]"
+          className="py-2.5 px-2 relative font-bold uppercase tracking-wider text-[10px]"
         >
           Ghi chú tổng quan
           <div 
@@ -1587,7 +1599,7 @@ export default function TransactionHistory({
         </th>
       ),
       renderCell: (h) => (
-        <td key="note" className="py-3 px-3 text-slate-500 truncate" title={h.GHI_CHU}>
+        <td key="note" className="py-2.5 px-2 text-slate-500 text-xs truncate" title={h.GHI_CHU}>
           {h.GHI_CHU}
         </td>
       )

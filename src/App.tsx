@@ -133,6 +133,7 @@ const ThemeSettings = lazy(() => import('./components/ThemeSettings'));
 const DiopterMatrix = lazy(() => import('./components/DiopterMatrix'));
 const OrderParser = lazy(() => import('./components/OrderParser'));
 import { monitor } from './utils/debugMonitor';
+import { PWAInstallPrompt, PWAInstallButton } from './components/PWAInstallPrompt';
 
 
 
@@ -3324,7 +3325,9 @@ export default function App() {
         backgroundColor: 'var(--bg-main)'
       } as React.CSSProperties}
     >
-      
+      {/* PWA Install Banner & Offline Monitor */}
+      <PWAInstallPrompt />
+
       {/* MOBILE HEADER BAR - Chỉ hiển thị trên mobile (ví dụ iPhone 14) */}
       <div className={`md:hidden h-14 px-4 flex items-center justify-between border-b shrink-0 sticky top-0 z-30 ${
         themeMode === 'light' ? 'bg-white text-slate-800 border-slate-200' : 'bg-[#0f172a] text-white border-slate-800'
@@ -3346,6 +3349,7 @@ export default function App() {
           <span className={`h-2 w-2 rounded-full shrink-0 ${isOffline ? 'bg-red-500 animate-pulse' : 'bg-emerald-500 animate-pulse'}`} title={isOffline ? 'Ngoại tuyến' : 'Trực tuyến'} />
         </div>
         <div className="flex items-center gap-2">
+          <PWAInstallButton showText={false} />
           {currentUser && (
             <button
               onClick={handleManualSync}
@@ -3456,17 +3460,23 @@ export default function App() {
             )}
           </div>
           
-          {/* TRẠNG THÁI TRỰC TUYẾN / NGOẠI TUYẾN */}
+          {/* TRẠNG THÁI TRỰC TUYẾN / NGOẠI TUYẾN & NÚT CÀI PWA */}
           {!sidebarCollapsed ? (
-            <div className="flex items-center gap-1.5 px-1 mt-1 border-t border-slate-200/40 pt-1.5 dark:border-slate-800/40">
-              <span className={`h-2 w-2 rounded-full shrink-0 ${isOffline ? 'bg-red-500 animate-pulse' : 'bg-emerald-500 animate-pulse'}`} />
-              <span className={`text-[10px] font-medium tracking-wide ${themeMode === 'light' ? 'text-slate-500' : 'text-slate-400'}`}>
-                {isOffline ? 'Đang ngoại tuyến' : 'Đang trực tuyến'}
-              </span>
+            <div className="flex flex-col gap-2 pt-1.5 border-t border-slate-200/40 dark:border-slate-800/40">
+              <div className="flex items-center justify-between px-1">
+                <div className="flex items-center gap-1.5">
+                  <span className={`h-2 w-2 rounded-full shrink-0 ${isOffline ? 'bg-red-500 animate-pulse' : 'bg-emerald-500 animate-pulse'}`} />
+                  <span className={`text-[10px] font-medium tracking-wide ${themeMode === 'light' ? 'text-slate-500' : 'text-slate-400'}`}>
+                    {isOffline ? 'Ngoại tuyến' : 'Trực tuyến'}
+                  </span>
+                </div>
+              </div>
+              <PWAInstallButton className="w-full justify-center py-1.5 text-[11px]" />
             </div>
           ) : (
-            <div className="flex items-center justify-center mt-1 pt-1 border-t border-slate-200/40 dark:border-slate-800/40 w-full" title={isOffline ? 'Đang ngoại tuyến' : 'Đang trực tuyến'}>
+            <div className="flex flex-col items-center gap-1.5 mt-1 pt-1 border-t border-slate-200/40 dark:border-slate-800/40 w-full" title={isOffline ? 'Đang ngoại tuyến' : 'Đang trực tuyến'}>
               <span className={`h-2 w-2 rounded-full shrink-0 ${isOffline ? 'bg-red-500 animate-pulse' : 'bg-emerald-500 animate-pulse'}`} />
+              <PWAInstallButton showText={false} className="p-1" />
             </div>
           )}
         </div>

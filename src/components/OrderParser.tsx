@@ -7,6 +7,8 @@ import {
   Check, 
   Plus, 
   AlertTriangle, 
+  TriangleAlert,
+  CircleOff,
   XCircle, 
   CheckCircle, 
   ChevronRight, 
@@ -1399,15 +1401,15 @@ export default function OrderParser({
       const cleanLineDesc = `${item.brand} ${item.chietXuat} ${item.tinhNang} ${formatDop(item.sph)} ${formatDop(item.cyl)}`.trim().replace(/\s+/g, ' ');
       
       if (!item.matchedProduct) {
-        deficientList.push(`${cleanLineDesc} → HẾT`);
+        deficientList.push(`❌ ${cleanLineDesc} → HẾT`);
         return;
       }
       
       const stock = getProductStockByBranch(item.sku, selectedOrderBranch, item.matchedProduct, nhapXuats, nhapXuatCTs);
       if (stock <= 0) {
-        deficientList.push(`${cleanLineDesc} → HẾT`);
+        deficientList.push(`❌ ${cleanLineDesc} → HẾT`);
       } else if (stock < item.quantity) {
-        deficientList.push(`${cleanLineDesc} → Chỉ còn ${stock} miếng`);
+        deficientList.push(`⚠️ ${cleanLineDesc} → Chỉ còn ${stock} miếng`);
       }
     });
 
@@ -2445,7 +2447,7 @@ export default function OrderParser({
                 <select
                   value={selectedOrderBranch}
                   onChange={(e) => setSelectedOrderBranch(e.target.value)}
-                  className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5 text-xs font-bold text-slate-800 focus:outline-hidden focus:ring-1 focus:ring-indigo-500/50 focus:border-indigo-500 transition-all cursor-pointer shadow-xs"
+                  className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5 text-base md:text-xs font-bold text-slate-800 focus:outline-hidden focus:ring-1 focus:ring-indigo-500/50 focus:border-indigo-500 transition-all cursor-pointer shadow-xs"
                   id="selected_order_branch_dropdown"
                 >
                   {chiNhanhs && chiNhanhs.length > 0 ? (
@@ -2550,7 +2552,7 @@ export default function OrderParser({
                           setSelectedBrand(newBrand);
                           handleAnalyze(newBrand);
                         }}
-                        className="w-full bg-white border border-amber-300 rounded-xl px-3 py-2 text-xs font-medium text-slate-800 focus:outline-hidden focus:ring-1 focus:ring-amber-500/50 focus:border-amber-500 transition-all cursor-pointer shadow-xs"
+                        className="w-full bg-white border border-amber-300 rounded-xl px-3 py-2 text-base md:text-xs font-medium text-slate-800 focus:outline-hidden focus:ring-1 focus:ring-amber-500/50 focus:border-amber-500 transition-all cursor-pointer shadow-xs"
                         id="fallback_brand_dropdown"
                       >
                         <option value="">-- Chọn Thương hiệu --</option>
@@ -2680,17 +2682,29 @@ export default function OrderParser({
                         <AlertTriangle className="w-4 h-4 text-rose-500 shrink-0" />
                         Danh Sách Thiếu Hàng / Hết Hàng
                       </h3>
-                      <ul className="divide-y divide-rose-100/50 text-xs text-rose-700 font-mono">
+                      <ul className="divide-y divide-rose-100/50 text-xs font-mono">
                         {parsedItems
                           .filter(item => !item.error && (!item.matchedProduct || (getProductStockByBranch(item.sku, selectedOrderBranch, item.matchedProduct, nhapXuats, nhapXuatCTs) < item.quantity)))
                           .map(item => {
                             const stock = item.matchedProduct ? getProductStockByBranch(item.sku, selectedOrderBranch, item.matchedProduct, nhapXuats, nhapXuatCTs) : 0;
                             const skuDesc = `${item.brand} ${item.chietXuat} ${item.tinhNang} ${formatDop(item.sph)} ${formatDop(item.cyl)}`;
+                            const isOut = stock <= 0;
                             return (
-                              <li key={item.id} className="py-1.5 flex justify-between items-center">
-                                <span>{skuDesc}</span>
-                                <span className="font-bold">
-                                  {stock <= 0 ? 'HẾT' : `Chỉ còn ${stock} miếng`}
+                              <li key={item.id} className="py-2 flex justify-between items-center gap-2">
+                                <span className="flex items-center gap-2 truncate">
+                                  {isOut ? (
+                                    <CircleOff className="w-4 h-4 text-rose-600 shrink-0" title="Hàng hết (Tồn kho = 0)" />
+                                  ) : (
+                                    <TriangleAlert className="w-4 h-4 text-amber-500 shrink-0" title="Hàng thiếu (Cần thêm)" />
+                                  )}
+                                  <span className={`truncate font-semibold ${isOut ? 'text-rose-900' : 'text-amber-900'}`}>
+                                    {skuDesc}
+                                  </span>
+                                </span>
+                                <span className={`font-mono font-bold shrink-0 text-xs px-2 py-0.5 rounded ${
+                                  isOut ? 'bg-rose-100 text-rose-800' : 'bg-amber-100 text-amber-800'
+                                }`}>
+                                  {isOut ? 'HẾT' : `Chỉ còn ${stock} miếng`}
                                 </span>
                               </li>
                             );
@@ -2773,7 +2787,7 @@ export default function OrderParser({
                             if (!hasProduct) {
                               statusBadge = (
                                 <span className="inline-flex items-center gap-0.5 text-rose-600 bg-rose-50 text-[10px] font-bold px-2 py-0.5 rounded-md border border-rose-100">
-                                  <XCircle className="w-3 h-3" /> HẾT
+                                  <CircleOff className="w-3 h-3" /> HẾT
                                 </span>
                               );
                               rowClass = "bg-rose-50/10 hover:bg-rose-50/20";
@@ -2781,7 +2795,7 @@ export default function OrderParser({
                             } else if (stock <= 0) {
                               statusBadge = (
                                 <span className="inline-flex items-center gap-0.5 text-rose-600 bg-rose-50 text-[10px] font-bold px-2 py-0.5 rounded-md border border-rose-100">
-                                  <XCircle className="w-3 h-3" /> HẾT
+                                  <CircleOff className="w-3 h-3" /> HẾT
                                 </span>
                               );
                               rowClass = "bg-rose-50/10 hover:bg-rose-50/20";
@@ -2789,7 +2803,7 @@ export default function OrderParser({
                             } else if (stock < item.quantity) {
                               statusBadge = (
                                 <span className="inline-flex items-center gap-0.5 text-amber-600 bg-amber-50 text-[10px] font-bold px-2 py-0.5 rounded-md border border-amber-100">
-                                  <AlertTriangle className="w-3 h-3" /> Thiếu
+                                  <TriangleAlert className="w-3 h-3" /> Thiếu
                                 </span>
                               );
                               rowClass = "bg-amber-50/10 hover:bg-amber-50/20";
@@ -2839,7 +2853,7 @@ export default function OrderParser({
                                       disabled={!item.selected}
                                       value={item.exportQuantity ?? ''}
                                       onChange={(e) => handleUpdateExportQty(item.id, parseInt(e.target.value) || 0)}
-                                      className="w-16 px-1.5 py-1 text-center border border-slate-200 rounded-md focus:outline-hidden focus:border-indigo-500 text-xs font-bold disabled:bg-slate-50 disabled:text-slate-400"
+                                      className="w-16 px-1.5 py-1.5 text-center border border-slate-200 rounded-md focus:outline-hidden focus:border-indigo-500 text-base md:text-xs font-bold disabled:bg-slate-50 disabled:text-slate-400"
                                     />
                                   ) : (
                                     <span className="text-slate-400 font-semibold font-mono">-</span>
@@ -3033,7 +3047,7 @@ export default function OrderParser({
                                   }}
                                   onClick={(e) => e.stopPropagation()}
                                   disabled={order.trangThai === 'Đã xuất'}
-                                  className="font-sans font-bold text-slate-800 text-xs bg-slate-50 border border-slate-200 hover:border-slate-300 rounded-lg py-1 px-2 focus:ring-1 focus:ring-indigo-500 focus:border-indigo-500 cursor-pointer outline-none transition-colors disabled:bg-slate-100 disabled:cursor-not-allowed"
+                                  className="font-sans font-bold text-slate-800 text-base md:text-xs bg-slate-50 border border-slate-200 hover:border-slate-300 rounded-lg py-1 px-2 focus:ring-1 focus:ring-indigo-500 focus:border-indigo-500 cursor-pointer outline-none transition-colors disabled:bg-slate-100 disabled:cursor-not-allowed"
                                   id={`branch_select_card_${order.id}`}
                                 >
                                   {chiNhanhs.map((branch) => (
@@ -3079,9 +3093,17 @@ export default function OrderParser({
                             if (item.error) {
                               stockIndicator = <span className="text-[9px] font-bold text-rose-500">Lỗi cú pháp</span>;
                             } else if (liveStock <= 0) {
-                              stockIndicator = <span className="text-[9px] font-bold text-rose-500 font-mono">Hết (Kho: 0)</span>;
+                              stockIndicator = (
+                                <span className="text-[9px] font-bold text-rose-500 font-mono inline-flex items-center gap-0.5">
+                                  <CircleOff className="w-3 h-3 shrink-0" /> Hết (Kho: 0)
+                                </span>
+                              );
                             } else if (liveStock < item.quantity) {
-                              stockIndicator = <span className="text-[9px] font-bold text-amber-500 font-mono">Thiếu (Kho: {liveStock})</span>;
+                              stockIndicator = (
+                                <span className="text-[9px] font-bold text-amber-500 font-mono inline-flex items-center gap-0.5">
+                                  <TriangleAlert className="w-3 h-3 shrink-0" /> Thiếu (Kho: {liveStock})
+                                </span>
+                              );
                             } else {
                               stockIndicator = <span className="text-[9px] font-medium text-emerald-600 font-mono">Đủ (Kho: {liveStock})</span>;
                             }
@@ -3344,7 +3366,7 @@ export default function OrderParser({
                                     }}
                                     onClick={(e) => e.stopPropagation()}
                                     disabled={isExported}
-                                    className="font-sans font-bold text-slate-800 text-xs bg-slate-50 border border-slate-200 hover:border-slate-300 rounded-lg py-1 px-2 focus:ring-1 focus:ring-indigo-500 focus:border-indigo-500 cursor-pointer outline-none transition-colors disabled:bg-slate-100 disabled:cursor-not-allowed"
+                                    className="font-sans font-bold text-slate-800 text-base md:text-xs bg-slate-50 border border-slate-200 hover:border-slate-300 rounded-lg py-1 px-2 focus:ring-1 focus:ring-indigo-500 focus:border-indigo-500 cursor-pointer outline-none transition-colors disabled:bg-slate-100 disabled:cursor-not-allowed"
                                     id={`branch_select_checklist_${order.id}`}
                                   >
                                     {chiNhanhs.map((branch) => (
@@ -3942,22 +3964,34 @@ export default function OrderParser({
                             <div className="bg-rose-50/50 border border-rose-100 rounded-xl p-3 space-y-2">
                               <p className="text-[11px] font-bold text-rose-800 uppercase tracking-wider">Danh sách SKU bị thiếu trong kho:</p>
                               <div className="divide-y divide-rose-100 space-y-1.5">
-                                {stockIssues.map(({ item, inStock }, idx) => (
-                                  <div key={idx} className="flex justify-between items-start text-xs pt-1.5 first:pt-0 gap-2">
-                                    <div>
-                                      <p className="font-semibold text-rose-900 leading-tight">
-                                        {item.brand} {item.chietXuat} {item.tinhNang}
-                                      </p>
-                                      <p className="text-[10px] text-rose-600 font-mono mt-0.5">
-                                        {item.sph > 0 ? 'Viễn' : 'Cận'} {formatDop(item.sph)}{item.cyl !== 0 ? ` Loạn ${formatDop(item.cyl)}` : ''} — {item.sku}
-                                      </p>
+                                {stockIssues.map(({ item, inStock }, idx) => {
+                                  const isOut = inStock <= 0;
+                                  return (
+                                    <div key={idx} className="flex justify-between items-start text-xs pt-1.5 first:pt-0 gap-2">
+                                      <div className="flex items-start gap-2">
+                                        {isOut ? (
+                                          <CircleOff className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
+                                        ) : (
+                                          <TriangleAlert className="w-4 h-4 text-amber-500 shrink-0 mt-0.5" />
+                                        )}
+                                        <div>
+                                          <p className="font-semibold text-rose-900 leading-tight">
+                                            {item.brand} {item.chietXuat} {item.tinhNang}
+                                          </p>
+                                          <p className="text-[10px] text-rose-600 font-mono mt-0.5">
+                                            {item.sph > 0 ? 'Viễn' : 'Cận'} {formatDop(item.sph)}{item.cyl !== 0 ? ` Loạn ${formatDop(item.cyl)}` : ''} — {item.sku}
+                                          </p>
+                                        </div>
+                                      </div>
+                                      <div className="text-right shrink-0">
+                                        <span className="font-extrabold text-rose-900 block">Yêu cầu: {item.quantity}M</span>
+                                        <span className={`text-[10px] font-bold block ${isOut ? 'text-rose-600' : 'text-amber-700'}`}>
+                                          {isOut ? 'HẾT (0M)' : `Còn lại: ${inStock}M`}
+                                        </span>
+                                      </div>
                                     </div>
-                                    <div className="text-right shrink-0">
-                                      <span className="font-extrabold text-rose-900">Yêu cầu: {item.quantity}M</span>
-                                      <span className="text-[10px] text-rose-600 block">Trong kho: {inStock}M</span>
-                                    </div>
-                                  </div>
-                                ))}
+                                  );
+                                })}
                               </div>
                             </div>
                           )}

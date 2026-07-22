@@ -2,6 +2,10 @@ import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import App from './App.tsx';
 import './index.css';
+import { registerServiceWorker } from './pwaRegister.ts';
+
+// Register PWA Service Worker
+registerServiceWorker();
 
 // Intercept and demote non-fatal network/Supabase errors from console.error to console.warn
 const originalError = console.error;
