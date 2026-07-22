@@ -1351,13 +1351,17 @@ export async function ensureUserOnboarded(userId: string): Promise<UserDataPaylo
     return await fetchAllUserData(userId);
   }
   try {
-    // 1. Cố gắng tự động tạo cột trên Supabase (nếu chưa có)
-    await tryCreateColumnsOnSupabase();
-    await ensureStorageBucketExists();
+    // 1. Cố gắng tự động tạo cột & storage bucket trên Supabase đồng thời (Promise.all)
+    await Promise.all([
+      tryCreateColumnsOnSupabase(),
+      ensureStorageBucketExists()
+    ]);
 
-    // 2. Tự động kiểm tra và thêm tài khoản đăng nhập hiện tại nếu chưa có trong b_nhanvien
+    // 2. Tự động kiểm tra và thêm tài khoản đăng nhập hiện tại bằng cache b_nhanvien (0 query lặp)
     let email = "";
     const savedUser = localStorage.getItem('CURRENT_USER');
+    const staffList = await fetchNhanVien();
+
     if (savedUser) {
       try {
         const parsed = JSON.parse(savedUser);
@@ -1365,13 +1369,9 @@ export async function ensureUserOnboarded(userId: string): Promise<UserDataPaylo
           if (parsed.username && parsed.username.includes('@')) {
             email = parsed.username;
           } else if (parsed.id) {
-            const { data: staff } = await supabase
-              .from('b_nhanvien')
-              .select('EMAIL')
-              .eq('MA_NV', parsed.id)
-              .limit(1);
-            if (staff && staff.length > 0) {
-              email = staff[0].EMAIL;
+            const foundStaff = staffList.find(s => s.MA_NV === parsed.id);
+            if (foundStaff && foundStaff.EMAIL) {
+              email = foundStaff.EMAIL;
             }
           }
         }
@@ -1379,27 +1379,19 @@ export async function ensureUserOnboarded(userId: string): Promise<UserDataPaylo
         console.warn('Lỗi lấy thông tin email:', err);
       }
     }
-    if (email) {
-      const { data: existingStaff } = await supabase
-        .from('b_nhanvien')
-        .select('MA_NV')
-        .ilike('EMAIL', email)
-        .limit(1);
 
-      if (!existingStaff || existingStaff.length === 0) {
-        // Kiểm tra xem hệ thống đã có Admin chưa
-        let hasAdmin = false;
-        try {
-          const { data: adminCheck } = await supabase
-            .from('b_nhanvien')
-            .select('ROLE')
-            .or('ROLE.ilike.ADMIN,ROLE.ilike.admin');
-          if (adminCheck && adminCheck.length > 0) {
-            hasAdmin = true;
-          }
-        } catch (e) {
-          console.warn('Lỗi kiểm tra admin khi auto-initialize:', e);
-        }
+    if (email) {
+      const existingStaff = staffList.find(s => 
+        (s.EMAIL || '').toLowerCase() === email.toLowerCase() ||
+        (s.TEN_DANG_NHAP || '').toLowerCase() === email.toLowerCase()
+      );
+
+      if (!existingStaff) {
+        // Kiểm tra xem hệ thống đã có Admin chưa hoàn toàn trong RAM
+        const hasAdmin = staffList.some(s => 
+          (s.ROLE || '').toUpperCase() === 'ADMIN' || 
+          (s.VAI_TRO || '').toUpperCase() === 'ADMIN'
+        );
 
         if (!hasAdmin) {
           console.log(`Chưa có Admin. Tự động khởi tạo tài khoản đầu tiên ${email} làm ADMIN`);
@@ -1436,17 +1428,15 @@ export async function ensureUserOnboarded(userId: string): Promise<UserDataPaylo
             user_id: userId
           });
         }
+        invalidateCache('nhanvien');
+        await fetchNhanVien(true);
       }
     }
 
     // --- ĐỒNG BỘ HOẶC KHỞI TẠO VAI TRÒ NẾU BẢNG TRỐNG TRÊN SUPABASE ---
-    const { data: dbRoles, error: rolesErr } = await supabase
-      .from('b_role')
-      .select('ROLE_CODE')
-      .eq('user_id', userId)
-      .limit(1);
+    const existingRoles = await fetchRole();
 
-    if (!rolesErr && (!dbRoles || dbRoles.length === 0)) {
+    if (!existingRoles || existingRoles.length === 0) {
       console.log('Bảng b_role trống trên Supabase, tiến hành seed các vai trò...');
       const localRolesStr = inMemoryCache['B_ROLE'] ? JSON.stringify(inMemoryCache['B_ROLE']) : null;
       let rolesToSeed = [];
@@ -1516,6 +1506,8 @@ export async function ensureUserOnboarded(userId: string): Promise<UserDataPaylo
           user_id: userId
         });
       }
+      invalidateCache('role');
+      await fetchRole(true);
       console.log('Seed vai trò hoàn tất.');
     }
 

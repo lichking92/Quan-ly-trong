@@ -109,6 +109,10 @@ import {
   fetchKiemKho,
   fetchNhapXuat,
   fetchNhapXuatCT,
+  fetchNhanVien,
+  fetchRole,
+  fetchThuongHieu,
+  fetchChiNhanh,
   rpcCreateTransaction,
   rpcDeleteTransaction,
   rpcSaveAudit,
@@ -548,34 +552,19 @@ export default function App() {
     }
 
     try {
-      // Truy vấn tài khoản theo MA_NV (currentUser.id) từ b_nhanvien (hoặc TEN_DANG_NHAP)
-      let { data: dbNhanViens, error } = await supabase
-        .from('b_nhanvien')
-        .select('*')
-        .eq('MA_NV', currentUser.id);
+      console.time('loadUser');
+      // Tải từ bộ nhớ RAM cache nếu có, tuyệt đối không query b_nhanvien trực tiếp lên server trong verifySession
+      const nhanViens = await fetchNhanVien(false);
+      let staffMember = nhanViens.find(n => 
+        (n.MA_NV || '').trim().toLowerCase() === (currentUser.id || '').trim().toLowerCase() ||
+        (n.TEN_DANG_NHAP || '').trim().toLowerCase() === (currentUser.username || '').trim().toLowerCase() ||
+        (n.EMAIL || '').trim().toLowerCase() === (currentUser.username || '').trim().toLowerCase()
+      );
 
-      if (error) {
-        console.warn("[Auth Guard] Lỗi truy vấn xác thực tài khoản:", error.message);
-        return true;
-      }
-
-      let staffMember = dbNhanViens && dbNhanViens[0];
-
-      if (!staffMember) {
-        // Dự phòng tìm theo Tên đăng nhập nếu không khớp MA_NV
-        const { data: fallbackStaffs } = await supabase
-          .from('b_nhanvien')
-          .select('*')
-          .eq('TEN_DANG_NHAP', currentUser.username);
-        
-        if (fallbackStaffs && fallbackStaffs.length > 0) {
-          staffMember = fallbackStaffs[0];
-        }
-      }
-      
       if (!staffMember) {
         console.error(`[Auth Guard] Tài khoản không tồn tại trong b_nhanvien! Đăng xuất cưỡng chế.`);
         forceLogout();
+        console.timeEnd('loadUser');
         return false;
       }
 
@@ -597,6 +586,7 @@ export default function App() {
       if (isPending) {
         console.error(`[Auth Guard] Tài khoản ${currentUser.username} không hoạt động hoặc chưa duyệt! Đăng xuất cưỡng chế.`);
         forceLogout();
+        console.timeEnd('loadUser');
         return false;
       }
 
@@ -623,9 +613,11 @@ export default function App() {
         localStorage.setItem('CURRENT_USER', JSON.stringify(updatedUser));
       }
 
+      console.timeEnd('loadUser');
       return true;
     } catch (err) {
       console.warn("[Auth Guard] Có lỗi bất thường khi xác thực phiên:", err);
+      console.timeEnd('loadUser');
       return true;
     }
   };
@@ -809,29 +801,39 @@ export default function App() {
     monitor.trackApiCall('syncAllDataFromSupabase');
     if (!silent) setLoadingDb(true);
     try {
+      console.time('syncAllDataFromSupabase');
       console.log('Bắt đầu đồng bộ dữ liệu mới nhất từ Supabase Cloud cho tài khoản:', email, silent ? '(âm thầm)' : '(hiện thị loading)');
       monitor.trackSupabaseQuery('all_tables', 'select_onboard');
 
-      // Tải trực tiếp dữ liệu sản phẩm & phiếu mới nhất khi lưu/xóa hóa đơn hoặc khi các bảng này đã hoạt động để tránh lag cache
-      const hasLoadedTx = cache.nhapxuat !== null && cache.nhapxuatct !== null;
-      if (hasLoadedTx || silent) {
-        console.log('[Sync] Tải dữ liệu sản phẩm và phiếu trực tuyến mới nhất để đảm bảo UI đồng bộ tức thì...');
-        await Promise.all([
-          fetchSanPham(true),
-          fetchNhapXuat(true),
-          fetchNhapXuatCT(true)
-        ]);
-      } else {
-        await fetchSanPham(true);
-      }
+      const forceFetch = silent || (cache.nhapxuat !== null && cache.nhapxuatct !== null);
 
-      const payload = await ensureUserOnboarded(userId);
-      const uniqueProducts = deduplicateProducts(payload.sanPhams);
+      console.time('loadInventory');
+      console.time('loadDashboard');
+      console.time('loadRoles');
+      console.time('loadPermissions');
+
+      // Tải trực tiếp tất cả dữ liệu sản phẩm, phiếu, người dùng và vai trò song song 1 lần duy nhất bằng Promise.all
+      const [payload, sanPhamsData, nhapXuatsData, nhapXuatCTsData] = await Promise.all([
+        ensureUserOnboarded(userId),
+        fetchSanPham(forceFetch),
+        fetchNhapXuat(forceFetch),
+        fetchNhapXuatCT(forceFetch)
+      ]);
+
+      console.timeEnd('loadInventory');
+      console.timeEnd('loadDashboard');
+      console.timeEnd('loadRoles');
+      console.timeEnd('loadPermissions');
+
+      const uniqueProducts = deduplicateProducts(sanPhamsData.length > 0 ? sanPhamsData : payload.sanPhams);
       setSanPhams(uniqueProducts);
 
+      const rawDbNhapXuats = (nhapXuatsData.length > 0 ? nhapXuatsData : payload.nhapXuats) || [];
+      const rawDbNhapXuatCTs = (nhapXuatCTsData.length > 0 ? nhapXuatCTsData : payload.nhapXuatCTs) || [];
+
       // Tránh việc ghi đè làm mất các phiếu mới tạo cục bộ do độ trễ đồng bộ (replication lag) của database
-      const dbNhapXuats = (payload.nhapXuats || []).filter(h => h.HOA_DON && !deletedInvoiceIdsRef.current.has(h.HOA_DON));
-      const dbNhapXuatCTs = (payload.nhapXuatCTs || []).filter(d => d.HOA_DON && !deletedInvoiceIdsRef.current.has(d.HOA_DON));
+      const dbNhapXuats = rawDbNhapXuats.filter(h => h.HOA_DON && !deletedInvoiceIdsRef.current.has(h.HOA_DON));
+      const dbNhapXuatCTs = rawDbNhapXuatCTs.filter(d => d.HOA_DON && !deletedInvoiceIdsRef.current.has(d.HOA_DON));
 
       // Lấy danh sách phiếu hiện tại từ State
       const mergedNhapXuats = [...dbNhapXuats];
@@ -978,8 +980,10 @@ export default function App() {
         console.log('Không tìm thấy CURRENT_USER lưu cục bộ. Giữ nguyên trạng thái chưa đăng nhập trên giao diện.');
         setCurrentUser(null);
       }
+      console.timeEnd('syncAllDataFromSupabase');
     } catch (err) {
       console.error('Lỗi khi tải dữ liệu từ Supabase Cloud:', err);
+      console.timeEnd('syncAllDataFromSupabase');
     } finally {
       isSyncingRef.current = false;
       lastSyncTimeRef.current = Date.now();
@@ -1489,6 +1493,7 @@ export default function App() {
     // 1. Kiểm tra session ngay khi trang web khởi chạy và tự động tải dữ liệu
     const initializeAuth = async () => {
       try {
+        console.time('loadUser');
         const savedUserStr = localStorage.getItem('CURRENT_USER');
         if (savedUserStr) {
           const savedUser = JSON.parse(savedUserStr);
@@ -1496,55 +1501,20 @@ export default function App() {
           const email = savedUser.username || '';
 
           if (userId) {
-            // Kiểm tra tính hợp lệ của nhân sự trong b_nhanvien bằng MA_NV
-            let { data: dbNhanViens, error } = await supabase
-              .from('b_nhanvien')
-              .select('*')
-              .eq('MA_NV', savedUser.id);
-
-            let staffMember = dbNhanViens && dbNhanViens[0];
-
-            if (!staffMember) {
-              console.warn('[Auth Guard] Không tìm thấy bản ghi nhân viên tương ứng. Đăng xuất.');
-              setCurrentUser(null);
-              localStorage.removeItem('CURRENT_USER');
-              return;
-            }
-
-            const role = (staffMember.ROLE || '').trim().toUpperCase();
-            const rawStatus = (staffMember.TRANG_THAI || '').trim().toUpperCase();
-            const isActive = staffMember.active === true;
-            
-            const isApprovedAdmin = role === 'ADMIN' && isActive && 
-              (rawStatus === 'ACTIVE' || rawStatus === 'HOẠT ĐỘNG' || rawStatus === 'KÍCH HOẠT' || rawStatus === 'HOAT DONG');
-
-            const isPending = !isApprovedAdmin && (
-              !isActive || 
-              rawStatus === 'PENDING' || 
-              rawStatus === 'CHỜ DUYỆT' || 
-              rawStatus === 'CHO DUYET' || 
-              role === 'PENDING'
-            );
-
-            if (isPending) {
-              console.warn('[Auth Guard] Tài khoản chờ duyệt hoặc không hoạt động. Đăng xuất.');
-              setCurrentUser(null);
-              localStorage.removeItem('CURRENT_USER');
-              return;
-            }
-
             currentUserId = userId;
             console.log('Phát hiện session hợp lệ khi khởi chạy. Thực hiện tải dữ liệu mới nhất từ Supabase Cloud...');
-            syncAllDataFromSupabase(userId, email);
             setupRealtime(userId);
+            await syncAllDataFromSupabase(userId, email);
           }
         } else {
           console.log('Không phát hiện session hoạt động. Khôi phục trạng thái về màn hình đăng nhập...');
           setCurrentUser(null);
           localStorage.removeItem('CURRENT_USER');
         }
+        console.timeEnd('loadUser');
       } catch (e) {
         console.error("Lỗi trong quá trình khởi tạo Auth:", e);
+        console.timeEnd('loadUser');
       }
     };
 
