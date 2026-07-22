@@ -66,9 +66,22 @@ export default function ProductManagement({
   // --- TRẠNG THÁI KÍCH THƯỚC CỘT (RESIZABLE) ---
   const [columnWidths, setColumnWidths] = useState<Record<string, number>>(() => {
     const saved = localStorage.getItem('PRODUCT_TABLE_COLUMN_WIDTHS');
-    return saved ? JSON.parse(saved) : {
-      sku: 190,
-      name: 320,
+    if (saved) {
+      try {
+        const parsed = JSON.parse(saved);
+        if (parsed.name || (parsed.sku && parsed.sku < 350)) {
+          const skuWidth = (parsed.sku || 190) + (parsed.name || 320);
+          delete parsed.name;
+          parsed.sku = Math.max(skuWidth, 480);
+          localStorage.setItem('PRODUCT_TABLE_COLUMN_WIDTHS', JSON.stringify(parsed));
+        }
+        return parsed;
+      } catch (e) {
+        // fallback
+      }
+    }
+    return {
+      sku: 510,
       sph: 110,
       cyl: 110,
       tonDau: 100,
@@ -563,19 +576,6 @@ export default function ProductManagement({
                   />
                 </th>
 
-                {/* Tên tròng kính */}
-                <th 
-                  style={{ width: columnWidths.name, minWidth: columnWidths.name, maxWidth: columnWidths.name }} 
-                  className="py-3 px-4 text-[11px] text-slate-400 uppercase tracking-wider relative"
-                >
-                  {renderSortHeader('name', 'Tên Tròng Kính')}
-                  <div 
-                    onMouseDown={(e) => handleMouseDown('name', e)}
-                    className="absolute right-0 top-0 bottom-0 w-2 cursor-col-resize hover:bg-red-500/40 active:bg-red-600 z-20"
-                    title="Kéo rộng cột"
-                  />
-                </th>
-
                 {/* SPH */}
                 <th 
                   style={{ width: columnWidths.sph, minWidth: columnWidths.sph, maxWidth: columnWidths.sph }} 
@@ -677,25 +677,13 @@ export default function ProductManagement({
                     <tr key={p.SKU} className="hover:bg-slate-50/50 transition-colors duration-150">
                       
                       {/* SKU */}
-                      <td className="py-3 px-4 font-mono truncate" style={{ width: columnWidths.sku, maxWidth: columnWidths.sku }}>
-                        <span className="text-xs font-bold text-slate-700 bg-slate-100 py-1 px-2.5 rounded-md">
+                      <td className="py-3 px-4 font-mono" style={{ width: columnWidths.sku, minWidth: columnWidths.sku, maxWidth: columnWidths.sku }}>
+                        <span 
+                          className="text-xs font-bold text-slate-800 bg-slate-100 py-1 px-2.5 rounded-md inline-block max-w-full truncate align-middle tracking-tight"
+                          title={formatSKUForDisplay(p.SKU)}
+                        >
                           {formatSKUForDisplay(p.SKU)}
                         </span>
-                      </td>
-
-                      {/* Tên tròng kính */}
-                      <td className="py-3 px-4" style={{ width: columnWidths.name, maxWidth: columnWidths.name }}>
-                        <div className="space-y-0.5 truncate">
-                          <p className="text-xs font-semibold text-slate-800 truncate" title={p.TEN_SAN_PHAM}>{p.TEN_SAN_PHAM}</p>
-                          <div className="flex items-center gap-1.5 flex-wrap">
-                            <span className="text-[10px] text-slate-400 font-bold bg-slate-50 py-0.5 px-1.5 border border-slate-100 rounded-sm">
-                              {p.THUONG_HIEU}
-                            </span>
-                            <span className="text-[10px] text-slate-400 font-bold bg-slate-50 py-0.5 px-1.5 border border-slate-100 rounded-sm">
-                              Chiết suất: {p.CHIET_XUAT}
-                            </span>
-                          </div>
-                        </div>
                       </td>
 
                       {/* Độ SPH */}
@@ -770,7 +758,7 @@ export default function ProductManagement({
                 })
               ) : (
                 <tr>
-                  <td colSpan={9} className="py-12 text-center text-xs text-slate-400 font-mono">
+                  <td colSpan={8} className="py-12 text-center text-xs text-slate-400 font-mono">
                     {sanPhams.length === 0 ? "Chưa có dữ liệu" : "Không tìm thấy tròng kính mắt nào khớp với tiêu chuẩn tìm kiếm."}
                   </td>
                 </tr>
