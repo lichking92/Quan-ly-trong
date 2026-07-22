@@ -224,6 +224,11 @@ export default function OrderParser({
   } | null>(null);
   const [isBatchPickingActive, setIsBatchPickingActive] = useState<boolean>(false);
 
+  // Flags và timers quản lý Realtime để chống loop request
+  const ignoreRealtimeRef = React.useRef<boolean>(false);
+  const realtimeDebounceTimerRef = React.useRef<any>(null);
+  const realtimeChannelRef = React.useRef<any>(null);
+
   // Derived picking status from tempOrders and selectedTempOrderIds to achieve true cloud-based realtime synchronization across users
   const pickedItemsState = useMemo(() => {
     const state: Record<string, boolean> = {};
@@ -325,6 +330,7 @@ export default function OrderParser({
     }
 
     try {
+      ignoreRealtimeRef.current = true;
       const userId = await resolveEffectiveUserId();
       const { error } = await supabase
         .from('b_gomdon')
@@ -350,6 +356,10 @@ export default function OrderParser({
       if (onTriggerToast) {
         onTriggerToast('Đã xảy ra lỗi khi đổi chi nhánh!', 'error');
       }
+    } finally {
+      setTimeout(() => {
+        ignoreRealtimeRef.current = false;
+      }, 3000);
     }
   };
 
@@ -459,9 +469,8 @@ export default function OrderParser({
     };
   }, [currentUser]);
 
-  // Thiết lập kênh Realtime đồng bộ hóa Gom đơn và Soạn hàng
+  // Thiết lập kênh Realtime đồng bộ hóa Gom đơn và Soạn hàng (Có Debounce >= 2500ms và Ignore Local Events)
   useEffect(() => {
-    let realtimeChannel: any = null;
     let active = true;
 
     const setupRealtime = async () => {
@@ -469,41 +478,64 @@ export default function OrderParser({
         const userId = await resolveEffectiveUserId();
         if (!active) return;
         const ownerId = localStorage.getItem('DB_OWNER_USER_ID') || userId;
-        const channelName = `realtime-gomdon-${userId}-${Math.random().toString(36).substring(2, 8)}`;
 
-        console.log('Thiết lập kênh Supabase Realtime cho Gom Đơn:', channelName);
+        if (realtimeChannelRef.current) {
+          supabase.removeChannel(realtimeChannelRef.current);
+          realtimeChannelRef.current = null;
+        }
 
-        realtimeChannel = supabase
+        const channelName = `realtime-gomdon-${userId}`;
+        console.log('[OrderParser REALTIME] Thiết lập kênh duy nhất cho Gom Đơn:', channelName);
+
+        const triggerDebouncedFetch = (tableName: string, payload: any) => {
+          if (ignoreRealtimeRef.current) {
+            console.log(`[OrderParser REALTIME] Bỏ qua sự kiện trên ${tableName} do cờ ignoreRealtimeRef đang bật (phát sinh từ thao tác của chính app).`);
+            return;
+          }
+
+          console.log(`[OrderParser REALTIME] Nhận thay đổi remote trên ${tableName}. Đặt lịch refetch với debounce 2500ms...`, payload);
+
+          if (realtimeDebounceTimerRef.current) {
+            clearTimeout(realtimeDebounceTimerRef.current);
+          }
+
+          realtimeDebounceTimerRef.current = setTimeout(async () => {
+            console.log('[OrderParser REALTIME] Hết thời gian debounce (2500ms), thực hiện refetch đơn hàng gom từ Supabase...');
+            cachedTempOrders = null;
+            lastTempOrdersFetchTime = 0;
+            await fetchTempOrdersFromSupabase(true);
+          }, 2500);
+        };
+
+        const channel = supabase
           .channel(channelName)
           .on(
             'postgres_changes',
             { event: '*', schema: 'public', table: 'b_gomdon' },
-            async (payload: any) => {
-              console.log('[OrderParser REALTIME] Nhận thay đổi trên b_gomdon:', payload);
+            (payload: any) => {
               const rowUserId = payload.new?.user_id || payload.old?.user_id;
               if (!rowUserId || rowUserId === userId || rowUserId === ownerId) {
-                // Invalidate cache
-                cachedTempOrders = null;
-                lastTempOrdersFetchTime = 0;
-                await fetchTempOrdersFromSupabase(true);
+                triggerDebouncedFetch('b_gomdon', payload);
               }
             }
           )
           .on(
             'postgres_changes',
             { event: '*', schema: 'public', table: 'b_gomdonct' },
-            async (payload: any) => {
-              console.log('[OrderParser REALTIME] Nhận thay đổi trên b_gomdonct:', payload);
+            (payload: any) => {
               const rowUserId = payload.new?.user_id || payload.old?.user_id;
               if (!rowUserId || rowUserId === userId || rowUserId === ownerId) {
-                // Invalidate cache
-                cachedTempOrders = null;
-                lastTempOrdersFetchTime = 0;
-                await fetchTempOrdersFromSupabase(true);
+                triggerDebouncedFetch('b_gomdonct', payload);
               }
             }
           )
           .subscribe();
+
+        if (!active) {
+          supabase.removeChannel(channel);
+        } else {
+          realtimeChannelRef.current = channel;
+        }
       } catch (err) {
         console.error('Lỗi khi thiết lập Realtime Gom Đơn:', err);
       }
@@ -513,9 +545,14 @@ export default function OrderParser({
 
     return () => {
       active = false;
-      if (realtimeChannel) {
-        console.log('Hủy đăng ký kênh Supabase Realtime Gom Đơn:', realtimeChannel.topic);
-        supabase.removeChannel(realtimeChannel);
+      if (realtimeDebounceTimerRef.current) {
+        clearTimeout(realtimeDebounceTimerRef.current);
+        realtimeDebounceTimerRef.current = null;
+      }
+      if (realtimeChannelRef.current) {
+        console.log('[OrderParser REALTIME] Hủy đăng ký kênh Supabase Realtime Gom Đơn');
+        supabase.removeChannel(realtimeChannelRef.current);
+        realtimeChannelRef.current = null;
       }
     };
   }, [currentUser]);
@@ -1548,6 +1585,7 @@ export default function OrderParser({
     setHasAnalyzed(false);
 
     try {
+      ignoreRealtimeRef.current = true;
       // 1. Insert header b_gomdon
       const { error: headerErr } = await supabase.from('b_gomdon').insert({
         id: newTempOrderId,
@@ -1596,6 +1634,10 @@ export default function OrderParser({
       }
     } catch (err) {
       console.error('Lỗi khi lưu lên Supabase:', err);
+    } finally {
+      setTimeout(() => {
+        ignoreRealtimeRef.current = false;
+      }, 3000);
     }
   };
 
@@ -1639,6 +1681,7 @@ export default function OrderParser({
       if (onTriggerToast) onTriggerToast('Đang xóa đơn hàng tạm...', 'warning');
 
       try {
+        ignoreRealtimeRef.current = true;
         // Delete details first
         const { error: detailErr } = await supabase
           .from('b_gomdonct')
@@ -1667,6 +1710,10 @@ export default function OrderParser({
       } catch (err) {
         console.error('Lỗi khi thực hiện xóa trên Supabase:', err);
         if (onTriggerToast) onTriggerToast('Lỗi kết nối khi xóa đơn hàng tạm!', 'error');
+      } finally {
+        setTimeout(() => {
+          ignoreRealtimeRef.current = false;
+        }, 3000);
       }
     } else if (type === 'all') {
       const backupTempOrders = [...tempOrders];
@@ -1678,6 +1725,7 @@ export default function OrderParser({
       if (onTriggerToast) onTriggerToast('Đang dọn dẹp toàn bộ thẻ gom đơn...', 'warning');
 
       try {
+        ignoreRealtimeRef.current = true;
         const userId = await resolveEffectiveUserId();
         
         // Delete all details
@@ -1710,6 +1758,10 @@ export default function OrderParser({
         setTempOrders(backupTempOrders);
         setSelectedTempOrderIds(backupSelectedIds);
         if (onTriggerToast) onTriggerToast('Lỗi kết nối khi dọn dẹp đơn hàng tạm!', 'error');
+      } finally {
+        setTimeout(() => {
+          ignoreRealtimeRef.current = false;
+        }, 3000);
       }
     } else if (type === 'selected') {
       const idsToDelete = [...selectedTempOrderIds];
@@ -1721,6 +1773,7 @@ export default function OrderParser({
       if (onTriggerToast) onTriggerToast('Đang xóa các đơn hàng tạm đã chọn...', 'warning');
 
       try {
+        ignoreRealtimeRef.current = true;
         // Delete child details
         const { error: detailErr } = await supabase
           .from('b_gomdonct')
@@ -1751,6 +1804,10 @@ export default function OrderParser({
         setTempOrders(backupTempOrders);
         setSelectedTempOrderIds(idsToDelete);
         if (onTriggerToast) onTriggerToast('Lỗi kết nối khi xóa các đơn hàng tạm đã chọn!', 'error');
+      } finally {
+        setTimeout(() => {
+          ignoreRealtimeRef.current = false;
+        }, 3000);
       }
     }
   };
@@ -1956,6 +2013,7 @@ export default function OrderParser({
     cachedTempOrders = nextOrders;
 
     try {
+      ignoreRealtimeRef.current = true;
       // Sync with Supabase Cloud
       const { error } = await supabase
         .from('b_gomdonct')
@@ -1969,6 +2027,10 @@ export default function OrderParser({
       }
     } catch (err) {
       console.error(err);
+    } finally {
+      setTimeout(() => {
+        ignoreRealtimeRef.current = false;
+      }, 3000);
     }
   };
 
@@ -2137,11 +2199,17 @@ export default function OrderParser({
           };
 
           // Đồng bộ trạng thái đã xuất lên Supabase
+          ignoreRealtimeRef.current = true;
           supabase.from('b_gomdon')
             .update({ trang_thai: 'Đã xuất', so_phieu_xuat: soPhieuXuatVal })
             .eq('id', tx.orderId)
             .then(({ error }) => {
               if (error) console.warn('Lỗi khi cập nhật trạng thái xuất b_gomdon:', error);
+            })
+            .finally(() => {
+              setTimeout(() => {
+                ignoreRealtimeRef.current = false;
+              }, 3000);
             });
         }
       });
@@ -3610,6 +3678,7 @@ export default function OrderParser({
 
                         // Update in Supabase
                         try {
+                          ignoreRealtimeRef.current = true;
                           const { error } = await supabase
                             .from('b_gomdonct')
                             .update({ picked: true })
@@ -3617,6 +3686,8 @@ export default function OrderParser({
                           if (error) console.error(error);
                         } catch (e) {
                           console.error(e);
+                        } finally {
+                          setTimeout(() => { ignoreRealtimeRef.current = false; }, 3000);
                         }
                       }}
                       className="font-bold text-indigo-600 hover:text-indigo-500 cursor-pointer"
@@ -3639,6 +3710,7 @@ export default function OrderParser({
 
                         // Update in Supabase
                         try {
+                          ignoreRealtimeRef.current = true;
                           const { error } = await supabase
                             .from('b_gomdonct')
                             .update({ picked: false })
@@ -3646,6 +3718,8 @@ export default function OrderParser({
                           if (error) console.error(error);
                         } catch (e) {
                           console.error(e);
+                        } finally {
+                          setTimeout(() => { ignoreRealtimeRef.current = false; }, 3000);
                         }
                       }}
                       className="font-bold text-slate-500 hover:text-slate-400 cursor-pointer"
