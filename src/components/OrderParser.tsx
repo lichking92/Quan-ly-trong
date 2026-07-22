@@ -2007,7 +2007,9 @@ export default function OrderParser({
         const skuKey = cleanSKU(item.sku);
         const compositeKey = `${order.branch}|||${skuKey}`;
         skuBranchRequiredQty[compositeKey] = (skuBranchRequiredQty[compositeKey] || 0) + item.quantity;
-        skuOriginalNames[skuKey] = `${item.brand} ${item.chietXuat} ${item.tinhNang} (SPH ${formatDop(item.sph)} CYL ${formatDop(item.cyl)})`;
+        const sphLabel = item.sph > 0 ? 'Viễn' : 'Cận';
+        const cylText = item.cyl !== 0 ? ` Loạn ${formatDop(item.cyl)}` : '';
+        skuOriginalNames[skuKey] = `${item.brand} ${item.chietXuat} ${item.tinhNang} (${sphLabel} ${formatDop(item.sph)}${cylText})`;
       }
     }
 
@@ -2176,7 +2178,7 @@ export default function OrderParser({
     csvContent += `Số đơn gom: ${selectedTempOrderIds.length} đơn hàng\n`;
     csvContent += `Tổng số lượng: ${pickingStats.totalUnits} miếng\n\n`;
     
-    csvContent += 'STT,Thương hiệu,Chiết suất,Độ cầu (SPH),Độ loạn (CYL),Mã SKU,Tổng số lượng,Đơn vị,Chi tiết theo chi nhánh,Trạng thái lấy hàng\n';
+    csvContent += 'STT,Thương hiệu,Chiết suất,Cận / Viễn,Độ loạn,Mã SKU,Tổng số lượng,Đơn vị,Chi tiết theo chi nhánh,Trạng thái lấy hàng\n';
     
     let index = 1;
     batchPickingData.forEach(group => {
@@ -2243,8 +2245,8 @@ export default function OrderParser({
             <table>
               <thead>
                 <tr>
-                  <th style="width: 12%; text-align: center;">Độ cầu (SPH)</th>
-                  <th style="width: 12%; text-align: center;">Độ loạn (CYL)</th>
+                  <th style="width: 12%; text-align: center;">Cận / Viễn</th>
+                  <th style="width: 12%; text-align: center;">Độ loạn</th>
                   <th style="width: 38%;">Mã SKU / Thông tin sản phẩm</th>
                   <th style="width: 25%;">Chi tiết phân bổ chi nhánh</th>
                   <th style="width: 13%; text-align: center;">Số lượng</th>
@@ -2414,7 +2416,7 @@ export default function OrderParser({
                 
                 <textarea
                   className="w-full h-80 px-4 py-3 border border-slate-200 rounded-xl font-mono text-base md:text-xs text-slate-800 focus:outline-hidden focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/50 transition-all leading-relaxed"
-                  placeholder="Nhập hoặc dán tin nhắn khách gửi tại đây...&#10;Ví dụ:&#10;HEN ASX 1.56&#10;-050 8M (Tự hiểu -0.50)&#10;-125 9M (Tự hiểu -1.25)&#10;-2,00-0,50 2M (Tự hiểu SPH -2.00, CYL -0.50)"
+                  placeholder="Nhập hoặc dán tin nhắn khách gửi tại đây...&#10;Ví dụ:&#10;HEN ASX 1.56&#10;-050 8M (Tự hiểu -0.50)&#10;-125 9M (Tự hiểu -1.25)&#10;-2,00-0,50 2M (Tự hiểu Cận -2.00, Loạn -0.50)"
                   value={message}
                   onChange={(e) => setMessage(e.target.value)}
                   id="message_input_textarea"
@@ -2748,8 +2750,8 @@ export default function OrderParser({
                                   <div className="space-y-0.5">
                                     <p className="font-mono font-bold text-slate-800 flex items-center gap-1.5">
                                       <span className="text-slate-500 bg-slate-100 px-1 py-0.2 rounded text-[10px]">{item.brand}</span>
-                                      <span>SPH {sphStr}</span>
-                                      <span>CYL {cylStr}</span>
+                                      <span>{item.sph > 0 ? 'Viễn' : 'Cận'} {sphStr}</span>
+                                      {item.cyl !== 0 && <span>Loạn {cylStr}</span>}
                                     </p>
                                     <p className="text-[10px] text-slate-400 font-mono tracking-tight">{formatSKUForDisplay(item.sku) || 'N/A'}</p>
                                   </div>
@@ -3023,7 +3025,7 @@ export default function OrderParser({
                                     {item.brand} {item.chietXuat} {item.tinhNang}
                                   </p>
                                   <p className="font-mono text-[10px] text-slate-400">
-                                    SPH {formatDop(item.sph)} CYL {formatDop(item.cyl)}
+                                    {item.sph > 0 ? 'Viễn' : 'Cận'} {formatDop(item.sph)}{item.cyl !== 0 ? ` Loạn ${formatDop(item.cyl)}` : ''}
                                   </p>
                                 </div>
                                 <div className="text-right shrink-0 space-y-0.5">
@@ -3067,45 +3069,47 @@ export default function OrderParser({
         <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs z-50 flex items-center justify-center p-0 md:p-6 animate-fade-in" id="batch_picking_modal_overlay">
           <div className="bg-slate-50 h-[100dvh] md:h-auto md:max-h-[90vh] md:rounded-3xl shadow-2xl border border-slate-200 w-full max-w-5xl flex flex-col overflow-hidden animate-scale-up">
             
-            {/* Modal Header */}
-            <div className="bg-slate-900 text-white p-4 md:p-6 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shrink-0">
-              <div className="space-y-1">
-                <button
-                  onClick={() => setIsBatchPickingActive(false)}
-                  className="inline-flex items-center gap-1.5 text-slate-400 hover:text-white transition-colors text-xs font-bold uppercase tracking-wider mb-1"
-                >
-                  <ArrowLeft className="w-4 h-4" /> Quay Lại
-                </button>
-                <h2 className="text-base md:text-xl font-sans font-extrabold flex items-center gap-2">
-                  <Layers className="w-5 h-5 md:w-6 md:h-6 text-indigo-400" />
-                  Quy Trình Gom Đơn & Lấy Hàng
-                </h2>
-                <p className="text-[11px] md:text-xs text-slate-400 font-sans leading-relaxed">
-                  Soạn hàng gộp thông minh cho các đơn hàng tạm, xuất kho trực tiếp tiện lợi trên di động.
-                </p>
-              </div>
+            {/* Modal Header - Rendered only in Step 1 to optimize screen space on mobile */}
+            {pickingStep === 1 && (
+              <div className="bg-slate-900 text-white p-4 md:p-6 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shrink-0">
+                <div className="space-y-1">
+                  <button
+                    onClick={() => setIsBatchPickingActive(false)}
+                    className="inline-flex items-center gap-1.5 text-slate-400 hover:text-white transition-colors text-xs font-bold uppercase tracking-wider mb-1 cursor-pointer"
+                  >
+                    <ArrowLeft className="w-4 h-4" /> Quay Lại
+                  </button>
+                  <h2 className="text-base md:text-xl font-sans font-extrabold flex items-center gap-2">
+                    <Layers className="w-5 h-5 md:w-6 md:h-6 text-indigo-400" />
+                    Quy Trình Gom Đơn & Lấy Hàng
+                  </h2>
+                  <p className="text-[11px] md:text-xs text-slate-400 font-sans leading-relaxed">
+                    Soạn hàng gộp thông minh cho các đơn hàng tạm, xuất kho trực tiếp tiện lợi trên di động.
+                  </p>
+                </div>
 
-              {/* Action Buttons for PDF/Excel */}
-              <div className="flex items-center gap-2 shrink-0">
-                <button
-                  onClick={handlePrint}
-                  className="bg-slate-800 hover:bg-slate-700 border border-slate-700 hover:border-slate-600 text-white text-[11px] md:text-xs font-bold py-2 px-3 rounded-lg transition-all active:scale-95 flex items-center gap-1 cursor-pointer"
-                  id="print_picking_list_btn"
-                >
-                  <Printer className="w-3.5 h-3.5" />
-                  In PDF
-                </button>
+                {/* Action Buttons for PDF/Excel */}
+                <div className="flex items-center gap-2 shrink-0">
+                  <button
+                    onClick={handlePrint}
+                    className="bg-slate-800 hover:bg-slate-700 border border-slate-700 hover:border-slate-600 text-white text-[11px] md:text-xs font-bold py-2 px-3 rounded-lg transition-all active:scale-95 flex items-center gap-1 cursor-pointer"
+                    id="print_picking_list_btn"
+                  >
+                    <Printer className="w-3.5 h-3.5" />
+                    In PDF
+                  </button>
 
-                <button
-                  onClick={handleExportExcel}
-                  className="bg-emerald-600 hover:bg-emerald-500 hover:shadow-sm text-white text-[11px] md:text-xs font-bold py-2 px-3 rounded-lg transition-all active:scale-95 flex items-center gap-1 cursor-pointer"
-                  id="export_excel_picking_btn"
-                >
-                  <Download className="w-3.5 h-3.5" />
-                  Excel CSV
-                </button>
+                  <button
+                    onClick={handleExportExcel}
+                    className="bg-emerald-600 hover:bg-emerald-500 hover:shadow-sm text-white text-[11px] md:text-xs font-bold py-2 px-3 rounded-lg transition-all active:scale-95 flex items-center gap-1 cursor-pointer"
+                    id="export_excel_picking_btn"
+                  >
+                    <Download className="w-3.5 h-3.5" />
+                    Excel CSV
+                  </button>
+                </div>
               </div>
-            </div>
+            )}
 
             {/* Step Progress Bar */}
             <div className="bg-white border-b border-slate-200 px-4 py-3 md:px-6 shrink-0">
@@ -3378,8 +3382,8 @@ export default function OrderParser({
                               brand: 'Thương hiệu (Brand)',
                               chietXuat: 'Chiết suất (Index)',
                               tinhNang: 'Tính năng (Feature)',
-                              cyl: 'Độ CYL (Cylinder)',
-                              sph: 'Độ SPH (Sphere)',
+                              cyl: 'Độ Loạn',
+                              sph: 'Độ Cận / Viễn',
                               add: 'Độ ADD (Addition)',
                               sku: 'Mã SKU'
                             };
@@ -3517,11 +3521,11 @@ export default function OrderParser({
                                         <div className="space-y-1">
                                           <div className="flex items-center gap-2">
                                             <span className="font-mono font-extrabold text-xs text-slate-900 bg-slate-100 px-2 py-0.5 rounded-md shrink-0">
-                                              SPH {formatDop(item.sph)}
+                                              {item.sph > 0 ? 'Viễn' : 'Cận'} {formatDop(item.sph)}
                                             </span>
                                             {item.cyl !== 0 && (
                                               <span className="font-mono font-extrabold text-xs text-amber-700 bg-amber-50 border border-amber-100 px-2 py-0.5 rounded-md shrink-0">
-                                                CYL {formatDop(item.cyl)}
+                                                Loạn {formatDop(item.cyl)}
                                               </span>
                                             )}
                                           </div>
@@ -3713,13 +3717,13 @@ export default function OrderParser({
                                         <span className={`font-mono font-extrabold text-xs px-2 py-0.5 rounded-md ${
                                           isPicked ? 'bg-slate-200 text-slate-400' : 'bg-slate-100 text-slate-900'
                                         }`}>
-                                          SPH {formatDop(item.sph)}
+                                          {item.sph > 0 ? 'Viễn' : 'Cận'} {formatDop(item.sph)}
                                         </span>
                                         {item.cyl !== 0 && (
                                           <span className={`font-mono font-extrabold text-xs px-2 py-0.5 rounded-md ${
                                             isPicked ? 'bg-slate-200 text-slate-400' : 'bg-amber-50 border border-amber-100 text-amber-700'
                                           }`}>
-                                            CYL {formatDop(item.cyl)}
+                                            Loạn {formatDop(item.cyl)}
                                           </span>
                                         )}
                                       </div>
@@ -3871,7 +3875,7 @@ export default function OrderParser({
                                         {item.brand} {item.chietXuat} {item.tinhNang}
                                       </p>
                                       <p className="text-[10px] text-rose-600 font-mono mt-0.5">
-                                        SPH {formatDop(item.sph)} CYL {formatDop(item.cyl)} — {item.sku}
+                                        {item.sph > 0 ? 'Viễn' : 'Cận'} {formatDop(item.sph)}{item.cyl !== 0 ? ` Loạn ${formatDop(item.cyl)}` : ''} — {item.sku}
                                       </p>
                                     </div>
                                     <div className="text-right shrink-0">
