@@ -277,6 +277,19 @@ let lastPingTime = 0;
 let lastPingResult = true;
 let activePingPromise: Promise<boolean> | null = null;
 
+// Helper đo thời gian an toàn, đảm bảo không bị lỗi "Timer 'xxx' does not exist"
+const activeTimers = new Set<string>();
+const safeTime = (label: string) => {
+  activeTimers.add(label);
+  console.time(label);
+};
+const safeTimeEnd = (label: string) => {
+  if (activeTimers.has(label)) {
+    activeTimers.delete(label);
+    console.timeEnd(label);
+  }
+};
+
 export default function App() {
   monitor.trackRender('App');
   const ignoreRealtimeRef = useRef<boolean>(false);
@@ -552,7 +565,7 @@ export default function App() {
     }
 
     try {
-      console.time('loadUser');
+      safeTime('verifySession');
       // Tải từ bộ nhớ RAM cache nếu có, tuyệt đối không query b_nhanvien trực tiếp lên server trong verifySession
       const nhanViens = await fetchNhanVien(false);
       let staffMember = nhanViens.find(n => 
@@ -564,7 +577,7 @@ export default function App() {
       if (!staffMember) {
         console.error(`[Auth Guard] Tài khoản không tồn tại trong b_nhanvien! Đăng xuất cưỡng chế.`);
         forceLogout();
-        console.timeEnd('loadUser');
+        safeTimeEnd('verifySession');
         return false;
       }
 
@@ -586,7 +599,7 @@ export default function App() {
       if (isPending) {
         console.error(`[Auth Guard] Tài khoản ${currentUser.username} không hoạt động hoặc chưa duyệt! Đăng xuất cưỡng chế.`);
         forceLogout();
-        console.timeEnd('loadUser');
+        safeTimeEnd('verifySession');
         return false;
       }
 
@@ -613,11 +626,11 @@ export default function App() {
         localStorage.setItem('CURRENT_USER', JSON.stringify(updatedUser));
       }
 
-      console.timeEnd('loadUser');
+      safeTimeEnd('verifySession');
       return true;
     } catch (err) {
       console.warn("[Auth Guard] Có lỗi bất thường khi xác thực phiên:", err);
-      console.timeEnd('loadUser');
+      safeTimeEnd('verifySession');
       return true;
     }
   };
@@ -801,16 +814,16 @@ export default function App() {
     monitor.trackApiCall('syncAllDataFromSupabase');
     if (!silent) setLoadingDb(true);
     try {
-      console.time('syncAllDataFromSupabase');
+      safeTime('syncAllDataFromSupabase');
       console.log('Bắt đầu đồng bộ dữ liệu mới nhất từ Supabase Cloud cho tài khoản:', email, silent ? '(âm thầm)' : '(hiện thị loading)');
       monitor.trackSupabaseQuery('all_tables', 'select_onboard');
 
       const forceFetch = silent || (cache.nhapxuat !== null && cache.nhapxuatct !== null);
 
-      console.time('loadInventory');
-      console.time('loadDashboard');
-      console.time('loadRoles');
-      console.time('loadPermissions');
+      safeTime('loadInventory');
+      safeTime('loadDashboard');
+      safeTime('loadRoles');
+      safeTime('loadPermissions');
 
       // Tải trực tiếp tất cả dữ liệu sản phẩm, phiếu, người dùng và vai trò song song 1 lần duy nhất bằng Promise.all
       const [payload, sanPhamsData, nhapXuatsData, nhapXuatCTsData] = await Promise.all([
@@ -820,10 +833,10 @@ export default function App() {
         fetchNhapXuatCT(forceFetch)
       ]);
 
-      console.timeEnd('loadInventory');
-      console.timeEnd('loadDashboard');
-      console.timeEnd('loadRoles');
-      console.timeEnd('loadPermissions');
+      safeTimeEnd('loadInventory');
+      safeTimeEnd('loadDashboard');
+      safeTimeEnd('loadRoles');
+      safeTimeEnd('loadPermissions');
 
       const uniqueProducts = deduplicateProducts(sanPhamsData.length > 0 ? sanPhamsData : payload.sanPhams);
       setSanPhams(uniqueProducts);
@@ -980,10 +993,10 @@ export default function App() {
         console.log('Không tìm thấy CURRENT_USER lưu cục bộ. Giữ nguyên trạng thái chưa đăng nhập trên giao diện.');
         setCurrentUser(null);
       }
-      console.timeEnd('syncAllDataFromSupabase');
+      safeTimeEnd('syncAllDataFromSupabase');
     } catch (err) {
       console.error('Lỗi khi tải dữ liệu từ Supabase Cloud:', err);
-      console.timeEnd('syncAllDataFromSupabase');
+      safeTimeEnd('syncAllDataFromSupabase');
     } finally {
       isSyncingRef.current = false;
       lastSyncTimeRef.current = Date.now();
@@ -1493,7 +1506,7 @@ export default function App() {
     // 1. Kiểm tra session ngay khi trang web khởi chạy và tự động tải dữ liệu
     const initializeAuth = async () => {
       try {
-        console.time('loadUser');
+        safeTime('loadUser');
         const savedUserStr = localStorage.getItem('CURRENT_USER');
         if (savedUserStr) {
           const savedUser = JSON.parse(savedUserStr);
@@ -1511,10 +1524,10 @@ export default function App() {
           setCurrentUser(null);
           localStorage.removeItem('CURRENT_USER');
         }
-        console.timeEnd('loadUser');
+        safeTimeEnd('loadUser');
       } catch (e) {
         console.error("Lỗi trong quá trình khởi tạo Auth:", e);
-        console.timeEnd('loadUser');
+        safeTimeEnd('loadUser');
       }
     };
 
