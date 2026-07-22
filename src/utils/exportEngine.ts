@@ -211,7 +211,9 @@ export function calculateResolvedValues({
   sanPhams,
   nhapXuats,
   nhapXuatCTs,
-  customMappings = []
+  customMappings = [],
+  selectedTypeFilter = 'Tất cả',
+  selectedEmployeeFilter = 'Tất cả'
 }: {
   startDate: string;
   endDate: string;
@@ -225,6 +227,8 @@ export function calculateResolvedValues({
   nhapXuats: NhapXuat[];
   nhapXuatCTs: NhapXuatCT[];
   customMappings?: PlaceholderMapping[];
+  selectedTypeFilter?: string;
+  selectedEmployeeFilter?: string;
 }) {
   const values: Record<string, any> = {};
 
@@ -245,7 +249,27 @@ export function calculateResolvedValues({
         if (h.TRANG_THAI === 'Đã hủy') return false;
         const matchBranch = selectedBranch === 'Tất cả' || h.CHI_NHANH === selectedBranch;
         const matchDate = h.NGAY >= startDate && h.NGAY <= endDate;
-        return matchBranch && matchDate;
+
+        // Lọc theo Loại phiếu
+        let matchType = true;
+        if (selectedTypeFilter !== 'Tất cả') {
+          if (selectedTypeFilter === 'Phiếu nhập') {
+            matchType = h.LOAI === 'NHẬP';
+          } else if (selectedTypeFilter === 'Phiếu xuất') {
+            matchType = h.LOAI === 'XUẤT';
+          } else if (selectedTypeFilter === 'Phiếu kiểm kho') {
+            matchType = h.LOAI === 'KIỂM KHO' || h.HOA_DON.startsWith('PKK') || h.HOA_DON.startsWith('PNK') || h.HOA_DON.startsWith('PXK');
+          } else if (selectedTypeFilter === 'Phiếu nhập kho') {
+            matchType = h.LOAI === 'NHẬP' && !h.HOA_DON.startsWith('PNK');
+          } else if (selectedTypeFilter === 'Phiếu xuất kho') {
+            matchType = h.LOAI === 'XUẤT' && !h.HOA_DON.startsWith('PXK');
+          }
+        }
+
+        // Lọc theo Nhân viên
+        const matchEmployee = selectedEmployeeFilter === 'Tất cả' || h.TEN_NGUOI_TAO === selectedEmployeeFilter || h.NGUOI_TAO === selectedEmployeeFilter;
+
+        return matchBranch && matchDate && matchType && matchEmployee;
       })
       .map(h => h.HOA_DON)
   );
@@ -1029,7 +1053,9 @@ export function getFilteredSourceData({
   branch,
   sanPhams,
   nhapXuats,
-  nhapXuatCTs
+  nhapXuatCTs,
+  selectedTypeFilter = 'Tất cả',
+  selectedEmployeeFilter = 'Tất cả'
 }: {
   source: string;
   startDate: string;
@@ -1038,12 +1064,34 @@ export function getFilteredSourceData({
   sanPhams: any[];
   nhapXuats: any[];
   nhapXuatCTs: any[];
+  selectedTypeFilter?: string;
+  selectedEmployeeFilter?: string;
 }) {
   const filteredHeaders = nhapXuats.filter(h => {
     if (h.TRANG_THAI === 'Đã hủy') return false;
     const matchBranch = branch === 'Tất cả' || h.CHI_NHANH === branch;
     const matchDate = h.NGAY >= startDate && h.NGAY <= endDate;
-    return matchBranch && matchDate;
+
+    // Lọc theo Loại phiếu
+    let matchType = true;
+    if (selectedTypeFilter !== 'Tất cả') {
+      if (selectedTypeFilter === 'Phiếu nhập') {
+        matchType = h.LOAI === 'NHẬP';
+      } else if (selectedTypeFilter === 'Phiếu xuất') {
+        matchType = h.LOAI === 'XUẤT';
+      } else if (selectedTypeFilter === 'Phiếu kiểm kho') {
+        matchType = h.LOAI === 'KIỂM KHO' || h.HOA_DON.startsWith('PKK') || h.HOA_DON.startsWith('PNK') || h.HOA_DON.startsWith('PXK');
+      } else if (selectedTypeFilter === 'Phiếu nhập kho') {
+        matchType = h.LOAI === 'NHẬP' && !h.HOA_DON.startsWith('PNK');
+      } else if (selectedTypeFilter === 'Phiếu xuất kho') {
+        matchType = h.LOAI === 'XUẤT' && !h.HOA_DON.startsWith('PXK');
+      }
+    }
+
+    // Lọc theo Nhân viên
+    const matchEmployee = selectedEmployeeFilter === 'Tất cả' || h.TEN_NGUOI_TAO === selectedEmployeeFilter || h.NGUOI_TAO === selectedEmployeeFilter;
+
+    return matchBranch && matchDate && matchType && matchEmployee;
   });
   const headerIds = new Set(filteredHeaders.map(h => h.HOA_DON));
 
@@ -1095,7 +1143,18 @@ export function getFilteredSourceData({
       const filteredAudits = audits.filter(a => {
         const matchBranch = branch === 'Tất cả' || a.KHO === branch || a.CHI_NHANH === branch;
         const matchDate = a.THOI_DIEM && a.THOI_DIEM.substring(0, 10) >= startDate && a.THOI_DIEM.substring(0, 10) <= endDate;
-        return matchBranch && matchDate;
+
+        // Lọc theo Loại phiếu cho KIEM_KHO
+        let matchType = true;
+        if (selectedTypeFilter !== 'Tất cả') {
+          // Chỉ khớp nếu lọc "Phiếu kiểm kho" hoặc "Tất cả"
+          matchType = selectedTypeFilter === 'Phiếu kiểm kho';
+        }
+
+        // Lọc theo Nhân viên cho KIEM_KHO
+        const matchEmployee = selectedEmployeeFilter === 'Tất cả' || a.NGUOI_KIEM === selectedEmployeeFilter;
+
+        return matchBranch && matchDate && matchType && matchEmployee;
       });
       return filteredAudits.map((a, index) => {
         const p = sanPhams.find(x => x.SKU === a.SKU);
@@ -1249,7 +1308,9 @@ export function computePivotData({
   branch,
   sanPhams,
   nhapXuats,
-  nhapXuatCTs
+  nhapXuatCTs,
+  selectedTypeFilter = 'Tất cả',
+  selectedEmployeeFilter = 'Tất cả'
 }: {
   config: {
     placeholder: string;
@@ -1266,8 +1327,10 @@ export function computePivotData({
   sanPhams: any[];
   nhapXuats: any[];
   nhapXuatCTs: any[];
+  selectedTypeFilter?: string;
+  selectedEmployeeFilter?: string;
 }) {
-  // 1. Lấy dữ liệu nguồn đã lọc theo ngày & chi nhánh
+  // 1. Lấy dữ liệu nguồn đã lọc theo ngày & chi nhánh & loại phiếu & nhân viên
   let data: any[] = getFilteredSourceData({
     source: config.source,
     startDate,
@@ -1275,7 +1338,9 @@ export function computePivotData({
     branch,
     sanPhams,
     nhapXuats,
-    nhapXuatCTs
+    nhapXuatCTs,
+    selectedTypeFilter,
+    selectedEmployeeFilter
   });
 
   // 2. Áp dụng bộ lọc bổ sung (nếu có)
@@ -1493,7 +1558,9 @@ export function getFullyFilteredDashboardData({
   salesDbSelectedCyl,
   sanPhams,
   nhapXuats,
-  nhapXuatCTs
+  nhapXuatCTs,
+  selectedTypeFilter = 'Tất cả',
+  selectedEmployeeFilter = 'Tất cả'
 }: {
   source: string;
   startDate: string;
@@ -1507,6 +1574,8 @@ export function getFullyFilteredDashboardData({
   sanPhams: any[];
   nhapXuats: any[];
   nhapXuatCTs: any[];
+  selectedTypeFilter?: string;
+  selectedEmployeeFilter?: string;
 }) {
   const baseData = getFilteredSourceData({
     source,
@@ -1515,7 +1584,9 @@ export function getFullyFilteredDashboardData({
     branch: selectedBranch,
     sanPhams,
     nhapXuats,
-    nhapXuatCTs
+    nhapXuatCTs,
+    selectedTypeFilter,
+    selectedEmployeeFilter
   });
 
   return baseData.filter(item => {
@@ -1725,7 +1796,9 @@ export async function exportReportWithFilters({
   nhapXuats,
   nhapXuatCTs,
   onTriggerToast,
-  onDownload
+  onDownload,
+  selectedTypeFilter = 'Tất cả',
+  selectedEmployeeFilter = 'Tất cả'
 }: {
   template: Template;
   exportFormat?: 'EXCEL' | 'PDF';
@@ -1742,6 +1815,8 @@ export async function exportReportWithFilters({
   nhapXuatCTs: NhapXuatCT[];
   onTriggerToast?: (message: string, type?: 'success' | 'warning' | 'error') => void;
   onDownload: (blob: Blob, fileName: string) => void;
+  selectedTypeFilter?: string;
+  selectedEmployeeFilter?: string;
 }) {
   // 1. Calculate resolved values
   const { resolvedValues } = calculateResolvedValues({
@@ -1755,7 +1830,9 @@ export async function exportReportWithFilters({
     salesDbSelectedCyl,
     sanPhams,
     nhapXuats,
-    nhapXuatCTs
+    nhapXuatCTs,
+    selectedTypeFilter,
+    selectedEmployeeFilter
   });
 
   // 2. Prepare dynamic records based on template's main source
@@ -1772,7 +1849,9 @@ export async function exportReportWithFilters({
     salesDbSelectedCyl,
     sanPhams,
     nhapXuats,
-    nhapXuatCTs
+    nhapXuatCTs,
+    selectedTypeFilter,
+    selectedEmployeeFilter
   });
 
   // 2b. Clone or extract groupByFields so we can modify it safely without mutating the original template object
@@ -2235,7 +2314,9 @@ export async function exportReportWithFilters({
             branch: selectedBranch,
             sanPhams,
             nhapXuats,
-            nhapXuatCTs
+            nhapXuatCTs,
+            selectedTypeFilter,
+            selectedEmployeeFilter
           });
         } else if (sample.placeholder === 'REPORT_ROWS' || sample.placeholder === 'DETAILS') {
           const hasGroupBy = activeGroupByFields && activeGroupByFields.length > 0;
@@ -2905,7 +2986,9 @@ export async function exportReportWithFilters({
           branch: selectedBranch,
           sanPhams,
           nhapXuats,
-          nhapXuatCTs
+          nhapXuatCTs,
+          selectedTypeFilter,
+          selectedEmployeeFilter
         });
 
         const headers = mapping.pivotGroupBy || [];

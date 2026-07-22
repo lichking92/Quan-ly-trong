@@ -51,7 +51,7 @@ interface TransactionFormProps {
   onClearPrefilledSku?: () => void;
   prefilledCartItems?: { sku: string; soLuong: number; }[];
   onClearPrefilledCartItems?: () => void;
-  onSaveTransaction: (header: NhapXuat, details: NhapXuatCT[]) => void;
+  onSaveTransaction: (header: NhapXuat, details: NhapXuatCT[]) => Promise<boolean>;
   onNavigateToHistory: () => void;
   onTriggerToast?: (message: string) => void;
   hasPermission?: (permissionCode: string) => boolean;
@@ -562,16 +562,18 @@ export default function TransactionForm({
       }));
 
       // Gọi callback truyền ra App.tsx để đồng bộ hóa và lưu trữ thời gian thực
-      onSaveTransaction(newHeader, detailRows);
-
-      // Reset giỏ hàng và form
-      setCart([]);
-      setGhiChuPhieu('');
-      
-      // Chuyển tab sang Lịch sử để xem lại chứng từ vừa lưu sau khi Toast hiển thị
-      setTimeout(() => {
-        onNavigateToHistory();
-      }, 1500);
+      onSaveTransaction(newHeader, detailRows).then((success) => {
+        if (success) {
+          // Reset giỏ hàng và form
+          setCart([]);
+          setGhiChuPhieu('');
+          
+          // Chuyển tab sang Lịch sử để xem lại chứng từ vừa lưu sau khi Toast hiển thị
+          setTimeout(() => {
+            onNavigateToHistory();
+          }, 1500);
+        }
+      });
 
     }, 600);
   };

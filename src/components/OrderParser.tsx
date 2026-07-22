@@ -2,6 +2,7 @@ import React, { useState, useMemo, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
   ClipboardCheck, 
+  ClipboardPaste,
   Copy, 
   Check, 
   Plus, 
@@ -158,6 +159,7 @@ interface OrderParserProps {
   onNavigateToHistory?: () => void;
   nhapXuats: NhapXuat[];
   nhapXuatCTs: NhapXuatCT[];
+  onRefreshProductsAndTransactions?: () => Promise<void>;
 }
 
 interface ParsedItem {
@@ -177,6 +179,12 @@ interface ParsedItem {
   exportQuantity?: number;
 }
 
+// Module-level in-memory cache to prevent redundant fetches on tab switching
+let cachedTempOrders: any[] | null = null;
+let lastTempOrdersFetchTime = 0; // Timestamp in milliseconds
+let cachedUserId: string | null = null; // Track which user the cache belongs to
+const CACHE_EXPIRATION_MS = 5 * 60 * 1000; // 5 minutes cache TTL
+
 export default function OrderParser({ 
   sanPhams, 
   brandList, 
@@ -187,7 +195,8 @@ export default function OrderParser({
   onSaveMultipleTransactions,
   onNavigateToHistory,
   nhapXuats = [],
-  nhapXuatCTs = []
+  nhapXuatCTs = [],
+  onRefreshProductsAndTransactions
 }: OrderParserProps) {
   // Sub-tab: ANALYZE (New analysis & temporary order creation) or TEMP_ORDERS (List of temporary cards & batch picking)
   const [parserViewTab, setParserViewTab] = useState<'ANALYZE' | 'TEMP_ORDERS'>('ANALYZE');
@@ -205,10 +214,7 @@ export default function OrderParser({
     return chiNhanhs && chiNhanhs.length > 0 ? chiNhanhs[0] : 'Chi nhánh chính';
   });
 
-  const [tempOrders, setTempOrders] = useState<any[]>(() => {
-    const saved = localStorage.getItem('BATCH_PICKING_TEMP_ORDERS');
-    return saved ? JSON.parse(saved) : [];
-  });
+  const [tempOrders, setTempOrders] = useState<any[]>([]);
 
   const [selectedTempOrderIds, setSelectedTempOrderIds] = useState<string[]>([]);
   const [deleteConfirm, setDeleteConfirm] = useState<{
@@ -217,7 +223,31 @@ export default function OrderParser({
     message: string;
   } | null>(null);
   const [isBatchPickingActive, setIsBatchPickingActive] = useState<boolean>(false);
-  const [pickedItemsState, setPickedItemsState] = useState<Record<string, boolean>>({});
+
+  // Derived picking status from tempOrders and selectedTempOrderIds to achieve true cloud-based realtime synchronization across users
+  const pickedItemsState = useMemo(() => {
+    const state: Record<string, boolean> = {};
+    const selectedOrders = tempOrders.filter(o => selectedTempOrderIds.includes(o.id));
+    
+    // Group items by SKU key. A SKU is picked if all corresponding detail items in selected orders are picked.
+    const skuItems: Record<string, boolean[]> = {};
+    selectedOrders.forEach(order => {
+      order.items.forEach((item: any) => {
+        if (item.error) return;
+        const skuKey = item.sku;
+        if (!skuItems[skuKey]) {
+          skuItems[skuKey] = [];
+        }
+        skuItems[skuKey].push(!!item.picked);
+      });
+    });
+
+    Object.keys(skuItems).forEach(skuKey => {
+      state[skuKey] = skuItems[skuKey].length > 0 && skuItems[skuKey].every(v => v === true);
+    });
+
+    return state;
+  }, [tempOrders, selectedTempOrderIds]);
   
   // States for Step Wizard & Mobile Picking UI
   const [pickingStep, setPickingStep] = useState<number>(1);
@@ -258,10 +288,7 @@ export default function OrderParser({
     setSortingPriority(nextList);
   };
 
-  // Sync temp orders to localStorage
-  useEffect(() => {
-    localStorage.setItem('BATCH_PICKING_TEMP_ORDERS', JSON.stringify(tempOrders));
-  }, [tempOrders]);
+
 
   // Helper to compute branch-specific stock dynamically
   const getProductStockByBranch = (
@@ -271,28 +298,17 @@ export default function OrderParser({
     localHeaders: NhapXuat[],
     localDetails: NhapXuatCT[]
   ): number => {
-    if (!product) return 0;
-    if (!branch || branch === 'Tất cả') {
-      return product.TON_CUOI;
+    if (!product) {
+      console.log(`[AUDIT_STOCK_ERROR] SKU: "${sku}" | Branch requested: "${branch}" | Product not found in database catalog!`);
+      return 0;
     }
 
-    const branchHeaders = localHeaders.filter(h => h.CHI_NHANH === branch && h.TRANG_THAI !== 'Đã hủy');
-    const branchHeaderIds = new Set(branchHeaders.map(h => h.HOA_DON));
+    // Unified stock source to match TransactionForm (Phiếu nhập xuất), which uses TON_CUOI from b_sanpham
+    const stockVal = product.TON_CUOI;
 
-    const branchDetails = localDetails.filter(d => cleanSKU(d.SKU) === cleanSKU(sku) && branchHeaderIds.has(d.HOA_DON));
+    console.log(`[AUDIT_STOCK_SUCCESS] SKU: "${sku}" | Product: "${product.TEN_SAN_PHAM}" | Branch: "${branch}" | Tồn kho thực tế in DB (TON_CUOI): ${product.TON_CUOI} | Tồn kho Gom đơn đọc: ${stockVal} | Nguồn dữ liệu: b_sanpham.TON_CUOI`);
 
-    const totalNhap = branchDetails
-      .filter(d => d.LOAI === 'NHẬP')
-      .reduce((sum, d) => sum + d.SO_LUONG, 0);
-
-    const totalXuat = branchDetails
-      .filter(d => d.LOAI === 'XUẤT')
-      .reduce((sum, d) => sum + d.SO_LUONG, 0);
-
-    const isDefaultBranch = branch === 'Kho Trung Tâm';
-    const branchTonDau = isDefaultBranch ? product.TON_DAU : 0;
-
-    return Math.max(0, branchTonDau + totalNhap - totalXuat);
+    return stockVal;
   };
 
   const handleUpdateOrderBranch = async (orderId: string, newBranch: string) => {
@@ -322,6 +338,9 @@ export default function OrderParser({
           onTriggerToast('Không thể đồng bộ cập nhật chi nhánh lên Supabase Cloud!', 'error');
         }
       } else {
+        // Invalidate cache
+        cachedTempOrders = null;
+        lastTempOrdersFetchTime = 0;
         if (onTriggerToast) {
           onTriggerToast(`Đã đổi chi nhánh đơn hàng tạm sang "${newBranch}" thành công!`, 'success');
         }
@@ -334,76 +353,171 @@ export default function OrderParser({
     }
   };
 
-  // Tải đơn hàng tạm từ Supabase khi khởi chạy hoặc chuyển đổi người dùng
-  useEffect(() => {
-    const fetchTempOrdersFromSupabase = async () => {
-      try {
-        const userId = await resolveEffectiveUserId();
-        
-        // Tải b_gomdon
-        const { data: headers, error: headerErr } = await supabase
-          .from('b_gomdon')
-          .select('*')
-          .eq('user_id', userId)
-          .order('created_at', { ascending: false });
+  const fetchTempOrdersFromSupabase = async (force = false) => {
+    // Check module-level memory cache first
+    const now = Date.now();
+    if (!force && cachedTempOrders !== null && (now - lastTempOrdersFetchTime < CACHE_EXPIRATION_MS)) {
+      console.log('[OrderParser CACHE] Sử dụng danh sách đơn hàng tạm từ bộ nhớ đệm (In-Memory Cache)');
+      setTempOrders(cachedTempOrders);
+      return;
+    }
 
-        if (headerErr) {
-          console.warn('Không thể tải b_gomdon từ Supabase:', headerErr);
-          return;
-        }
+    try {
+      const userId = await resolveEffectiveUserId();
+      
+      // Tải b_gomdon
+      const { data: headers, error: headerErr } = await supabase
+        .from('b_gomdon')
+        .select('*')
+        .eq('user_id', userId)
+        .order('created_at', { ascending: false });
 
-        if (!headers || headers.length === 0) {
-          return;
-        }
+      if (headerErr) {
+        console.warn('Không thể tải b_gomdon từ Supabase:', headerErr);
+        return;
+      }
 
-        // Tải b_gomdonct
-        const { data: details, error: detailErr } = await supabase
-          .from('b_gomdonct')
-          .select('*')
-          .eq('user_id', userId);
+      if (!headers || headers.length === 0) {
+        setTempOrders([]);
+        cachedTempOrders = [];
+        lastTempOrdersFetchTime = now;
+        return;
+      }
 
-        if (detailErr) {
-          console.warn('Không thể tải b_gomdonct từ Supabase:', detailErr);
-          return;
-        }
+      // Tải b_gomdonct
+      const { data: details, error: detailErr } = await supabase
+        .from('b_gomdonct')
+        .select('*')
+        .eq('user_id', userId);
 
-        // Ánh xạ dữ liệu
-        const mappedOrders = headers.map(h => {
-          const orderDetails = (details || [])
-            .filter(d => d.gom_don_id === h.id)
-            .map(d => ({
-              id: d.id,
-              rawLine: d.raw_line,
-              brand: d.brand,
-              chietXuat: d.chiet_xuat,
-              tinhNang: d.tinh_nang,
-              sph: Number(d.sph),
-              cyl: Number(d.cyl),
-              quantity: Number(d.quantity),
-              unit: d.unit,
-              sku: d.sku,
-              error: d.error || undefined
-            }));
+      if (detailErr) {
+        console.warn('Không thể tải b_gomdonct từ Supabase:', detailErr);
+        return;
+      }
 
-          return {
-            id: h.id,
-            branch: h.branch,
-            originalText: h.original_text,
-            createdAt: h.created_at ? new Date(h.created_at).toLocaleString('vi-VN') : new Date().toLocaleString('vi-VN'),
-            trangThai: h.trang_thai,
-            soPhieuXuat: h.so_phieu_xuat,
-            items: orderDetails
-          };
+      // Ánh xạ dữ liệu
+      const mappedOrders = headers.map(h => {
+        const orderDetails = (details || [])
+          .filter(d => d.gom_don_id === h.id)
+          .map(d => ({
+            id: d.id,
+            rawLine: d.raw_line,
+            brand: d.brand,
+            chietXuat: d.chiet_xuat,
+            tinhNang: d.tinh_nang,
+            sph: Number(d.sph),
+            cyl: Number(d.cyl),
+            quantity: Number(d.quantity),
+            unit: d.unit,
+            sku: d.sku,
+            error: d.error || undefined,
+            picked: !!d.picked
+          }));
+
+        orderDetails.forEach(item => {
+          console.log(`[AUDIT_FLOW][3_GOM_DON_LOAD] Temp Order ID: ${h.id} | SKU: ${item.sku} | Loaded Quantity: ${item.quantity}`);
         });
 
-        setTempOrders(mappedOrders);
-        localStorage.setItem('BATCH_PICKING_TEMP_ORDERS', JSON.stringify(mappedOrders));
+        return {
+          id: h.id,
+          branch: h.branch,
+          originalText: h.original_text,
+          createdAt: h.created_at ? new Date(h.created_at).toLocaleString('vi-VN') : new Date().toLocaleString('vi-VN'),
+          trangThai: h.trang_thai,
+          soPhieuXuat: h.so_phieu_xuat,
+          items: orderDetails
+        };
+      });
+
+      // Update cache
+      cachedTempOrders = mappedOrders;
+      lastTempOrdersFetchTime = now;
+
+      setTempOrders(mappedOrders);
+    } catch (err) {
+      console.error('Lỗi khi tải đơn hàng tạm từ Supabase:', err);
+    }
+  };
+
+  // Tải đơn hàng tạm từ Supabase khi khởi chạy hoặc chuyển đổi người dùng
+  useEffect(() => {
+    let active = true;
+    const initFetch = async () => {
+      const userId = await resolveEffectiveUserId();
+      if (!active) return;
+      // If user changed, invalidate cache
+      if (cachedUserId !== userId) {
+        cachedTempOrders = null;
+        lastTempOrdersFetchTime = 0;
+        cachedUserId = userId;
+      }
+      fetchTempOrdersFromSupabase();
+    };
+    initFetch();
+    return () => {
+      active = false;
+    };
+  }, [currentUser]);
+
+  // Thiết lập kênh Realtime đồng bộ hóa Gom đơn và Soạn hàng
+  useEffect(() => {
+    let realtimeChannel: any = null;
+    let active = true;
+
+    const setupRealtime = async () => {
+      try {
+        const userId = await resolveEffectiveUserId();
+        if (!active) return;
+        const ownerId = localStorage.getItem('DB_OWNER_USER_ID') || userId;
+        const channelName = `realtime-gomdon-${userId}-${Math.random().toString(36).substring(2, 8)}`;
+
+        console.log('Thiết lập kênh Supabase Realtime cho Gom Đơn:', channelName);
+
+        realtimeChannel = supabase
+          .channel(channelName)
+          .on(
+            'postgres_changes',
+            { event: '*', schema: 'public', table: 'b_gomdon' },
+            async (payload: any) => {
+              console.log('[OrderParser REALTIME] Nhận thay đổi trên b_gomdon:', payload);
+              const rowUserId = payload.new?.user_id || payload.old?.user_id;
+              if (!rowUserId || rowUserId === userId || rowUserId === ownerId) {
+                // Invalidate cache
+                cachedTempOrders = null;
+                lastTempOrdersFetchTime = 0;
+                await fetchTempOrdersFromSupabase(true);
+              }
+            }
+          )
+          .on(
+            'postgres_changes',
+            { event: '*', schema: 'public', table: 'b_gomdonct' },
+            async (payload: any) => {
+              console.log('[OrderParser REALTIME] Nhận thay đổi trên b_gomdonct:', payload);
+              const rowUserId = payload.new?.user_id || payload.old?.user_id;
+              if (!rowUserId || rowUserId === userId || rowUserId === ownerId) {
+                // Invalidate cache
+                cachedTempOrders = null;
+                lastTempOrdersFetchTime = 0;
+                await fetchTempOrdersFromSupabase(true);
+              }
+            }
+          )
+          .subscribe();
       } catch (err) {
-        console.error('Lỗi khi tải đơn hàng tạm từ Supabase:', err);
+        console.error('Lỗi khi thiết lập Realtime Gom Đơn:', err);
       }
     };
 
-    fetchTempOrdersFromSupabase();
+    setupRealtime();
+
+    return () => {
+      active = false;
+      if (realtimeChannel) {
+        console.log('Hủy đăng ký kênh Supabase Realtime Gom Đơn:', realtimeChannel.topic);
+        supabase.removeChannel(realtimeChannel);
+      }
+    };
   }, [currentUser]);
 
   // Set default branch when chiNhanhs loaded
@@ -700,6 +814,48 @@ export default function OrderParser({
     }
     
     return outputLines.join('\n');
+  };
+
+  const handlePasteMessage = async () => {
+    const textareaEl = document.getElementById('message_input_textarea') as HTMLTextAreaElement | null;
+    if (textareaEl) {
+      textareaEl.focus();
+    }
+
+    try {
+      if (!navigator.clipboard || !navigator.clipboard.readText) {
+        if (onTriggerToast) {
+          onTriggerToast('Trình duyệt hạn chế tự động đọc Clipboard. Vui lòng bấm Ctrl+V để dán.', 'warning');
+        }
+        return;
+      }
+      const text = await navigator.clipboard.readText();
+      if (!text || text.trim() === '') {
+        if (onTriggerToast) {
+          onTriggerToast('Không tìm thấy dữ liệu trong bộ nhớ tạm', 'warning');
+        }
+        return;
+      }
+      setMessage(text);
+      if (onTriggerToast) {
+        onTriggerToast('Đã dán nội dung từ bộ nhớ tạm thành công!', 'success');
+      }
+    } catch (err: any) {
+      console.warn('Clipboard readText API blocked or failed:', err?.message || err);
+      let execCommandSuccess = false;
+      try {
+        if (textareaEl) {
+          textareaEl.focus();
+          execCommandSuccess = document.execCommand('paste');
+        }
+      } catch (e) {
+        // execCommand paste is restricted in modern browsers
+      }
+
+      if (!execCommandSuccess && onTriggerToast) {
+        onTriggerToast('Không thể truy cập Clipboard tự động do chính sách bảo mật trình duyệt. Đã con trỏ vào ô nhập - Vui lòng bấm Ctrl+V (hoặc chạm giữ chọn Dán).', 'warning');
+      }
+    }
   };
 
   // Core parsing algorithm
@@ -1109,6 +1265,8 @@ export default function OrderParser({
             const isSelectable = !!matchedProduct && stock > 0;
             const defaultExportQty = isSelectable ? Math.min(quantity, stock) : 0;
 
+            console.log(`[AUDIT_FLOW][1_PARSER] SKU: ${generatedSku} | Product: ${matchedProduct ? matchedProduct.TEN_SAN_PHAM : 'N/A'} | Quantity parsed: ${quantity} | Unit: ${unit} | exportQuantity: ${defaultExportQty}`);
+
             results.push({
               id: `PARSED_${index}_${Math.random().toString(36).substring(2, 5)}`,
               rawLine,
@@ -1422,11 +1580,18 @@ export default function OrderParser({
         user_id: userId
       }));
 
+      detailsToInsert.forEach(item => {
+        console.log(`[AUDIT_FLOW][2_GOM_DON_SAVE] SKU: ${item.sku} | Quantity being saved to b_gomdonct: ${item.quantity} | Unit: ${item.unit}`);
+      });
+
       const { error: detailsErr } = await supabase.from('b_gomdonct').insert(detailsToInsert);
       if (detailsErr) {
         console.error('Lỗi khi lưu b_gomdonct lên Supabase:', detailsErr);
         if (onTriggerToast) onTriggerToast('Lưu chi tiết thất bại lên đám mây!', 'error');
       } else {
+        // Invalidate cache
+        cachedTempOrders = null;
+        lastTempOrdersFetchTime = 0;
         if (onTriggerToast) onTriggerToast(`Đã đồng bộ Gom Đơn chi nhánh "${selectedOrderBranch}" lên Supabase Cloud thành công!`, 'success');
       }
     } catch (err) {
@@ -1494,6 +1659,9 @@ export default function OrderParser({
           console.error('Lỗi khi xóa b_gomdon trên Supabase:', headerErr);
           if (onTriggerToast) onTriggerToast('Lỗi khi xóa đơn hàng tạm trên cơ sở dữ liệu!', 'error');
         } else {
+          // Invalidate cache
+          cachedTempOrders = null;
+          lastTempOrdersFetchTime = 0;
           if (onTriggerToast) onTriggerToast('Đã xóa đơn hàng tạm', 'success');
         }
       } catch (err) {
@@ -1532,6 +1700,9 @@ export default function OrderParser({
           setSelectedTempOrderIds(backupSelectedIds);
           if (onTriggerToast) onTriggerToast('Lỗi khi xóa toàn bộ đơn hàng tạm trên cơ sở dữ liệu!', 'error');
         } else {
+          // Invalidate cache
+          cachedTempOrders = null;
+          lastTempOrdersFetchTime = 0;
           if (onTriggerToast) onTriggerToast('Đã xóa đơn hàng tạm', 'success');
         }
       } catch (err) {
@@ -1570,6 +1741,9 @@ export default function OrderParser({
           setSelectedTempOrderIds(idsToDelete);
           if (onTriggerToast) onTriggerToast('Lỗi khi xóa các đơn hàng tạm đã chọn trên cơ sở dữ liệu!', 'error');
         } else {
+          // Invalidate cache
+          cachedTempOrders = null;
+          lastTempOrdersFetchTime = 0;
           if (onTriggerToast) onTriggerToast('Đã xóa đơn hàng tạm', 'success');
         }
       } catch (err) {
@@ -1668,6 +1842,10 @@ export default function OrderParser({
 
     const aggregatedList = Object.values(skuMap);
 
+    aggregatedList.forEach(item => {
+      console.log(`[AUDIT_FLOW][4_SOAN_DON] SKU: ${item.sku} | Total aggregated quantity for picking: ${item.totalQty} | Origins count: ${item.origins.length}`);
+    });
+
     // Group by Brand and Chiết suất
     const groupMap: Record<string, {
       brand: string;
@@ -1753,24 +1931,45 @@ export default function OrderParser({
       if (onTriggerToast) onTriggerToast('Vui lòng chọn ít nhất một thẻ đơn hàng để gom đơn!', 'warning');
       return;
     }
-    // Initialize picking state as false for all included SKUs
-    const initialPickedState: Record<string, boolean> = {};
-    batchPickingData.forEach(group => {
-      group.items.forEach(item => {
-        initialPickedState[item.sku] = false;
-      });
-    });
-    setPickedItemsState(initialPickedState);
     setIsBatchPickingActive(true);
     setPickingStep(1); // Set Step 1 by default
     if (onTriggerToast) onTriggerToast(`Đang mở quy trình gom đơn lấy hàng gồm ${selectedTempOrderIds.length} đơn!`, 'success');
   };
 
-  const handleTogglePickedSku = (sku: string) => {
-    setPickedItemsState(prev => ({
-      ...prev,
-      [sku]: !prev[sku]
-    }));
+  const handleTogglePickedSku = async (sku: string) => {
+    const isNowPicked = !pickedItemsState[sku];
+
+    // Optimistically update tempOrders in state so checkbox toggles instantly
+    const nextOrders = tempOrders.map(order => {
+      if (!selectedTempOrderIds.includes(order.id)) return order;
+      return {
+        ...order,
+        items: order.items.map((item: any) => {
+          if (item.sku === sku) {
+            return { ...item, picked: isNowPicked };
+          }
+          return item;
+        })
+      };
+    });
+    setTempOrders(nextOrders);
+    cachedTempOrders = nextOrders;
+
+    try {
+      // Sync with Supabase Cloud
+      const { error } = await supabase
+        .from('b_gomdonct')
+        .update({ picked: isNowPicked })
+        .eq('sku', sku)
+        .in('gom_don_id', selectedTempOrderIds);
+
+      if (error) {
+        console.error('Lỗi khi cập nhật trạng thái b_gomdonct.picked:', error);
+        if (onTriggerToast) onTriggerToast('Không thể lưu trạng thái soạn hàng lên đám mây!', 'error');
+      }
+    } catch (err) {
+      console.error(err);
+    }
   };
 
   const handleExecuteBatchExport = async () => {
@@ -1868,6 +2067,8 @@ export default function OrderParser({
         const exportQty = item.quantity;
         totalQty += exportQty;
 
+        console.log(`[AUDIT_FLOW][5_TAO_PHIEU_NHAPXUATCT] Order ID: ${order.id} | SKU: ${item.sku} | Quantity mapped to b_nhapxuatct: ${exportQty}`);
+
         detailsList.push({
           ID: `CT_NEW_${Date.now()}_${order.id.replace('TEMP_ORDER_', '')}_${i}`,
           HOA_DON: '', // Sẽ được sinh tự động tại App.tsx
@@ -1944,7 +2145,6 @@ export default function OrderParser({
       });
 
       setTempOrders(updatedTempOrders);
-      localStorage.setItem('BATCH_PICKING_TEMP_ORDERS', JSON.stringify(updatedTempOrders));
 
       if (onTriggerToast) {
         onTriggerToast(`Đã tự động tạo thành công ${transactionsToSubmit.length} phiếu xuất kho riêng biệt!`, 'success');
@@ -2110,6 +2310,24 @@ export default function OrderParser({
             Kiểm Tra Đơn Hàng & Gom Đơn Soạn Hàng
           </h2>
         </div>
+        <button
+          onClick={async () => {
+            if (onTriggerToast) onTriggerToast('Đang làm mới dữ liệu từ đám mây...', 'success');
+            
+            const promises: Promise<any>[] = [fetchTempOrdersFromSupabase(true)];
+            if (onRefreshProductsAndTransactions) {
+              promises.push(onRefreshProductsAndTransactions());
+            }
+            
+            await Promise.all(promises);
+            if (onTriggerToast) onTriggerToast('Đã cập nhật dữ liệu mới nhất!', 'success');
+          }}
+          className="flex items-center gap-1.5 px-3.5 py-2 bg-white border border-slate-200 hover:border-indigo-300 hover:text-indigo-600 rounded-xl text-xs font-semibold text-slate-600 transition-all cursor-pointer active:scale-95 shadow-xs"
+          title="Làm mới dữ liệu từ đám mây"
+        >
+          <RefreshCw className="w-3.5 h-3.5" />
+          Làm mới
+        </button>
       </div>
 
       {/* Sub-Tabs Navigation */}
@@ -2173,12 +2391,25 @@ export default function OrderParser({
               <div className="space-y-1.5">
                 <div className="flex items-center justify-between">
                   <span className="text-xs font-bold text-slate-700 uppercase tracking-wider block">Nội dung tin nhắn khách gửi</span>
-                  <button 
-                    onClick={() => setMessage('')} 
-                    className="text-[10px] font-bold text-slate-400 hover:text-slate-600 transition-colors uppercase cursor-pointer"
-                  >
-                    Xóa Trắng
-                  </button>
+                  <div className="flex items-center gap-2">
+                    <button 
+                      onClick={handlePasteMessage}
+                      type="button"
+                      className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-bold text-indigo-600 bg-indigo-50 hover:bg-indigo-100 hover:text-indigo-700 active:scale-95 rounded-lg transition-all cursor-pointer border border-indigo-200/60 shadow-xs"
+                      title="Dán nội dung từ Clipboard"
+                      id="paste_message_btn"
+                    >
+                      <ClipboardPaste className="w-3.5 h-3.5" />
+                      Dán
+                    </button>
+                    <button 
+                      onClick={() => setMessage('')} 
+                      type="button"
+                      className="text-[10px] font-bold text-slate-400 hover:text-slate-600 transition-colors uppercase cursor-pointer"
+                    >
+                      Xóa Trắng
+                    </button>
+                  </div>
                 </div>
                 
                 <textarea
@@ -2833,11 +3064,11 @@ export default function OrderParser({
 
       {/* NEW BATCH PICKING FULL-SCREEN OVERLAY MODAL */}
       {isBatchPickingActive && (
-        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs z-50 overflow-y-auto flex items-start justify-center p-0 md:p-6 animate-fade-in" id="batch_picking_modal_overlay">
-          <div className="bg-slate-50 min-h-screen md:min-h-0 md:rounded-3xl shadow-2xl border border-slate-200 w-full max-w-5xl md:my-4 flex flex-col overflow-hidden animate-scale-up">
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs z-50 flex items-center justify-center p-0 md:p-6 animate-fade-in" id="batch_picking_modal_overlay">
+          <div className="bg-slate-50 h-[100dvh] md:h-auto md:max-h-[90vh] md:rounded-3xl shadow-2xl border border-slate-200 w-full max-w-5xl flex flex-col overflow-hidden animate-scale-up">
             
             {/* Modal Header */}
-            <div className="bg-slate-900 text-white p-5 md:p-6 flex flex-col sm:flex-row sm:items-center justify-between gap-4 shrink-0">
+            <div className="bg-slate-900 text-white p-4 md:p-6 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shrink-0">
               <div className="space-y-1">
                 <button
                   onClick={() => setIsBatchPickingActive(false)}
@@ -2967,7 +3198,7 @@ export default function OrderParser({
             </div>
 
             {/* Modal Body Content */}
-            <div className="p-4 md:p-6 space-y-6 flex-1 overflow-y-auto max-h-[calc(100vh-220px)] md:max-h-[60vh]">
+            <div className="p-4 md:p-6 space-y-6 flex-1 overflow-y-auto min-h-0">
               
               {/* STEP 1: CHỌN ĐƠN HÀNG */}
               {pickingStep === 1 && (
@@ -3361,14 +3592,28 @@ export default function OrderParser({
                   {/* Quick helper */}
                   <div className="flex justify-end gap-2 text-xs">
                     <button
-                      onClick={() => {
-                        const next: Record<string, boolean> = {};
-                        batchPickingData.forEach(g => {
-                          g.items.forEach(i => {
-                            next[i.sku] = true;
-                          });
+                      onClick={async () => {
+                        // Optimistically update local state to true
+                        const nextOrders = tempOrders.map(order => {
+                          if (!selectedTempOrderIds.includes(order.id)) return order;
+                          return {
+                            ...order,
+                            items: order.items.map((item: any) => ({ ...item, picked: true }))
+                          };
                         });
-                        setPickedItemsState(next);
+                        setTempOrders(nextOrders);
+                        cachedTempOrders = nextOrders;
+
+                        // Update in Supabase
+                        try {
+                          const { error } = await supabase
+                            .from('b_gomdonct')
+                            .update({ picked: true })
+                            .in('gom_don_id', selectedTempOrderIds);
+                          if (error) console.error(error);
+                        } catch (e) {
+                          console.error(e);
+                        }
                       }}
                       className="font-bold text-indigo-600 hover:text-indigo-500 cursor-pointer"
                     >
@@ -3376,8 +3621,28 @@ export default function OrderParser({
                     </button>
                     <span className="text-slate-300">|</span>
                     <button
-                      onClick={() => {
-                        setPickedItemsState({});
+                      onClick={async () => {
+                        // Optimistically update local state to false
+                        const nextOrders = tempOrders.map(order => {
+                          if (!selectedTempOrderIds.includes(order.id)) return order;
+                          return {
+                            ...order,
+                            items: order.items.map((item: any) => ({ ...item, picked: false }))
+                          };
+                        });
+                        setTempOrders(nextOrders);
+                        cachedTempOrders = nextOrders;
+
+                        // Update in Supabase
+                        try {
+                          const { error } = await supabase
+                            .from('b_gomdonct')
+                            .update({ picked: false })
+                            .in('gom_don_id', selectedTempOrderIds);
+                          if (error) console.error(error);
+                        } catch (e) {
+                          console.error(e);
+                        }
                       }}
                       className="font-bold text-slate-500 hover:text-slate-400 cursor-pointer"
                     >
@@ -3679,29 +3944,29 @@ export default function OrderParser({
                 </div>
               )}
 
-              {/* Generous Bottom Spacer to prevent cut-off on mobile viewport/sticky footer */}
-              <div className="h-28 shrink-0" />
+              {/* Bottom Spacer to prevent scroll clip */}
+              <div className="h-4 shrink-0" />
 
             </div>
 
             {/* Sticky Action Footer (Tối ưu thao tác một tay ở cuối màn hình) */}
-            <div className="bg-white border-t border-slate-200 p-4 shrink-0 flex items-center justify-between gap-4 sticky bottom-0 z-20 shadow-lg">
+            <div className="bg-white border-t border-slate-200 p-3.5 sm:p-4 pb-[max(0.875rem,env(safe-area-inset-bottom))] shrink-0 flex items-center justify-between gap-3 sticky bottom-0 z-30 shadow-lg">
               
               {/* Back Button */}
               {pickingStep > 1 ? (
                 <button
                   onClick={() => setPickingStep(prev => prev - 1)}
-                  className="bg-slate-100 hover:bg-slate-200 text-slate-700 font-sans font-bold py-3 px-5 rounded-xl text-xs transition-all active:scale-95 cursor-pointer flex items-center gap-1"
+                  className="bg-slate-100 hover:bg-slate-200 active:bg-slate-300 text-slate-700 font-sans font-bold py-3 px-4 sm:px-5 rounded-xl text-xs transition-all active:scale-95 cursor-pointer flex items-center justify-center gap-1.5 shrink-0 min-w-[100px] sm:min-w-0"
                 >
                   <ArrowLeft className="w-4 h-4" />
-                  Quay Lại
+                  <span>Quay Lại</span>
                 </button>
               ) : (
                 <button
                   onClick={() => setIsBatchPickingActive(false)}
-                  className="bg-slate-100 hover:bg-slate-200 text-slate-700 font-sans font-bold py-3 px-5 rounded-xl text-xs transition-all active:scale-95 cursor-pointer"
+                  className="bg-slate-100 hover:bg-slate-200 active:bg-slate-300 text-slate-700 font-sans font-bold py-3 px-4 sm:px-5 rounded-xl text-xs transition-all active:scale-95 cursor-pointer shrink-0 min-w-[100px] sm:min-w-0"
                 >
-                  Đóng Lại
+                  <span>Đóng Lại</span>
                 </button>
               )}
 
@@ -3715,7 +3980,7 @@ export default function OrderParser({
                     }
                     setPickingStep(prev => prev + 1);
                   }}
-                  className="bg-indigo-600 hover:bg-indigo-500 text-white font-sans font-bold py-3 px-6 rounded-xl text-xs transition-all shadow-md active:scale-95 cursor-pointer flex items-center gap-1.5"
+                  className="bg-indigo-600 hover:bg-indigo-500 active:bg-indigo-700 text-white font-sans font-bold py-3 px-5 sm:px-6 rounded-xl text-xs transition-all shadow-md active:scale-95 cursor-pointer flex items-center justify-center gap-1.5 shrink-0"
                 >
                   <span>Tiếp Tục</span>
                   <ArrowRight className="w-4 h-4" />
@@ -3723,10 +3988,10 @@ export default function OrderParser({
               ) : (
                 <button
                   onClick={handleExecuteBatchExport}
-                  className="bg-emerald-600 hover:bg-emerald-500 hover:shadow-sm text-white font-sans font-bold py-3 px-6 rounded-xl text-xs transition-all shadow-md active:scale-95 cursor-pointer flex items-center gap-1.5"
+                  className="bg-emerald-600 hover:bg-emerald-500 active:bg-emerald-700 hover:shadow-sm text-white font-sans font-bold py-3 px-5 sm:px-6 rounded-xl text-xs transition-all shadow-md active:scale-95 cursor-pointer flex items-center justify-center gap-1.5 shrink-0"
                 >
                   <Check className="w-4 h-4" />
-                  Tạo Phiếu Xuất
+                  <span>Tạo Phiếu Xuất</span>
                 </button>
               )}
 

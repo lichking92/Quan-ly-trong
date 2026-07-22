@@ -68,6 +68,12 @@ export async function resolveEffectiveUserId(): Promise<string> {
   return "";
 }
 
+export function isValidUuid(id: string): boolean {
+  if (!id) return false;
+  const regex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  return regex.test(id);
+}
+
 /**
  * FILE: supabaseSync.ts
  * MÔ TẢ: Hệ thống đồng bộ dữ liệu thời gian thực và tự động Onboarding qua Supabase.
@@ -94,7 +100,7 @@ export async function tryCreateColumnsOnSupabase() {
   if (hasCreatedColumns) return;
   hasCreatedColumns = true;
 
-  const SCHEMA_VERSION = 'v4_nhanvien_register_fix';
+  const SCHEMA_VERSION = 'v5_gomdon_realtime_sync';
   if (typeof window !== 'undefined') {
     if (localStorage.getItem('SUPABASE_RPC_NOT_AVAILABLE') === 'true') {
       console.log("Bỏ qua cấu hình tự động do không được hỗ trợ trên Supabase này.");
@@ -371,6 +377,12 @@ export async function tryCreateColumnsOnSupabase() {
           user_id uuid
         );
         ALTER TABLE public.b_gomdonct DISABLE ROW LEVEL SECURITY;
+      EXCEPTION WHEN others THEN NULL;
+      END;
+
+      -- Đảm bảo b_gomdonct có cột picked để đồng bộ trạng thái soạn hàng realtime
+      BEGIN
+        ALTER TABLE public.b_gomdonct ADD COLUMN IF NOT EXISTS "picked" boolean DEFAULT false;
       EXCEPTION WHEN others THEN NULL;
       END;
 
@@ -1335,6 +1347,9 @@ export async function ensureUserOnboarded(userId: string): Promise<UserDataPaylo
   if (!userId) {
     userId = await resolveEffectiveUserId();
   }
+  if (!isValidUuid(userId)) {
+    return await fetchAllUserData(userId);
+  }
   try {
     // 1. Cố gắng tự động tạo cột trên Supabase (nếu chưa có)
     await tryCreateColumnsOnSupabase();
@@ -1538,11 +1553,14 @@ export const cache: {
 };
 
 export const activePromises: Record<string, Promise<any[]> | null> = {};
+export const lastLoadedAt: Record<string, number> = {};
+export const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes cache TTL
 
 function updateInMemoryAndCentralCache(key: keyof typeof cache, data: any[]) {
   cache[key] = data;
   const inMemoryKey = `B_${key.toUpperCase()}`;
   inMemoryCache[inMemoryKey] = data;
+  lastLoadedAt[key] = Date.now();
 }
 
 export function invalidateCache(key: keyof typeof cache) {
@@ -1550,6 +1568,13 @@ export function invalidateCache(key: keyof typeof cache) {
   const inMemoryKey = `B_${key.toUpperCase()}`;
   delete inMemoryCache[inMemoryKey];
   activePromises[key] = null;
+  delete lastLoadedAt[key];
+}
+
+export function isCacheValid(key: keyof typeof cache): boolean {
+  if (!cache[key]) return false;
+  const loadedAt = lastLoadedAt[key] || 0;
+  return (Date.now() - loadedAt) < CACHE_TTL_MS;
 }
 
 export async function fetchNhanVien(force = false): Promise<any[]> {
@@ -1584,6 +1609,8 @@ export async function fetchRole(force = false): Promise<any[]> {
   if (activePromises.role) return activePromises.role;
 
   const userId = await resolveEffectiveUserId();
+  if (!isValidUuid(userId)) return inMemoryCache['B_ROLE'] || [];
+
   const promise = (async () => {
     try {
       const { data, error } = await supabase
@@ -1612,6 +1639,8 @@ export async function fetchThuongHieu(force = false): Promise<any[]> {
   if (activePromises.thuonghieu) return activePromises.thuonghieu;
 
   const userId = await resolveEffectiveUserId();
+  if (!isValidUuid(userId)) return inMemoryCache['B_THUONGHIEU'] || [];
+
   const promise = (async () => {
     try {
       const { data, error } = await supabase
@@ -1640,6 +1669,8 @@ export async function fetchChiNhanh(force = false): Promise<any[]> {
   if (activePromises.chinhanh) return activePromises.chinhanh;
 
   const userId = await resolveEffectiveUserId();
+  if (!isValidUuid(userId)) return inMemoryCache['B_CHINHANH'] || [];
+
   const promise = (async () => {
     try {
       const { data, error } = await supabase
@@ -1664,10 +1695,12 @@ export async function fetchChiNhanh(force = false): Promise<any[]> {
 
 export async function fetchSanPham(force = false): Promise<any[]> {
   if (isOfflineMode) return inMemoryCache['B_SANPHAM'] || [];
-  if (!force && cache.sanpham) return cache.sanpham;
+  if (!force && isCacheValid('sanpham')) return cache.sanpham!;
   if (activePromises.sanpham) return activePromises.sanpham;
 
   const userId = await resolveEffectiveUserId();
+  if (!isValidUuid(userId)) return inMemoryCache['B_SANPHAM'] || [];
+
   const promise = (async () => {
     try {
       let allData: any[] = [];
@@ -1716,6 +1749,8 @@ export async function fetchKiemKho(force = false): Promise<any[]> {
   if (activePromises.kiemkho) return activePromises.kiemkho;
 
   const userId = await resolveEffectiveUserId();
+  if (!isValidUuid(userId)) return inMemoryCache['B_KIEMKHO'] || [];
+
   const promise = (async () => {
     try {
       const { data, error } = await supabase
@@ -1743,6 +1778,8 @@ export async function fetchEmailLogs(userId: string, force = false): Promise<any
   if (!force && cache.emaillog) return cache.emaillog;
   if (activePromises.emaillog) return activePromises.emaillog;
 
+  if (!isValidUuid(userId)) return inMemoryCache['B_EMAILLOG'] || [];
+
   const promise = (async () => {
     try {
       const { data, error } = await supabase
@@ -1769,10 +1806,12 @@ export async function fetchEmailLogs(userId: string, force = false): Promise<any
 
 export async function fetchNhapXuat(force = false): Promise<any[]> {
   if (isOfflineMode) return inMemoryCache['B_NHAPXUAT'] || [];
-  if (!force && cache.nhapxuat) return cache.nhapxuat;
+  if (!force && isCacheValid('nhapxuat')) return cache.nhapxuat!;
   if (activePromises.nhapxuat) return activePromises.nhapxuat;
 
   const userId = await resolveEffectiveUserId();
+  if (!isValidUuid(userId)) return inMemoryCache['B_NHAPXUAT'] || [];
+
   const promise = (async () => {
     try {
       let allData: any[] = [];
@@ -1817,10 +1856,12 @@ export async function fetchNhapXuat(force = false): Promise<any[]> {
 
 export async function fetchNhapXuatCT(force = false): Promise<any[]> {
   if (isOfflineMode) return inMemoryCache['B_NHAPXUATCT'] || [];
-  if (!force && cache.nhapxuatct) return cache.nhapxuatct;
+  if (!force && isCacheValid('nhapxuatct')) return cache.nhapxuatct!;
   if (activePromises.nhapxuatct) return activePromises.nhapxuatct;
 
   const userId = await resolveEffectiveUserId();
+  if (!isValidUuid(userId)) return inMemoryCache['B_NHAPXUATCT'] || [];
+
   const promise = (async () => {
     try {
       let allData: any[] = [];
@@ -1887,6 +1928,10 @@ export async function fetchAllRows(tableName: string, userId: string): Promise<a
   if (tableName === 'b_chinhanh') return fetchChiNhanh();
   if (tableName === 'b_nhanvien') return fetchNhanVien();
   if (tableName === 'b_role') return fetchRole();
+
+  if (!isValidUuid(userId)) {
+    return inMemoryCache[cacheKey] || [];
+  }
 
   let allData: any[] = [];
   let from = 0;

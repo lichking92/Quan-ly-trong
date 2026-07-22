@@ -1,6 +1,6 @@
 {
   "name": "Quản lý Xuất Nhập Tồn Tròng Kính",
   "description": "Hệ thống quản lý xuất nhập tồn tròng kính mắt thông minh, tích hợp cảnh báo hết hàng, quét mã vạch và tối ưu hóa quy trình kiểm kho.",
-  "requestFramePermissions": [],
+  "requestFramePermissions": ["clipboard-read", "clipboard-write"],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

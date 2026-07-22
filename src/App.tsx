@@ -283,6 +283,7 @@ export default function App() {
   // --- 1. KHỞI TẠO STATE CƠ SỞ DỮ LIỆU ĐỒNG BỘ LOCALSTATE (KHÔNG LƯU LOCALSTORAGE THEO YÊU CẦU BẢO MẬT) ---
   const sessionStartTimeRef = useRef<number>(Date.now());
   const sessionCreatedInvoiceIdsRef = useRef<Set<string>>(new Set());
+  const deletedInvoiceIdsRef = useRef<Set<string>>(new Set());
 
   const [sanPhams, setSanPhams] = useState<SanPham[]>([]);
   const [nhapXuats, setNhapXuats] = useState<NhapXuat[]>([]);
@@ -829,34 +830,25 @@ export default function App() {
       setSanPhams(uniqueProducts);
 
       // Tránh việc ghi đè làm mất các phiếu mới tạo cục bộ do độ trễ đồng bộ (replication lag) của database
-      const dbNhapXuats = payload.nhapXuats || [];
-      const dbNhapXuatCTs = payload.nhapXuatCTs || [];
+      const dbNhapXuats = (payload.nhapXuats || []).filter(h => h.HOA_DON && !deletedInvoiceIdsRef.current.has(h.HOA_DON));
+      const dbNhapXuatCTs = (payload.nhapXuatCTs || []).filter(d => d.HOA_DON && !deletedInvoiceIdsRef.current.has(d.HOA_DON));
 
       // Lấy danh sách phiếu hiện tại từ State
       const mergedNhapXuats = [...dbNhapXuats];
       const mergedNhapXuatCTs = [...dbNhapXuatCTs];
 
-      // Định nghĩa ngưỡng thời gian cũ (quá 2 tiếng hoặc tạo trước khi phiên hiện tại bắt đầu)
-      const isTooOld = (tgTaoStr?: string) => {
-        if (!tgTaoStr) return true;
-        try {
-          const creationTime = new Date(tgTaoStr).getTime();
-          const sessionTime = sessionStartTimeRef.current;
-          return (sessionTime - creationTime) > 7200000 || creationTime < sessionTime;
-        } catch {
-          return true;
-        }
-      };
-
       nhapXuats.forEach(localNx => {
         if (localNx.HOA_DON && !localNx.HOA_DON.includes('_temp_')) {
+          if (deletedInvoiceIdsRef.current.has(localNx.HOA_DON)) {
+            console.log(`[Sync] Bỏ qua gộp phiếu đã bị xóa vĩnh viễn: ${localNx.HOA_DON}`);
+            return; // Loại bỏ hoàn toàn bản ghi đã bị xóa
+          }
           const exists = dbNhapXuats.some(dbNx => dbNx.HOA_DON === localNx.HOA_DON);
           if (!exists) {
             const isCreatedInCurrentSession = sessionCreatedInvoiceIdsRef.current.has(localNx.HOA_DON);
-            const tooOld = isTooOld(localNx.TG_TAO);
 
-            if (!isCreatedInCurrentSession && tooOld) {
-              console.log(`[Sync] Bản ghi cũ phát hiện không tồn tại trên Supabase và có timestamp quá cũ, tự động loại bỏ khỏi hàng đợi đồng bộ: ${localNx.HOA_DON}`);
+            if (!isCreatedInCurrentSession) {
+              console.log(`[Sync] Bản ghi không tồn tại trên Supabase và không được tạo trong phiên làm việc hiện tại, tự động loại bỏ: ${localNx.HOA_DON}`);
               return; // Loại bỏ, không giữ lại
             }
 
@@ -1587,12 +1579,15 @@ export default function App() {
     const loadData = async () => {
       const activeOwnerId = currentUser?.user_id || currentUser?.id || '00000000-0000-0000-0000-000000000000';
 
+      const forceRefresh = false;
+
       // 1. Lazy load b_sanpham
       const needsProducts = ['PRODUCT', 'MATRIX', 'ORDER_PARSER', 'TRANSACTION_NHAP', 'TRANSACTION_XUAT', 'DASHBOARD', 'AUDIT'].includes(activeTab);
-      if (needsProducts && !cache.sanpham && !lazyLoadingRef.current.sanpham) {
+      if (needsProducts && (!cache.sanpham || forceRefresh) && !lazyLoadingRef.current.sanpham) {
         lazyLoadingRef.current.sanpham = true;
         try {
-          const data = await fetchSanPham();
+          console.log(`[ORDER_PARSER FLOW] ${forceRefresh ? 'Forcing' : 'Lazy loading'} fresh fetch for b_sanpham from DB...`);
+          const data = await fetchSanPham(forceRefresh);
           setSanPhams(deduplicateProducts(data));
         } catch (err) {
           console.error("Lỗi lazy load b_sanpham:", err);
@@ -1617,12 +1612,13 @@ export default function App() {
 
       // 3. Lazy load b_nhapxuat và b_nhapxuatct
       const needsTransactions = ['DASHBOARD', 'TRANSACTION_NHAP', 'TRANSACTION_XUAT', 'HISTORY', 'ORDER_PARSER'].includes(activeTab);
-      if (needsTransactions && (!cache.nhapxuat || !cache.nhapxuatct) && !lazyLoadingRef.current.transactions) {
+      if (needsTransactions && (!cache.nhapxuat || !cache.nhapxuatct || forceRefresh) && !lazyLoadingRef.current.transactions) {
         lazyLoadingRef.current.transactions = true;
         try {
+          console.log(`[ORDER_PARSER FLOW] ${forceRefresh ? 'Forcing' : 'Lazy loading'} fresh fetch for transactions from DB...`);
           const [dataNx, dataNxCt] = await Promise.all([
-            fetchNhapXuat(),
-            fetchNhapXuatCT()
+            fetchNhapXuat(forceRefresh),
+            fetchNhapXuatCT(forceRefresh)
           ]);
           setNhapXuats(dataNx);
           setNhapXuatCTs(dataNxCt);
@@ -1696,11 +1692,110 @@ export default function App() {
     }
   }, [activeTab]);
   const [mobileMenuOpen, setMobileMenuOpen] = useState<boolean>(false);
-  const [successToast, setSuccessToast] = useState<{ 
+
+  // Helper function to detect and parse negative stock errors cleanly
+  const parseNegativeStockError = (errorMsg: any): { sku: string; currentStock: number; requestedQty: number } | null => {
+    if (!errorMsg || typeof errorMsg !== 'string') return null;
+
+    const lowerMsg = errorMsg.toLowerCase();
+    const isNegativeStock = 
+      lowerMsg.includes("không cho phép tồn kho âm") ||
+      lowerMsg.includes("tồn kho âm") ||
+      lowerMsg.includes("không cho xuất âm") ||
+      lowerMsg.includes("insufficient stock") ||
+      lowerMsg.includes("stock below zero") ||
+      lowerMsg.includes("rule 1");
+
+    if (!isNegativeStock) return null;
+
+    let sku = "";
+    let currentStock = 0;
+    let requestedQty = 0;
+
+    // 1. Match SKU inside brackets, e.g., SKU [SKU_HERE] or SKU: [SKU_HERE] or SKU: SKU_HERE
+    const skuMatch = errorMsg.match(/SKU\s*\[([^\]]+)\]/i) || 
+                     errorMsg.match(/SKU\s*:\s*([^,\s]+)/i) ||
+                     errorMsg.match(/SKU\s*([^,\s]+)/i);
+    if (skuMatch) {
+      sku = skuMatch[1].trim();
+    }
+
+    // 2. Match current stock, e.g., "chỉ còn tồn 94" or "tồn hiện có (94" or "Tồn hiện tại: 94"
+    const stockMatch = errorMsg.match(/chỉ còn tồn\s*(\d+)/i) || 
+                       errorMsg.match(/chỉ còn tồn kho\s*(\d+)/i) ||
+                       errorMsg.match(/hiện tại chỉ còn tồn\s*(\d+)/i) ||
+                       errorMsg.match(/tồn kho hiện có\s*\((\d+)\)/i) ||
+                       errorMsg.match(/Tồn hiện tại:\s*(\d+)/i);
+    if (stockMatch) {
+      currentStock = parseInt(stockMatch[1], 10);
+    }
+
+    // 3. Try to match requested quantity or calculate from negative resulting value
+    const negativeMatch = errorMsg.match(/làm âm thành\s*(-?\d+)/i) ||
+                          errorMsg.match(/bị âm\s*\(?(-?\d+)/i);
+    
+    const reqQtyMatch = errorMsg.match(/yêu cầu xuất tổng cộng\s*(\d+)/i) ||
+                        errorMsg.match(/Yêu cầu\s*\((\d+)\s*miếng\)/i) ||
+                        errorMsg.match(/Số lượng yêu cầu:\s*(\d+)/i);
+
+    if (reqQtyMatch) {
+      requestedQty = parseInt(reqQtyMatch[1], 10);
+    } else if (negativeMatch && currentStock > 0) {
+      const resultingStock = parseInt(negativeMatch[1], 10);
+      requestedQty = currentStock - resultingStock;
+    }
+
+    return {
+      sku: sku || "Không xác định",
+      currentStock,
+      requestedQty
+    };
+  };
+
+  const [successToast, setSuccessToastInternal] = useState<{ 
     message: string; 
     type?: 'success' | 'warning' | 'error';
-    id?: string;
+    title?: string;
+    id?: string | number;
+    show?: boolean;
   } | null>(null);
+
+  const setSuccessToast = (toast: { 
+    message: string; 
+    type?: 'success' | 'warning' | 'error';
+    title?: string;
+    id?: string | number;
+    show?: boolean;
+  } | null) => {
+    if (toast === null) {
+      setSuccessToastInternal(null);
+      return;
+    }
+
+    // Detect negative stock in the toast message
+    const parsed = parseNegativeStockError(toast.message);
+    if (parsed) {
+      let displayMessage = `SKU: ${parsed.sku}\n`;
+      if (parsed.currentStock !== undefined && parsed.currentStock !== null && !isNaN(parsed.currentStock)) {
+        displayMessage += `Tồn hiện tại: ${parsed.currentStock}\n`;
+      }
+      if (parsed.requestedQty && parsed.requestedQty > 0) {
+        displayMessage += `Số lượng yêu cầu: ${parsed.requestedQty}\n`;
+      }
+      displayMessage += `Vui lòng kiểm tra lại số lượng xuất.`;
+
+      setSuccessToastInternal({
+        title: "Không đủ tồn kho",
+        message: displayMessage,
+        type: "error",
+        id: toast.id || `negative-stock-toast-${Date.now()}`,
+        show: toast.show !== undefined ? toast.show : true
+      });
+      return;
+    }
+
+    setSuccessToastInternal(toast);
+  };
   const [sidebarCollapsed, setSidebarCollapsed] = useState<boolean>(false);
   const [prefilledSku, setPrefilledSku] = useState<string | null>(null);
   const [prefilledCartItems, setPrefilledCartItems] = useState<{ sku: string; soLuong: number; }[] | null>(null);
@@ -1834,7 +1929,37 @@ export default function App() {
     action: string;
     message: string;
   }
-  const [syncError, setSyncError] = useState<SyncError | null>(null);
+  const [syncError, setSyncErrorInternal] = useState<SyncError | null>(null);
+
+  const setSyncError = (error: SyncError | null) => {
+    if (error === null) {
+      setSyncErrorInternal(null);
+      return;
+    }
+
+    // Detect negative stock error
+    const parsed = parseNegativeStockError(error.message);
+    if (parsed) {
+      let displayMessage = `SKU: ${parsed.sku}\n`;
+      if (parsed.currentStock !== undefined && parsed.currentStock !== null && !isNaN(parsed.currentStock)) {
+        displayMessage += `Tồn hiện tại: ${parsed.currentStock}\n`;
+      }
+      if (parsed.requestedQty && parsed.requestedQty > 0) {
+        displayMessage += `Số lượng yêu cầu: ${parsed.requestedQty}\n`;
+      }
+      displayMessage += `Vui lòng kiểm tra lại số lượng xuất.`;
+
+      setSuccessToast({
+        title: "Không đủ tồn kho",
+        message: displayMessage,
+        type: "error",
+        id: `negative-stock-sync-${Date.now()}`
+      });
+      return;
+    }
+
+    setSyncErrorInternal(error);
+  };
 
   // Trợ lý lấy User ID bảo mật chống clock-skew (F5 & JWT issued at future)
   const getUserId = async (): Promise<string | null> => {
@@ -2198,10 +2323,10 @@ export default function App() {
    * Nghiệp vụ Lưu phiếu Nhập / Phiếu Xuất kho
    * Tự động sinh Số hóa đơn (PNxxxxxx, PXxxxxxx) tăng dần chính xác
    */
-  const handleSaveTransaction = async (header: NhapXuat, details: NhapXuatCT[]) => {
+  const handleSaveTransaction = async (header: NhapXuat, details: NhapXuatCT[]): Promise<boolean> => {
     const isSessionValid = await verifySession();
-    if (!isSessionValid) return;
-    if (!(await ensureOnline())) return;
+    if (!isSessionValid) return false;
+    if (!(await ensureOnline())) return false;
     let prefix = header.LOAI === 'NHẬP' ? 'PN' : 'PX';
     if (header.HOA_DON) {
       if (header.HOA_DON.startsWith('PNK')) prefix = 'PNK';
@@ -2219,6 +2344,27 @@ export default function App() {
     const res = await rpcCreateTransaction(headerToSave, details);
     if (res.error || !res.data?.success) {
       const errMsg = res.error?.message || res.data?.message || 'Lỗi không xác định';
+      
+      const parsed = parseNegativeStockError(errMsg);
+      if (parsed) {
+        let displayMessage = `SKU: ${parsed.sku}\n`;
+        if (parsed.currentStock !== undefined && parsed.currentStock !== null && !isNaN(parsed.currentStock)) {
+          displayMessage += `Tồn hiện tại: ${parsed.currentStock}\n`;
+        }
+        if (parsed.requestedQty && parsed.requestedQty > 0) {
+          displayMessage += `Số lượng yêu cầu: ${parsed.requestedQty}\n`;
+        }
+        displayMessage += `Vui lòng kiểm tra lại số lượng xuất.`;
+
+        setSuccessToast({
+          title: "Không đủ tồn kho",
+          message: displayMessage,
+          type: "error",
+          id: `save-tx-fail-negative-${Date.now()}`
+        });
+        return false;
+      }
+
       setSyncError({
         table: 'b_nhapxuat / b_nhapxuatct / b_sanpham',
         action: 'Lưu hóa đơn',
@@ -2229,7 +2375,7 @@ export default function App() {
         type: "error",
         id: `save-tx-fail-${Date.now()}`
       });
-      return;
+      return false;
     }
 
     const newInvoiceId = res.data.hoa_don;
@@ -2299,6 +2445,7 @@ export default function App() {
         }, 3000);
       }
     }
+    return true;
   };
 
   /**
@@ -2333,6 +2480,27 @@ export default function App() {
       const res = await rpcCreateTransaction(headerToSave, details);
       if (res.error || !res.data?.success) {
         const errMsg = res.error?.message || res.data?.message || 'Lỗi không xác định';
+        
+        const parsed = parseNegativeStockError(errMsg);
+        if (parsed) {
+          let displayMessage = `SKU: ${parsed.sku}\n`;
+          if (parsed.currentStock !== undefined && parsed.currentStock !== null && !isNaN(parsed.currentStock)) {
+            displayMessage += `Tồn hiện tại: ${parsed.currentStock}\n`;
+          }
+          if (parsed.requestedQty && parsed.requestedQty > 0) {
+            displayMessage += `Số lượng yêu cầu: ${parsed.requestedQty}\n`;
+          }
+          displayMessage += `Vui lòng kiểm tra lại số lượng xuất.`;
+
+          setSuccessToast({
+            title: "Không đủ tồn kho",
+            message: displayMessage,
+            type: "error",
+            id: `save-bulk-tx-fail-negative-${Date.now()}`
+          });
+          return [];
+        }
+
         throw new Error(`Lỗi lưu hóa đơn hàng loạt: ${errMsg}`);
       }
 
@@ -2673,6 +2841,12 @@ export default function App() {
         });
         return false;
       }
+
+      // Cập nhật state cục bộ biến mất ngay lập tức trên UI và lưu vết xóa
+      setNhapXuats(prev => prev.filter(h => h.HOA_DON !== hoaDonId));
+      setNhapXuatCTs(prev => prev.filter(d => d.HOA_DON !== hoaDonId));
+      sessionCreatedInvoiceIdsRef.current.delete(hoaDonId);
+      deletedInvoiceIdsRef.current.add(hoaDonId);
 
       if (currentUser) {
         ignoreRealtimeRef.current = true;
@@ -3569,6 +3743,21 @@ export default function App() {
                     onNavigateToHistory={() => setActiveTab('HISTORY')}
                     nhapXuats={nhapXuats}
                     nhapXuatCTs={nhapXuatCTs}
+                    onRefreshProductsAndTransactions={async () => {
+                      try {
+                        console.log('[ORDER_PARSER FLOW] Manually refreshing fresh fetch for b_sanpham, b_nhapxuat, and b_nhapxuatct from DB...');
+                        const [dataSp, dataNx, dataNxCt] = await Promise.all([
+                          fetchSanPham(true),
+                          fetchNhapXuat(true),
+                          fetchNhapXuatCT(true)
+                        ]);
+                        setSanPhams(deduplicateProducts(dataSp));
+                        setNhapXuats(dataNx);
+                        setNhapXuatCTs(dataNxCt);
+                      } catch (err) {
+                        console.error("Lỗi reload dữ liệu sản phẩm & phiếu:", err);
+                      }
+                    }}
                   />
                 )}
 
@@ -3891,13 +4080,13 @@ export default function App() {
                 
                 <div className="flex-1 pr-6 text-left">
                   <h4 className="font-bold text-sm text-slate-100">
-                    {successToast.type === 'error'
+                    {successToast.title || (successToast.type === 'error'
                       ? 'Thao tác thất bại'
                       : successToast.type === 'warning'
                       ? 'Cảnh báo'
-                      : 'Thành công'}
+                      : 'Thành công')}
                   </h4>
-                  <p className="text-xs text-slate-300 mt-0.5 leading-relaxed font-medium">
+                  <p className="text-xs text-slate-300 mt-0.5 leading-relaxed font-medium whitespace-pre-line">
                     {successToast.message}
                   </p>
                 </div>

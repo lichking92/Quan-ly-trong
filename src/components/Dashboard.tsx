@@ -39,7 +39,8 @@ import {
   Plus,
   Trash2,
   ShieldCheck,
-  ArrowUpRight
+  ArrowUpRight,
+  UserCheck
 } from 'lucide-react';
 import { motion } from 'motion/react';
 import { 
@@ -268,6 +269,12 @@ export default function Dashboard({
   const [selectedChietXuatFilter, setSelectedChietXuatFilter] = useState<string>(() => {
     return localStorage.getItem('DASHBOARD_FILTER_CHIET_XUAT') || 'Tất cả';
   });
+  const [selectedTypeFilter, setSelectedTypeFilter] = useState<string>(() => {
+    return localStorage.getItem('DASHBOARD_FILTER_TYPE') || 'Tất cả';
+  });
+  const [selectedEmployeeFilter, setSelectedEmployeeFilter] = useState<string>(() => {
+    return localStorage.getItem('DASHBOARD_FILTER_EMPLOYEE') || 'Tất cả';
+  });
   const [chartType, setChartType] = useState<'line' | 'stacked'>('line');
   
   // Dữ liệu mẫu năm 2026, nên mặc định đặt khoảng thời gian từ 2026-07-01 đến 2026-07-31
@@ -296,6 +303,14 @@ export default function Dashboard({
   React.useEffect(() => {
     localStorage.setItem('DASHBOARD_FILTER_CHIET_XUAT', selectedChietXuatFilter);
   }, [selectedChietXuatFilter]);
+
+  React.useEffect(() => {
+    localStorage.setItem('DASHBOARD_FILTER_TYPE', selectedTypeFilter);
+  }, [selectedTypeFilter]);
+
+  React.useEffect(() => {
+    localStorage.setItem('DASHBOARD_FILTER_EMPLOYEE', selectedEmployeeFilter);
+  }, [selectedEmployeeFilter]);
 
   React.useEffect(() => {
     localStorage.setItem('DASHBOARD_FILTER_START_DATE', startDate);
@@ -635,26 +650,65 @@ export default function Dashboard({
     setSelectedBrandFilter('Tất cả');
     setSelectedFeatureFilter('Tất cả');
     setSelectedChietXuatFilter('Tất cả');
+    setSelectedTypeFilter('Tất cả');
+    setSelectedEmployeeFilter('Tất cả');
     setStartDate('2026-07-01');
     setEndDate('2026-07-31');
     setActiveQuickFilter('30d');
   };
 
   // --- 3. LỌC DỮ LIỆU THEO ĐIỀU KIỆN ---
-  // Lọc phiếu theo Chi nhánh và Khoảng thời gian
+  // Đồng bộ và chuẩn hóa thông tin LOAI và NGAY của chi tiết phiếu từ header gốc để đảm bảo tính nhất quán dữ liệu tuyệt đối
+  const normalizedNhapXuatCTs = useMemo(() => {
+    const headerMap = new Map<string, NhapXuat>();
+    nhapXuats.forEach(h => {
+      headerMap.set(h.HOA_DON, h);
+    });
+
+    return nhapXuatCTs.map(d => {
+      const parent = headerMap.get(d.HOA_DON);
+      return {
+        ...d,
+        LOAI: parent ? parent.LOAI : (d.LOAI || 'XUẤT'),
+        NGAY: parent ? parent.NGAY : (d.NGAY || '')
+      };
+    });
+  }, [nhapXuatCTs, nhapXuats]);
+
+  // Lọc phiếu theo Chi nhánh, Khoảng thời gian, Loại phiếu, Nhân viên
   const filteredHeadersBase = useMemo(() => {
     return nhapXuats.filter(h => {
       if (h.TRANG_THAI === 'Đã hủy') return false;
       const matchBranch = selectedBranch === 'Tất cả' || h.CHI_NHANH === selectedBranch;
       const matchDate = h.NGAY >= startDate && h.NGAY <= endDate;
-      return matchBranch && matchDate;
+      
+      // Lọc theo Loại phiếu
+      let matchType = true;
+      if (selectedTypeFilter !== 'Tất cả') {
+        if (selectedTypeFilter === 'Phiếu nhập') {
+          matchType = h.LOAI === 'NHẬP';
+        } else if (selectedTypeFilter === 'Phiếu xuất') {
+          matchType = h.LOAI === 'XUẤT';
+        } else if (selectedTypeFilter === 'Phiếu kiểm kho') {
+          matchType = h.LOAI === 'KIỂM KHO' || h.HOA_DON.startsWith('PKK') || h.HOA_DON.startsWith('PNK') || h.HOA_DON.startsWith('PXK');
+        } else if (selectedTypeFilter === 'Phiếu nhập kho') {
+          matchType = h.LOAI === 'NHẬP' && !h.HOA_DON.startsWith('PNK');
+        } else if (selectedTypeFilter === 'Phiếu xuất kho') {
+          matchType = h.LOAI === 'XUẤT' && !h.HOA_DON.startsWith('PXK');
+        }
+      }
+
+      // Lọc theo Nhân viên
+      const matchEmployee = selectedEmployeeFilter === 'Tất cả' || h.TEN_NGUOI_TAO === selectedEmployeeFilter || h.NGUOI_TAO === selectedEmployeeFilter;
+
+      return matchBranch && matchDate && matchType && matchEmployee;
     });
-  }, [nhapXuats, selectedBranch, startDate, endDate]);
+  }, [nhapXuats, selectedBranch, startDate, endDate, selectedTypeFilter, selectedEmployeeFilter]);
 
   // Lọc chi tiết phiếu khớp với Header cơ sở VÀ khớp bộ lọc Brand, Tính năng, Chiết suất
   const filteredDetails = useMemo(() => {
     const headerIds = new Set(filteredHeadersBase.map(h => h.HOA_DON));
-    return nhapXuatCTs.filter(d => {
+    return normalizedNhapXuatCTs.filter(d => {
       if (!headerIds.has(d.HOA_DON)) return false;
       
       const matchBrand = selectedBrandFilter === 'Tất cả' || d.THUONG_HIEU === selectedBrandFilter;
@@ -663,7 +717,7 @@ export default function Dashboard({
       
       return matchBrand && matchFeature && matchChietXuat;
     });
-  }, [nhapXuatCTs, filteredHeadersBase, selectedBrandFilter, selectedFeatureFilter, selectedChietXuatFilter]);
+  }, [normalizedNhapXuatCTs, filteredHeadersBase, selectedBrandFilter, selectedFeatureFilter, selectedChietXuatFilter]);
 
   // Lọc lại Headers tương ứng với các dòng chi tiết thực tế
   const filteredHeaders = useMemo(() => {
@@ -686,6 +740,18 @@ export default function Dashboard({
     const set = new Set(filtered.map(p => p.CHIET_XUAT).filter(Boolean));
     return Array.from(set).sort();
   }, [sanPhams, selectedBrandFilter, selectedFeatureFilter]);
+
+  const employeeOptions = useMemo(() => {
+    const set = new Set<string>();
+    nhapXuats.forEach(h => {
+      if (h.TEN_NGUOI_TAO) {
+        set.add(h.TEN_NGUOI_TAO);
+      } else if (h.NGUOI_TAO) {
+        set.add(h.NGUOI_TAO);
+      }
+    });
+    return Array.from(set).sort();
+  }, [nhapXuats]);
 
   // --- 4. TÍNH TOÁN CÁC KPI CHỦ CHỐT (TẬP TRUNG HIỆU NĂNG) ---
   const kpis = useMemo(() => {
@@ -769,13 +835,19 @@ export default function Dashboard({
   // --- 7. BIỂU ĐỒ 3: CHI NHÁNH LẤY HÀNG NHIỀU NHẤT (BAR CHART) ---
   const branchData = useMemo(() => {
     const mapBranch: Record<string, { branch: string; qty: number }> = {};
+    const headerMap = new Map<string, NhapXuat>();
+    nhapXuats.forEach(h => {
+      headerMap.set(h.HOA_DON, h);
+    });
 
-    filteredHeaders.forEach(h => {
-      if (h.LOAI === 'XUẤT') {
-        if (!mapBranch[h.CHI_NHANH]) {
-          mapBranch[h.CHI_NHANH] = { branch: h.CHI_NHANH, qty: 0 };
+    filteredDetails.forEach(d => {
+      if (d.LOAI === 'XUẤT') {
+        const parent = headerMap.get(d.HOA_DON);
+        const branch = parent ? parent.CHI_NHANH : 'Không xác định';
+        if (!mapBranch[branch]) {
+          mapBranch[branch] = { branch, qty: 0 };
         }
-        mapBranch[h.CHI_NHANH].qty += h.TONG_SL;
+        mapBranch[branch].qty += d.SO_LUONG;
       }
     });
 
@@ -785,7 +857,7 @@ export default function Dashboard({
         name: item.branch,
         'Số lượng xuất': item.qty
       }));
-  }, [filteredHeaders]);
+  }, [filteredDetails, nhapXuats]);
 
   // --- 8. BIỂU ĐỒ 4: NGÀY GIAO DỊCH NHIỀU NHẤT (LINE CHART) ---
   const transactionByDateData = useMemo(() => {
@@ -926,6 +998,8 @@ export default function Dashboard({
         nhapXuats,
         nhapXuatCTs,
         onTriggerToast,
+        selectedTypeFilter,
+        selectedEmployeeFilter,
         onDownload: (blob, fileName) => {
           const url = URL.createObjectURL(blob);
           const link = document.createElement('a');
@@ -1534,9 +1608,9 @@ export default function Dashboard({
           </div>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-6 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 xl:grid-cols-8 gap-4">
           {/* Bộ lọc nhanh thời gian (Date Range presets) */}
-          <div className="space-y-1 md:col-span-2">
+          <div className="space-y-1 sm:col-span-2 md:col-span-2 xl:col-span-2">
             <label className="text-[9px] uppercase tracking-wider font-extrabold text-slate-400 flex items-center gap-1">
               <Clock className="w-3 h-3" /> Lọc nhanh khoảng thời gian
             </label>
@@ -1630,8 +1704,44 @@ export default function Dashboard({
             </select>
           </div>
 
+          {/* Loại phiếu */}
+          <div className="space-y-1">
+            <label className="text-[9px] uppercase tracking-wider font-extrabold text-slate-400 flex items-center gap-1">
+              <FileText className="w-3 h-3" /> Loại phiếu
+            </label>
+            <select 
+              value={selectedTypeFilter}
+              onChange={(e) => setSelectedTypeFilter(e.target.value)}
+              className="w-full text-xs font-semibold text-slate-700 bg-slate-50 border border-slate-150 rounded-lg py-1.5 px-2 focus:outline-hidden"
+            >
+              <option value="Tất cả">Tất cả loại phiếu</option>
+              <option value="Phiếu nhập">Phiếu nhập</option>
+              <option value="Phiếu xuất">Phiếu xuất</option>
+              <option value="Phiếu kiểm kho">Phiếu kiểm kho</option>
+              <option value="Phiếu nhập kho">Phiếu nhập kho</option>
+              <option value="Phiếu xuất kho">Phiếu xuất kho</option>
+            </select>
+          </div>
+
+          {/* Nhân viên */}
+          <div className="space-y-1">
+            <label className="text-[9px] uppercase tracking-wider font-extrabold text-slate-400 flex items-center gap-1">
+              <UserCheck className="w-3 h-3" /> Nhân viên
+            </label>
+            <select 
+              value={selectedEmployeeFilter}
+              onChange={(e) => setSelectedEmployeeFilter(e.target.value)}
+              className="w-full text-xs font-semibold text-slate-700 bg-slate-50 border border-slate-150 rounded-lg py-1.5 px-2 focus:outline-hidden"
+            >
+              <option value="Tất cả">Tất cả nhân viên</option>
+              {employeeOptions.map(emp => (
+                <option key={emp} value={emp}>{emp}</option>
+              ))}
+            </select>
+          </div>
+
           {/* Ngày bắt đầu */}
-          <div className="space-y-1 lg:col-span-3">
+          <div className="space-y-1 sm:col-span-2 md:col-span-2 xl:col-span-4">
             <label className="text-[9px] uppercase tracking-wider font-extrabold text-slate-400 flex items-center gap-1">
               <Calendar className="w-3 h-3" /> Ngày bắt đầu
             </label>
@@ -1644,7 +1754,7 @@ export default function Dashboard({
           </div>
 
           {/* Ngày kết thúc */}
-          <div className="space-y-1 lg:col-span-3">
+          <div className="space-y-1 sm:col-span-2 md:col-span-2 xl:col-span-4">
             <label className="text-[9px] uppercase tracking-wider font-extrabold text-slate-400 flex items-center gap-1">
               <Calendar className="w-3 h-3" /> Ngày kết thúc
             </label>
