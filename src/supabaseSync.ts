@@ -1459,7 +1459,7 @@ export async function ensureUserOnboarded(userId: string): Promise<UserDataPaylo
               "picking_nhap.view", "picking_nhap.read", "picking_nhap.create", "picking_nhap.edit", "picking_nhap.delete",
               "history.view", "history.read", "history.read_all", "history.create", "history.edit", "history.delete", "history.export",
               "picking.view", "picking.read", "picking.create", "picking.delete", "picking.export",
-              "matrix.view", "matrix.read",
+              "matrix.view", "matrix.read", "matrix.export_pdf", "matrix.export_excel",
               "stocktake.view", "stocktake.read",
               "product.view", "product.read", "product.create", "product.edit", "product.delete",
               "employee.view", "employee.read", "employee.create", "employee.edit", "employee.delete",
@@ -1478,7 +1478,7 @@ export async function ensureUserOnboarded(userId: string): Promise<UserDataPaylo
               "picking_nhap.view", "picking_nhap.read", "picking_nhap.create",
               "history.view", "history.read", "history.read_all", "history.create", "history.edit", "history.export",
               "picking.view", "picking.read", "picking.create", "picking.export",
-              "matrix.view", "matrix.read",
+              "matrix.view", "matrix.read", "matrix.export_pdf", "matrix.export_excel",
               "stocktake.view", "stocktake.read",
               "product.view", "product.read", "product.create", "product.edit",
               "inventory.view"

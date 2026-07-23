@@ -93,7 +93,8 @@ export const HIERARCHICAL_PERMISSIONS: PermissionNode[] = [
     code: 'matrix.view',
     desc: 'Bảng độ',
     children: [
-      { code: 'matrix.read', desc: 'Xem Bảng độ' }
+      { code: 'matrix.read', desc: 'Xem Bảng độ' },
+      { code: 'matrix.export_pdf', desc: 'Xuất PDF Bảng Độ Ma Trận' }
     ]
   },
   {
@@ -170,6 +171,7 @@ export const PERMISSION_PARENT_MAP: Record<string, string> = {
   'picking.delete': 'picking.view',
   'picking.export': 'picking.view',
   'matrix.read': 'matrix.view',
+  'matrix.export_pdf': 'matrix.view',
   'stocktake.read': 'stocktake.view',
   'product.read': 'product.view',
   'product.create': 'product.view',

@@ -13,12 +13,16 @@ import {
   AlertTriangle,
   Compass,
   X,
-  Info
+  Info,
+  FileText,
+  FileSpreadsheet
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { SanPham, NhapXuat, NhapXuatCT, KiemKho, ThuongHieu } from '../types';
 import { formatDop, generateSKUString, generateSphOptions, cleanSKU } from '../data/mockData';
 import { normalizeChietXuat } from '../utils/chietXuatHelper';
+import { exportMatrixToPDF } from '../utils/matrixPdfExporter';
+import { exportMatrixToExcel } from '../utils/matrixExcelExporter';
 
 interface DiopterMatrixProps {
   sanPhams: SanPham[];
@@ -445,6 +449,51 @@ export default function DiopterMatrix({
     setDisplayMode('QUANTITY');
   };
 
+  const [isExportingPdf, setIsExportingPdf] = useState<boolean>(false);
+  const [isExportingExcel, setIsExportingExcel] = useState<boolean>(false);
+
+  const handleExportPDF = async () => {
+    try {
+      setIsExportingPdf(true);
+      await exportMatrixToPDF({
+        selectedBrand,
+        currentChietXuat,
+        currentFeature,
+        selectedBranch,
+        diopterType,
+        canList,
+        loanList,
+        getCellStockInfo,
+        userName: currentUser?.TEN_NGUOI_DUNG || currentUser?.fullName || currentUser?.username || 'Hệ thống'
+      });
+    } catch (error) {
+      console.error('Lỗi khi xuất PDF bảng độ:', error);
+    } finally {
+      setIsExportingPdf(false);
+    }
+  };
+
+  const handleExportExcel = async () => {
+    try {
+      setIsExportingExcel(true);
+      await exportMatrixToExcel({
+        selectedBrand,
+        currentChietXuat,
+        currentFeature,
+        selectedBranch,
+        diopterType,
+        canList,
+        loanList,
+        getCellStockInfo,
+        userName: currentUser?.TEN_NGUOI_DUNG || currentUser?.fullName || currentUser?.username || 'Hệ thống'
+      });
+    } catch (error) {
+      console.error('Lỗi khi xuất Excel bảng độ:', error);
+    } finally {
+      setIsExportingExcel(false);
+    }
+  };
+
   return (
     <div className="space-y-6">
       
@@ -460,13 +509,59 @@ export default function DiopterMatrix({
           </div>
         </div>
 
-        <button
-          onClick={handleResetFilters}
-          className="self-start md:self-auto flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold text-slate-600 hover:text-slate-800 bg-slate-100 hover:bg-slate-200 active:bg-slate-300 rounded-xl transition-all cursor-pointer"
-        >
-          <RefreshCw className="w-3.5 h-3.5" />
-          Reset bộ lọc
-        </button>
+        <div className="self-start md:self-auto flex items-center gap-2">
+          <button
+            onClick={handleResetFilters}
+            className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold text-slate-600 hover:text-slate-800 bg-slate-100 hover:bg-slate-200 active:bg-slate-300 rounded-xl transition-all cursor-pointer"
+          >
+            <RefreshCw className="w-3.5 h-3.5" />
+            Reset bộ lọc
+          </button>
+
+          {(hasPerm('matrix.export_excel') || hasPerm('matrix.export') || hasPerm('matrix.export_pdf')) && (
+            <button
+              type="button"
+              onClick={handleExportExcel}
+              disabled={isExportingExcel}
+              className="flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 rounded-xl transition-all shadow-xs cursor-pointer disabled:opacity-50"
+              title="Xuất file Excel Bảng Độ Ma Trận theo đúng bộ lọc đang xem"
+            >
+              {isExportingExcel ? (
+                <>
+                  <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                  Đang xuất Excel...
+                </>
+              ) : (
+                <>
+                  <FileSpreadsheet className="w-3.5 h-3.5" />
+                  Xuất Excel
+                </>
+              )}
+            </button>
+          )}
+
+          {hasPerm('matrix.export_pdf') && (
+            <button
+              type="button"
+              onClick={handleExportPDF}
+              disabled={isExportingPdf}
+              className="flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-bold text-white bg-rose-600 hover:bg-rose-700 active:bg-rose-800 rounded-xl transition-all shadow-xs cursor-pointer disabled:opacity-50"
+              title="Xuất file PDF Bảng Độ Ma Trận theo đúng bộ lọc đang xem"
+            >
+              {isExportingPdf ? (
+                <>
+                  <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                  Đang xuất PDF...
+                </>
+              ) : (
+                <>
+                  <FileText className="w-3.5 h-3.5" />
+                  Xuất PDF
+                </>
+              )}
+            </button>
+          )}
+        </div>
       </div>
 
       {/* 2. KHU VỰC BỘ LỌC ĐA TIÊU CHÍ */}

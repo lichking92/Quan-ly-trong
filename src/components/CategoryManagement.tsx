@@ -109,6 +109,8 @@ const PERMISSION_MAP: Record<string, string> = {
   'picking.export': 'Xuất phiếu Gom đơn',
   
   'matrix.read': 'Xem Bảng độ',
+  'matrix.export_pdf': 'Xuất PDF Bảng Độ Ma Trận',
+  'matrix.export_excel': 'Xuất Excel Bảng Độ Ma Trận',
   
   'stocktake.read': 'Xem Kiểm kho',
   'stocktake.delete': 'Xóa phiếu Kiểm kho',

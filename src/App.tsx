@@ -133,7 +133,6 @@ const ThemeSettings = lazy(() => import('./components/ThemeSettings'));
 const DiopterMatrix = lazy(() => import('./components/DiopterMatrix'));
 const OrderParser = lazy(() => import('./components/OrderParser'));
 import { monitor } from './utils/debugMonitor';
-import { PWAInstallPrompt, PWAInstallButton } from './components/PWAInstallPrompt';
 
 
 
@@ -160,7 +159,7 @@ const DEFAULT_ROLES: Role[] = [
       'picking_nhap.view', 'picking_nhap.read', 'picking_nhap.create', 'picking_nhap.edit', 'picking_nhap.delete',
       'history.view', 'history.read', 'history.read_all', 'history.create', 'history.edit', 'history.delete', 'history.export',
       'picking.view', 'picking.read', 'picking.create', 'picking.delete', 'picking.export',
-      'matrix.view', 'matrix.read',
+      'matrix.view', 'matrix.read', 'matrix.export_pdf', 'matrix.export_excel',
       'stocktake.view', 'stocktake.read',
       'product.view', 'product.read', 'product.create', 'product.edit', 'product.delete',
       'employee.view', 'employee.read', 'employee.create', 'employee.edit', 'employee.delete',
@@ -179,7 +178,7 @@ const DEFAULT_ROLES: Role[] = [
       'picking_nhap.view', 'picking_nhap.read', 'picking_nhap.create',
       'history.view', 'history.read', 'history.read_all', 'history.create', 'history.edit', 'history.export',
       'picking.view', 'picking.read', 'picking.create', 'picking.export',
-      'matrix.view', 'matrix.read',
+      'matrix.view', 'matrix.read', 'matrix.export_pdf', 'matrix.export_excel',
       'stocktake.view', 'stocktake.read',
       'product.view', 'product.read', 'product.create', 'product.edit',
       'inventory.view'
@@ -348,9 +347,20 @@ export default function App() {
     }
     const userRoles = rawRoles.map(r => String(r).trim().toUpperCase());
 
+    // Nếu người dùng là ADMIN hoặc tài khoản admin chính, cho phép tất cả các quyền
+    if (userRoles.includes('ADMIN') || userRoles.includes('QUẢN TRỊ VIÊN') || String(currentUser?.role).toUpperCase() === 'ADMIN' || currentUser?.username === 'admin') {
+      return true;
+    }
+
     // Nguồn quyền duy nhất: Thu thập toàn bộ permission từ các role của user trong db/state (hoặc DEFAULT_ROLES làm fallback)
     const userPermissions = new Set<string>();
     userRoles.forEach(roleCode => {
+      // Bổ sung quyền từ DEFAULT_ROLES để tự động tương thích với các quyền mới được cập nhật
+      const defaultRoleObj = DEFAULT_ROLES.find(r => r.ROLE_CODE.trim().toUpperCase() === roleCode);
+      if (defaultRoleObj && defaultRoleObj.PERMISSIONS) {
+        defaultRoleObj.PERMISSIONS.forEach(p => userPermissions.add(p));
+      }
+
       const matchedRole = roles.find(r => r.ROLE_CODE.trim().toUpperCase() === roleCode)
         || DEFAULT_ROLES.find(r => r.ROLE_CODE.trim().toUpperCase() === roleCode);
       if (matchedRole && matchedRole.PERMISSIONS) {
@@ -358,10 +368,13 @@ export default function App() {
       } else {
         // Tương thích ngược: Đối sánh với vai trò mặc định nếu mã vai trò không khớp trực tiếp
         let fallbackRoleCode = roleCode;
-        if (roleCode === 'KHO') fallbackRoleCode = 'KHO';
-        if (roleCode === 'NHAN_VIEN') fallbackRoleCode = 'NHAN_VIEN';
-        if (roleCode === 'MANAGER') fallbackRoleCode = 'KHO';
-        if (roleCode === 'STAFF') fallbackRoleCode = 'NHAN_VIEN';
+        if (roleCode === 'KHO' || roleCode === 'MANAGER') fallbackRoleCode = 'KHO';
+        if (roleCode === 'NHAN_VIEN' || roleCode === 'STAFF') fallbackRoleCode = 'NHAN_VIEN';
+
+        const defaultFallbackObj = DEFAULT_ROLES.find(r => r.ROLE_CODE.trim().toUpperCase() === fallbackRoleCode);
+        if (defaultFallbackObj && defaultFallbackObj.PERMISSIONS) {
+          defaultFallbackObj.PERMISSIONS.forEach(p => userPermissions.add(p));
+        }
 
         const matchedFallback = roles.find(r => r.ROLE_CODE.trim().toUpperCase() === fallbackRoleCode) 
           || DEFAULT_ROLES.find(r => r.ROLE_CODE.trim().toUpperCase() === fallbackRoleCode);
@@ -3333,9 +3346,6 @@ export default function App() {
         backgroundColor: 'var(--bg-main)'
       } as React.CSSProperties}
     >
-      {/* PWA Install Banner & Offline Monitor */}
-      <PWAInstallPrompt />
-
       {/* MOBILE HEADER BAR - Chỉ hiển thị trên mobile (ví dụ iPhone 14) */}
       <div className={`md:hidden h-14 px-4 flex items-center justify-between border-b shrink-0 sticky top-0 z-30 ${
         themeMode === 'light' ? 'bg-white text-slate-800 border-slate-200' : 'bg-[#0f172a] text-white border-slate-800'
@@ -3357,7 +3367,6 @@ export default function App() {
           <span className={`h-2 w-2 rounded-full shrink-0 ${isOffline ? 'bg-red-500 animate-pulse' : 'bg-emerald-500 animate-pulse'}`} title={isOffline ? 'Ngoại tuyến' : 'Trực tuyến'} />
         </div>
         <div className="flex items-center gap-2">
-          <PWAInstallButton showText={false} />
           {currentUser && (
             <button
               onClick={handleManualSync}
@@ -3468,7 +3477,7 @@ export default function App() {
             )}
           </div>
           
-          {/* TRẠNG THÁI TRỰC TUYẾN / NGOẠI TUYẾN & NÚT CÀI PWA */}
+          {/* TRẠNG THÁI TRỰC TUYẾN / NGOẠI TUYẾN */}
           {!sidebarCollapsed ? (
             <div className="flex flex-col gap-2 pt-1.5 border-t border-slate-200/40 dark:border-slate-800/40">
               <div className="flex items-center justify-between px-1">
@@ -3479,12 +3488,10 @@ export default function App() {
                   </span>
                 </div>
               </div>
-              <PWAInstallButton className="w-full justify-center py-1.5 text-[11px]" />
             </div>
           ) : (
             <div className="flex flex-col items-center gap-1.5 mt-1 pt-1 border-t border-slate-200/40 dark:border-slate-800/40 w-full" title={isOffline ? 'Đang ngoại tuyến' : 'Đang trực tuyến'}>
               <span className={`h-2 w-2 rounded-full shrink-0 ${isOffline ? 'bg-red-500 animate-pulse' : 'bg-emerald-500 animate-pulse'}`} />
-              <PWAInstallButton showText={false} className="p-1" />
             </div>
           )}
         </div>
@@ -3751,6 +3758,7 @@ export default function App() {
                       setActiveTab('TRANSACTION_XUAT');
                     }}
                     currentUser={currentUser}
+                    hasPermission={hasPermission}
                     onSaveMultipleTransactions={handleSaveMultipleTransactions}
                     onNavigateToHistory={() => setActiveTab('HISTORY')}
                     nhapXuats={nhapXuats}

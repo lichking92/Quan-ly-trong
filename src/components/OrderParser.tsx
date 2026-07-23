@@ -17,6 +17,8 @@ import {
   ShoppingBag,
   Info,
   Trash2,
+  Pencil,
+  X,
   Printer,
   Download,
   Layers,
@@ -157,6 +159,7 @@ interface OrderParserProps {
   chiNhanhs?: string[];
   onTriggerToast?: (message: string, type?: 'success' | 'warning' | 'error') => void;
   currentUser?: any;
+  hasPermission?: (permissionCode: string) => boolean;
   onSaveMultipleTransactions?: (transactions: { header: any; details: any[] }[]) => Promise<string[]>;
   onNavigateToHistory?: () => void;
   nhapXuats: NhapXuat[];
@@ -194,12 +197,29 @@ export default function OrderParser({
   chiNhanhs = [],
   onTriggerToast,
   currentUser,
+  hasPermission,
   onSaveMultipleTransactions,
   onNavigateToHistory,
   nhapXuats = [],
   nhapXuatCTs = [],
   onRefreshProductsAndTransactions
 }: OrderParserProps) {
+  // Helper check RBAC permissions
+  const hasPerm = (permissionCode: string): boolean => {
+    if (hasPermission) return hasPermission(permissionCode);
+    if (!currentUser) return true;
+    if (currentUser.role === 'QUẢN TRỊ VIÊN' || currentUser.role === 'ADMIN' || currentUser.isAdmin) return true;
+    if (currentUser.ROLES && Array.isArray(currentUser.ROLES)) {
+      const userRole = currentUser.ROLES.find((r: any) => r.TEN_NHOM === currentUser.role || r.id === currentUser.roleId);
+      if (userRole && Array.isArray(userRole.QUYEN)) {
+        return userRole.QUYEN.includes(permissionCode);
+      }
+    }
+    return true;
+  };
+
+  const canDeleteSkuFromGomDon = hasPerm('ordercheck.save') || hasPerm('ordercheck.edit');
+
   // Sub-tab: ANALYZE (New analysis & temporary order creation) or TEMP_ORDERS (List of temporary cards & batch picking)
   const [parserViewTab, setParserViewTab] = useState<'ANALYZE' | 'TEMP_ORDERS'>('ANALYZE');
 
@@ -220,10 +240,77 @@ export default function OrderParser({
 
   const [selectedTempOrderIds, setSelectedTempOrderIds] = useState<string[]>([]);
   const [deleteConfirm, setDeleteConfirm] = useState<{
-    type: 'single' | 'all' | 'selected';
+    type: 'single' | 'all' | 'selected' | 'detail_item' | 'bulk_sku';
     id?: string;
+    itemId?: string;
+    itemSku?: string;
+    itemText?: string;
+    selectedKeys?: string[];
     message: string;
   } | null>(null);
+
+  // States for bulk edit and delete modes in Gom Don cards
+  const [cardModeMap, setCardModeMap] = useState<Record<string, 'NORMAL' | 'EDIT' | 'DELETE'>>({});
+  const [cardSelectedSkusMap, setCardSelectedSkusMap] = useState<Record<string, string[]>>({});
+  const [cardEditQtyMap, setCardEditQtyMap] = useState<Record<string, Record<string, number | string>>>({});
+
+  const getItemKey = (item: any) => item.id || item.sku;
+
+  const handleEnterDeleteMode = (orderId: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!canDeleteSkuFromGomDon) return;
+    setCardModeMap(prev => ({ ...prev, [orderId]: 'DELETE' }));
+    setCardSelectedSkusMap(prev => ({ ...prev, [orderId]: [] }));
+  };
+
+  const handleEnterEditMode = (orderId: string, orderItems: any[], e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!canDeleteSkuFromGomDon) return;
+    setCardModeMap(prev => ({ ...prev, [orderId]: 'EDIT' }));
+
+    const initialQtys: Record<string, number | string> = {};
+    const allKeys: string[] = [];
+    orderItems.forEach(item => {
+      const key = getItemKey(item);
+      initialQtys[key] = item.quantity;
+      allKeys.push(key);
+    });
+
+    setCardEditQtyMap(prev => ({ ...prev, [orderId]: initialQtys }));
+    setCardSelectedSkusMap(prev => ({ ...prev, [orderId]: allKeys }));
+  };
+
+  const handleExitCardMode = (orderId: string, e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
+    setCardModeMap(prev => ({ ...prev, [orderId]: 'NORMAL' }));
+    setCardSelectedSkusMap(prev => ({ ...prev, [orderId]: [] }));
+    setCardEditQtyMap(prev => ({ ...prev, [orderId]: {} }));
+  };
+
+  const handleToggleSkuSelection = (orderId: string, itemKey: string, e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
+    setCardSelectedSkusMap(prev => {
+      const currentList = prev[orderId] || [];
+      if (currentList.includes(itemKey)) {
+        return { ...prev, [orderId]: currentList.filter(k => k !== itemKey) };
+      } else {
+        return { ...prev, [orderId]: [...currentList, itemKey] };
+      }
+    });
+  };
+
+  const handleToggleSelectAllSkus = (orderId: string, orderItems: any[], e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
+    setCardSelectedSkusMap(prev => {
+      const currentList = prev[orderId] || [];
+      const allKeys = orderItems.map(getItemKey);
+      if (currentList.length === allKeys.length) {
+        return { ...prev, [orderId]: [] };
+      } else {
+        return { ...prev, [orderId]: allKeys };
+      }
+    });
+  };
   const [isBatchPickingActive, setIsBatchPickingActive] = useState<boolean>(false);
 
   // Flags và timers quản lý Realtime để chống loop request
@@ -1670,12 +1757,189 @@ export default function OrderParser({
     });
   };
 
+  const handleConfirmDeleteDetailItem = (orderId: string, item: any, e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!canDeleteSkuFromGomDon) return;
+
+    const itemText = `${item.brand} ${item.chietXuat} ${item.tinhNang} (${item.sph > 0 ? 'Viễn' : 'Cận'} ${formatDop(item.sph)}${item.cyl !== 0 ? ` Loạn ${formatDop(item.cyl)}` : ''})`;
+
+    setDeleteConfirm({
+      type: 'detail_item',
+      id: orderId,
+      itemId: item.id,
+      itemSku: item.sku,
+      itemText: itemText,
+      message: 'Bạn có chắc muốn xóa sản phẩm này khỏi đơn gom?'
+    });
+  };
+
   const executeDelete = async () => {
     if (!deleteConfirm) return;
-    const { type, id } = deleteConfirm;
+    const { type, id, itemId, itemSku, selectedKeys } = deleteConfirm;
     setDeleteConfirm(null);
 
-    if (type === 'single' && id) {
+    if (type === 'bulk_sku' && id) {
+      const orderId = id;
+      const targetOrder = tempOrders.find(o => o.id === orderId);
+      const keysToDelete = selectedKeys || cardSelectedSkusMap[orderId] || [];
+
+      if (!targetOrder || keysToDelete.length === 0) return;
+
+      const remainingItems = targetOrder.items.filter((i: any) => !keysToDelete.includes(getItemKey(i)));
+
+      if (remainingItems.length === 0) {
+        // Tự động xóa b_gomdon nếu xóa tất cả SKU
+        const nextOrders = tempOrders.filter(o => o.id !== orderId);
+        setTempOrders(nextOrders);
+        setSelectedTempOrderIds(prev => prev.filter(selId => selId !== orderId));
+        cachedTempOrders = nextOrders;
+
+        if (onTriggerToast) onTriggerToast('Đang dọn dẹp đơn gom rỗng...', 'warning');
+
+        try {
+          ignoreRealtimeRef.current = true;
+          await supabase.from('b_gomdonct').delete().eq('gom_don_id', orderId);
+          const { error: headerErr } = await supabase.from('b_gomdon').delete().eq('id', orderId);
+
+          if (headerErr) {
+            console.error('Lỗi khi xóa b_gomdon rỗng:', headerErr);
+          } else {
+            cachedTempOrders = null;
+            lastTempOrdersFetchTime = 0;
+            if (onTriggerToast) onTriggerToast('Đã xóa các SKU và tự động dọn dẹp đơn gom rỗng', 'success');
+          }
+        } catch (err) {
+          console.error('Lỗi khi xóa đơn gom rỗng:', err);
+        } finally {
+          setTimeout(() => {
+            ignoreRealtimeRef.current = false;
+          }, 3000);
+        }
+      } else {
+        // Giữ đơn gom cha b_gomdon, chỉ xóa các dòng b_gomdonct được chọn
+        const nextOrders = tempOrders.map(order => {
+          if (order.id !== orderId) return order;
+          return {
+            ...order,
+            items: remainingItems
+          };
+        });
+
+        setTempOrders(nextOrders);
+        cachedTempOrders = nextOrders;
+
+        if (onTriggerToast) onTriggerToast('Đang xóa các SKU đã chọn...', 'warning');
+
+        try {
+          ignoreRealtimeRef.current = true;
+
+          const deletedItems = targetOrder.items.filter((i: any) => keysToDelete.includes(getItemKey(i)));
+          const deletedIds = deletedItems.map((i: any) => i.id).filter(Boolean);
+          const deletedSkus = deletedItems.map((i: any) => i.sku).filter(Boolean);
+
+          if (deletedIds.length > 0) {
+            await supabase.from('b_gomdonct').delete().in('id', deletedIds);
+          } else if (deletedSkus.length > 0) {
+            await supabase.from('b_gomdonct').delete().eq('gom_don_id', orderId).in('sku', deletedSkus);
+          }
+
+          cachedTempOrders = null;
+          lastTempOrdersFetchTime = 0;
+          if (onTriggerToast) onTriggerToast(`Đã xóa ${keysToDelete.length} SKU khỏi đơn gom`, 'success');
+        } catch (err) {
+          console.error('Lỗi khi xóa b_gomdonct hàng loạt:', err);
+          if (onTriggerToast) onTriggerToast('Lỗi khi xóa các SKU đã chọn!', 'error');
+        } finally {
+          setTimeout(() => {
+            ignoreRealtimeRef.current = false;
+          }, 3000);
+        }
+      }
+
+      handleExitCardMode(orderId);
+    } else if (type === 'detail_item' && id) {
+      const orderId = id;
+      const targetOrder = tempOrders.find(o => o.id === orderId);
+      if (!targetOrder) return;
+
+      const remainingItems = targetOrder.items.filter((i: any) => (itemId ? i.id !== itemId : i.sku !== itemSku));
+
+      if (remainingItems.length === 0) {
+        // Tự động xóa b_gomdon nếu xóa SKU cuối cùng
+        const nextOrders = tempOrders.filter(o => o.id !== orderId);
+        setTempOrders(nextOrders);
+        setSelectedTempOrderIds(prev => prev.filter(selId => selId !== orderId));
+        cachedTempOrders = nextOrders;
+
+        if (onTriggerToast) onTriggerToast('Đang dọn dẹp đơn gom rỗng...', 'warning');
+
+        try {
+          ignoreRealtimeRef.current = true;
+          if (itemId) {
+            await supabase.from('b_gomdonct').delete().eq('id', itemId);
+          } else if (itemSku) {
+            await supabase.from('b_gomdonct').delete().eq('gom_don_id', orderId).eq('sku', itemSku);
+          }
+
+          const { error: headerErr } = await supabase.from('b_gomdon').delete().eq('id', orderId);
+          if (headerErr) {
+            console.error('Lỗi khi xóa b_gomdon rỗng:', headerErr);
+          } else {
+            cachedTempOrders = null;
+            lastTempOrdersFetchTime = 0;
+            if (onTriggerToast) onTriggerToast('Đã xóa sản phẩm và tự động xóa đơn gom rỗng', 'success');
+          }
+        } catch (err) {
+          console.error('Lỗi khi xóa sản phẩm và đơn gom:', err);
+        } finally {
+          setTimeout(() => {
+            ignoreRealtimeRef.current = false;
+          }, 3000);
+        }
+      } else {
+        // Giữ đơn gom cha b_gomdon, chỉ xóa dòng b_gomdonct
+        const nextOrders = tempOrders.map(order => {
+          if (order.id !== orderId) return order;
+          return {
+            ...order,
+            items: remainingItems
+          };
+        });
+
+        setTempOrders(nextOrders);
+        cachedTempOrders = nextOrders;
+
+        if (onTriggerToast) onTriggerToast('Đang xóa sản phẩm khỏi đơn gom...', 'warning');
+
+        try {
+          ignoreRealtimeRef.current = true;
+          let deleteErr;
+          if (itemId) {
+            const { error } = await supabase.from('b_gomdonct').delete().eq('id', itemId);
+            deleteErr = error;
+          } else if (itemSku) {
+            const { error } = await supabase.from('b_gomdonct').delete().eq('gom_don_id', orderId).eq('sku', itemSku);
+            deleteErr = error;
+          }
+
+          if (deleteErr) {
+            console.error('Lỗi khi xóa b_gomdonct:', deleteErr);
+            if (onTriggerToast) onTriggerToast('Lỗi khi xóa sản phẩm khỏi đơn gom!', 'error');
+          } else {
+            cachedTempOrders = null;
+            lastTempOrdersFetchTime = 0;
+            if (onTriggerToast) onTriggerToast('Đã xóa sản phẩm khỏi đơn gom', 'success');
+          }
+        } catch (err) {
+          console.error('Lỗi khi xóa b_gomdonct:', err);
+          if (onTriggerToast) onTriggerToast('Lỗi kết nối khi xóa sản phẩm!', 'error');
+        } finally {
+          setTimeout(() => {
+            ignoreRealtimeRef.current = false;
+          }, 3000);
+        }
+      }
+    } else if (type === 'single' && id) {
       // Optimistic UI update immediately
       setTempOrders(prev => prev.filter(o => o.id !== id));
       setSelectedTempOrderIds(prev => prev.filter(orderId => orderId !== id));
@@ -1812,6 +2076,123 @@ export default function OrderParser({
         }, 3000);
       }
     }
+  };
+
+  const handleSaveEditedQuantities = async (orderId: string, e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
+    if (!canDeleteSkuFromGomDon) return;
+
+    const targetOrder = tempOrders.find(o => o.id === orderId);
+    if (!targetOrder) return;
+
+    const selectedKeys = cardSelectedSkusMap[orderId] || [];
+    const qtys = cardEditQtyMap[orderId] || {};
+
+    if (selectedKeys.length === 0) {
+      if (onTriggerToast) onTriggerToast('Vui lòng chọn ít nhất một SKU để lưu thay đổi!', 'warning');
+      return;
+    }
+
+    // Validation
+    for (const item of targetOrder.items) {
+      const key = getItemKey(item);
+      if (selectedKeys.includes(key)) {
+        const valStr = String(qtys[key] !== undefined ? qtys[key] : item.quantity).trim();
+        const num = Number(valStr);
+        if (valStr === '' || isNaN(num) || num < 0 || !Number.isInteger(num)) {
+          if (onTriggerToast) onTriggerToast(`Số lượng không hợp lệ cho SKU: ${item.sku}. Vui lòng nhập số nguyên >= 0!`, 'error');
+          return;
+        }
+      }
+    }
+
+    const updatedItems: any[] = [];
+    const deletedItemIds: string[] = [];
+    const deletedItemSkus: string[] = [];
+    const updatePromises: Promise<any>[] = [];
+
+    targetOrder.items.forEach((item: any) => {
+      const key = getItemKey(item);
+      if (selectedKeys.includes(key)) {
+        const valStr = String(qtys[key] !== undefined ? qtys[key] : item.quantity).trim();
+        const newQty = parseInt(valStr, 10);
+
+        if (newQty === 0) {
+          if (item.id) deletedItemIds.push(item.id);
+          else deletedItemSkus.push(item.sku);
+        } else {
+          updatedItems.push({ ...item, quantity: newQty });
+          if (item.id) {
+            updatePromises.push(supabase.from('b_gomdonct').update({ quantity: newQty }).eq('id', item.id));
+          } else {
+            updatePromises.push(supabase.from('b_gomdonct').update({ quantity: newQty }).eq('gom_don_id', orderId).eq('sku', item.sku));
+          }
+        }
+      } else {
+        updatedItems.push(item);
+      }
+    });
+
+    if (updatedItems.length === 0) {
+      // Tự động xóa b_gomdon nếu tất cả SKU = 0
+      const nextOrders = tempOrders.filter(o => o.id !== orderId);
+      setTempOrders(nextOrders);
+      setSelectedTempOrderIds(prev => prev.filter(selId => selId !== orderId));
+      cachedTempOrders = nextOrders;
+
+      if (onTriggerToast) onTriggerToast('Đang dọn dẹp đơn gom rỗng...', 'warning');
+
+      try {
+        ignoreRealtimeRef.current = true;
+        await supabase.from('b_gomdonct').delete().eq('gom_don_id', orderId);
+        await supabase.from('b_gomdon').delete().eq('id', orderId);
+
+        cachedTempOrders = null;
+        lastTempOrdersFetchTime = 0;
+        if (onTriggerToast) onTriggerToast('Tất cả SKU bằng 0, đã tự động dọn dẹp đơn gom rỗng', 'success');
+      } catch (err) {
+        console.error('Lỗi khi xóa đơn gom rỗng:', err);
+      } finally {
+        setTimeout(() => {
+          ignoreRealtimeRef.current = false;
+        }, 3000);
+      }
+    } else {
+      const nextOrders = tempOrders.map(o => {
+        if (o.id !== orderId) return o;
+        return { ...o, items: updatedItems };
+      });
+      setTempOrders(nextOrders);
+      cachedTempOrders = nextOrders;
+
+      if (onTriggerToast) onTriggerToast('Đang lưu thay đổi số lượng...', 'warning');
+
+      try {
+        ignoreRealtimeRef.current = true;
+
+        if (deletedItemIds.length > 0) {
+          await supabase.from('b_gomdonct').delete().in('id', deletedItemIds);
+        }
+        if (deletedItemSkus.length > 0) {
+          await supabase.from('b_gomdonct').delete().eq('gom_don_id', orderId).in('sku', deletedItemSkus);
+        }
+
+        await Promise.all(updatePromises);
+
+        cachedTempOrders = null;
+        lastTempOrdersFetchTime = 0;
+        if (onTriggerToast) onTriggerToast('Cập nhật số lượng SKU thành công!', 'success');
+      } catch (err) {
+        console.error('Lỗi khi cập nhật số lượng b_gomdonct:', err);
+        if (onTriggerToast) onTriggerToast('Lỗi khi cập nhật số lượng SKU!', 'error');
+      } finally {
+        setTimeout(() => {
+          ignoreRealtimeRef.current = false;
+        }, 3000);
+      }
+    }
+
+    handleExitCardMode(orderId);
   };
 
   const handleToggleSelectTempOrder = (id: string) => {
@@ -2968,6 +3349,9 @@ export default function OrderParser({
                   const validItemsCount = order.items.filter((i: any) => !i.error).length;
                   const totalGlasses = order.items.reduce((sum: number, i: any) => sum + (i.error ? 0 : i.quantity), 0);
 
+                  const cardMode = cardModeMap[order.id] || 'NORMAL';
+                  const selectedSkuKeys = cardSelectedSkusMap[order.id] || [];
+
                   // Calculate live status of this card against current inventory
                   let okCount = 0;
                   let defCount = 0;
@@ -3019,9 +3403,13 @@ export default function OrderParser({
                   return (
                     <div
                       key={order.id}
-                      onClick={() => handleToggleSelectTempOrder(order.id)}
+                      onClick={() => {
+                        if (cardMode === 'NORMAL') {
+                          handleToggleSelectTempOrder(order.id);
+                        }
+                      }}
                       className={`bg-white rounded-2xl border-2 p-4 flex flex-col justify-between gap-4 transition-all hover:shadow-md cursor-pointer select-none ${
-                        isChecked
+                        isChecked && cardMode === 'NORMAL'
                           ? 'border-indigo-600 bg-indigo-50/5 ring-1 ring-indigo-600/10 shadow-sm'
                           : 'border-slate-200 hover:border-slate-300'
                       }`}
@@ -3029,14 +3417,14 @@ export default function OrderParser({
                       {/* Card Header */}
                       <div className="space-y-2">
                         <div className="flex items-start justify-between gap-2">
-                          <div className="flex items-center gap-2.5">
+                          <div className="flex items-center gap-2.5 min-w-0">
                             <input
                               type="checkbox"
                               checked={isChecked}
                               onChange={() => {}} // toggled by card click
                               className="w-4 h-4 rounded-md border-slate-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer shrink-0"
                             />
-                            <div className="space-y-0.5">
+                            <div className="space-y-0.5 min-w-0">
                               <div className="flex items-center gap-1.5 flex-wrap">
                                 <Building2 className="w-4 h-4 text-indigo-500 shrink-0" />
                                 <select
@@ -3046,7 +3434,7 @@ export default function OrderParser({
                                     handleUpdateOrderBranch(order.id, e.target.value);
                                   }}
                                   onClick={(e) => e.stopPropagation()}
-                                  disabled={order.trangThai === 'Đã xuất'}
+                                  disabled={order.trangThai === 'Đã xuất' || cardMode !== 'NORMAL'}
                                   className="font-sans font-bold text-slate-800 text-base md:text-xs bg-slate-50 border border-slate-200 hover:border-slate-300 rounded-lg py-1 px-2 focus:ring-1 focus:ring-indigo-500 focus:border-indigo-500 cursor-pointer outline-none transition-colors disabled:bg-slate-100 disabled:cursor-not-allowed"
                                   id={`branch_select_card_${order.id}`}
                                 >
@@ -3061,14 +3449,74 @@ export default function OrderParser({
                             </div>
                           </div>
                           
-                          <button
-                            onClick={(e) => handleDeleteTempOrder(order.id, e)}
-                            className="text-slate-400 hover:text-rose-600 p-1 rounded-lg hover:bg-slate-100 transition-all cursor-pointer"
-                            title="Xóa đơn hàng tạm"
-                          >
-                            <Trash2 className="w-4 h-4" />
-                          </button>
+                          {/* Header Action Buttons (Sửa / Xóa) */}
+                          <div className="flex items-center gap-1 shrink-0" onClick={(e) => e.stopPropagation()}>
+                            {canDeleteSkuFromGomDon && order.trangThai !== 'Đã xuất' && (
+                              <>
+                                {cardMode === 'NORMAL' && (
+                                  <div className="flex items-center gap-1">
+                                    <button
+                                      type="button"
+                                      onClick={(e) => handleEnterEditMode(order.id, order.items, e)}
+                                      className="px-2 py-1 text-[11px] font-bold text-slate-600 hover:text-indigo-600 bg-slate-100 hover:bg-indigo-50 rounded-lg transition-all cursor-pointer flex items-center gap-1 border border-slate-200/60"
+                                      title="Chỉnh sửa số lượng các SKU trong đơn"
+                                      id={`edit_mode_btn_${order.id}`}
+                                    >
+                                      <Pencil className="w-3 h-3 text-indigo-500" />
+                                      Sửa
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={(e) => handleEnterDeleteMode(order.id, e)}
+                                      className="px-2 py-1 text-[11px] font-bold text-slate-600 hover:text-rose-600 bg-slate-100 hover:bg-rose-50 rounded-lg transition-all cursor-pointer flex items-center gap-1 border border-slate-200/60"
+                                      title="Chọn SKU để xóa khỏi đơn gom"
+                                      id={`delete_mode_btn_${order.id}`}
+                                    >
+                                      <Trash2 className="w-3 h-3 text-rose-500" />
+                                      Xóa
+                                    </button>
+                                  </div>
+                                )}
+
+                                {(cardMode === 'EDIT' || cardMode === 'DELETE') && (
+                                  <button
+                                    type="button"
+                                    onClick={(e) => handleExitCardMode(order.id, e)}
+                                    className="px-2 py-1 text-[11px] font-bold text-slate-600 hover:text-slate-900 bg-slate-200/80 hover:bg-slate-300 rounded-lg transition-all cursor-pointer flex items-center gap-1"
+                                    title="Thoát chế độ"
+                                  >
+                                    <X className="w-3 h-3" />
+                                    Hủy
+                                  </button>
+                                )}
+                              </>
+                            )}
+
+                            {/* Delete entire temp order card button */}
+                            <button
+                              type="button"
+                              onClick={(e) => handleDeleteTempOrder(order.id, e)}
+                              className="text-slate-400 hover:text-rose-600 p-1.5 rounded-lg hover:bg-slate-100 transition-all cursor-pointer"
+                              title="Xóa toàn bộ đơn gom này"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                          </div>
                         </div>
+
+                        {/* Mode Indicator Banners */}
+                        {cardMode === 'EDIT' && (
+                          <div className="bg-indigo-50 border border-indigo-200 text-indigo-800 text-[11px] font-bold px-2.5 py-1 rounded-lg flex items-center justify-between">
+                            <span>✏️ Chế độ chỉnh sửa số lượng</span>
+                            <span className="text-[10px] text-indigo-600 font-normal">Tích chọn & sửa số lượng</span>
+                          </div>
+                        )}
+                        {cardMode === 'DELETE' && (
+                          <div className="bg-rose-50 border border-rose-200 text-rose-800 text-[11px] font-bold px-2.5 py-1 rounded-lg flex items-center justify-between">
+                            <span>🗑 Chế độ chọn SKU để xóa</span>
+                            <span className="text-[10px] text-rose-600 font-normal">Tích chọn SKU cần xóa</span>
+                          </div>
+                        )}
 
                         <div className="flex items-center gap-1.5 flex-wrap pt-1">
                           <span className="bg-slate-100 text-slate-700 text-[10px] font-semibold px-2 py-0.5 rounded-md">
@@ -3081,11 +3529,26 @@ export default function OrderParser({
                         </div>
                       </div>
 
-                      {/* Items Preview List */}
-                      <div className="border-t border-b border-slate-100/80 py-3 my-1">
-                        <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-2">Sản phẩm chi tiết</p>
-                        <div className="max-h-36 overflow-y-auto space-y-1.5 divide-y divide-slate-50/50 pr-1">
+                      {/* Items List */}
+                      <div className="border-t border-b border-slate-100/80 py-3 my-1" onClick={(e) => e.stopPropagation()}>
+                        <div className="flex items-center justify-between mb-2">
+                          <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Sản phẩm chi tiết</p>
+
+                          {cardMode !== 'NORMAL' && (
+                            <button
+                              type="button"
+                              onClick={(e) => handleToggleSelectAllSkus(order.id, order.items, e)}
+                              className="text-[11px] font-bold text-indigo-600 hover:text-indigo-800 hover:underline cursor-pointer"
+                            >
+                              {selectedSkuKeys.length === order.items.length ? 'Bỏ chọn tất cả' : 'Chọn tất cả'}
+                            </button>
+                          )}
+                        </div>
+
+                        <div className="max-h-48 overflow-y-auto space-y-1.5 pr-1">
                           {order.items.map((item: any, i: number) => {
+                            const itemKey = getItemKey(item);
+                            const isSkuSelected = selectedSkuKeys.includes(itemKey);
                             const liveProd = sanPhams.find(p => cleanSKU(p.SKU) === cleanSKU(item.sku));
                             const liveStock = liveProd ? getProductStockByBranch(item.sku, order.branch, liveProd, nhapXuats, nhapXuatCTs) : 0;
 
@@ -3108,28 +3571,164 @@ export default function OrderParser({
                               stockIndicator = <span className="text-[9px] font-medium text-emerald-600 font-mono">Đủ (Kho: {liveStock})</span>;
                             }
 
+                            const editQtyVal = cardEditQtyMap[order.id]?.[itemKey] !== undefined
+                              ? cardEditQtyMap[order.id][itemKey]
+                              : item.quantity;
+                            const isZeroQty = String(editQtyVal).trim() === '0';
+
                             return (
-                              <div key={item.id || i} className="flex items-start justify-between gap-2 text-xs pt-1.5 first:pt-0">
-                                <div className="space-y-0.5">
-                                  <p className="font-semibold text-slate-700 font-sans leading-tight">
+                              <div
+                                key={item.id || `${item.sku}_${i}`}
+                                onClick={(e) => {
+                                  if (cardMode !== 'NORMAL') {
+                                    handleToggleSkuSelection(order.id, itemKey, e);
+                                  }
+                                }}
+                                className={`flex items-center justify-between gap-2 text-xs p-2 rounded-xl transition-all ${
+                                  cardMode !== 'NORMAL' ? 'cursor-pointer select-none' : ''
+                                } ${
+                                  isSkuSelected && cardMode === 'DELETE'
+                                    ? 'bg-rose-50/80 border border-rose-200'
+                                    : isSkuSelected && cardMode === 'EDIT'
+                                    ? 'bg-indigo-50/80 border border-indigo-200'
+                                    : 'bg-slate-50/60 hover:bg-slate-100/80 border border-transparent'
+                                }`}
+                              >
+                                {cardMode !== 'NORMAL' && (
+                                  <input
+                                    type="checkbox"
+                                    checked={isSkuSelected}
+                                    onChange={(e) => handleToggleSkuSelection(order.id, itemKey, e)}
+                                    onClick={(e) => e.stopPropagation()}
+                                    className={`w-4 h-4 rounded border-slate-300 shrink-0 cursor-pointer ${
+                                      cardMode === 'DELETE' ? 'text-rose-600 focus:ring-rose-500' : 'text-indigo-600 focus:ring-indigo-500'
+                                    }`}
+                                  />
+                                )}
+
+                                <div className="space-y-0.5 min-w-0 flex-1">
+                                  <p className="font-semibold text-slate-700 font-sans leading-tight truncate">
                                     {item.brand} {item.chietXuat} {item.tinhNang}
                                   </p>
                                   <p className="font-mono text-[10px] text-slate-400">
                                     {item.sph > 0 ? 'Viễn' : 'Cận'} {formatDop(item.sph)}{item.cyl !== 0 ? ` Loạn ${formatDop(item.cyl)}` : ''}
                                   </p>
                                 </div>
-                                <div className="text-right shrink-0 space-y-0.5">
-                                  <p className="font-bold text-slate-800">{item.quantity}M</p>
-                                  {stockIndicator}
+
+                                <div className="flex items-center gap-2 shrink-0">
+                                  {cardMode === 'EDIT' && isSkuSelected ? (
+                                    <div className="flex flex-col items-end gap-0.5" onClick={(e) => e.stopPropagation()}>
+                                      <div className="flex items-center gap-1">
+                                        <input
+                                          type="number"
+                                          min="0"
+                                          step="1"
+                                          value={editQtyVal}
+                                          onChange={(e) => {
+                                            const newV = e.target.value;
+                                            setCardEditQtyMap(prev => ({
+                                              ...prev,
+                                              [order.id]: {
+                                                ...(prev[order.id] || {}),
+                                                [itemKey]: newV
+                                              }
+                                            }));
+                                          }}
+                                          className={`w-16 px-2 py-1 text-xs font-bold font-mono text-center border rounded-lg outline-none focus:ring-2 ${
+                                            isZeroQty
+                                              ? 'bg-rose-50 border-rose-300 text-rose-700 focus:ring-rose-500'
+                                              : 'bg-white border-indigo-300 text-slate-800 focus:ring-indigo-500'
+                                          }`}
+                                        />
+                                        <span className="text-xs font-bold text-slate-500">M</span>
+                                      </div>
+                                      {isZeroQty && (
+                                        <span className="text-[9px] font-bold text-rose-600 animate-pulse">
+                                          SKU này sẽ bị xóa khỏi đơn gom
+                                        </span>
+                                      )}
+                                    </div>
+                                  ) : (
+                                    <div className="text-right space-y-0.5">
+                                      <p className="font-bold text-slate-800">{item.quantity}M</p>
+                                      {stockIndicator}
+                                    </div>
+                                  )}
                                 </div>
                               </div>
                             );
                           })}
                         </div>
+
+                        {/* Bottom Action Bar for DELETE Mode */}
+                        {cardMode === 'DELETE' && (
+                          <div className="mt-3 pt-2.5 border-t border-slate-200/80 flex items-center justify-between gap-2">
+                            <span className="text-xs font-semibold text-slate-600">
+                              Đã chọn: <strong className="text-rose-600">{selectedSkuKeys.length}</strong> / {order.items.length} SKU
+                            </span>
+                            <div className="flex items-center gap-1.5">
+                              <button
+                                type="button"
+                                onClick={(e) => handleExitCardMode(order.id, e)}
+                                className="px-2.5 py-1.5 text-xs font-bold text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-xl transition-all cursor-pointer"
+                              >
+                                Hủy
+                              </button>
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  if (selectedSkuKeys.length === 0) {
+                                    if (onTriggerToast) onTriggerToast('Vui lòng chọn ít nhất 1 SKU để xóa!', 'warning');
+                                    return;
+                                  }
+                                  setDeleteConfirm({
+                                    type: 'bulk_sku',
+                                    id: order.id,
+                                    selectedKeys: selectedSkuKeys,
+                                    message: `Bạn có chắc muốn xóa ${selectedSkuKeys.length} SKU đã chọn khỏi đơn gom?`
+                                  });
+                                }}
+                                disabled={selectedSkuKeys.length === 0}
+                                className="px-3 py-1.5 text-xs font-bold text-white bg-rose-600 hover:bg-rose-700 active:bg-rose-800 disabled:opacity-50 disabled:cursor-not-allowed rounded-xl transition-all cursor-pointer flex items-center gap-1 shadow-xs"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                                Xóa đã chọn ({selectedSkuKeys.length})
+                              </button>
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Bottom Action Bar for EDIT Mode */}
+                        {cardMode === 'EDIT' && (
+                          <div className="mt-3 pt-2.5 border-t border-slate-200/80 flex items-center justify-between gap-2">
+                            <span className="text-xs font-semibold text-slate-600">
+                              Đang sửa: <strong className="text-indigo-600">{selectedSkuKeys.length}</strong> / {order.items.length} SKU
+                            </span>
+                            <div className="flex items-center gap-1.5">
+                              <button
+                                type="button"
+                                onClick={(e) => handleExitCardMode(order.id, e)}
+                                className="px-2.5 py-1.5 text-xs font-bold text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-xl transition-all cursor-pointer"
+                              >
+                                Hủy
+                              </button>
+                              <button
+                                type="button"
+                                onClick={(e) => handleSaveEditedQuantities(order.id, e)}
+                                disabled={selectedSkuKeys.length === 0}
+                                className="px-3 py-1.5 text-xs font-bold text-white bg-indigo-600 hover:bg-indigo-700 active:bg-indigo-800 disabled:opacity-50 disabled:cursor-not-allowed rounded-xl transition-all cursor-pointer flex items-center gap-1 shadow-xs"
+                              >
+                                <CheckCircle className="w-3.5 h-3.5" />
+                                Lưu thay đổi
+                              </button>
+                            </div>
+                          </div>
+                        )}
                       </div>
 
                       {/* Card Actions */}
-                      <div className="flex items-center gap-2 pt-1">
+                      <div className="flex items-center gap-2 pt-1" onClick={(e) => e.stopPropagation()}>
                         {order.trangThai === 'Đã xuất' ? (
                           <div className="w-full bg-slate-100 border border-slate-200 text-slate-500 text-xs font-bold py-2.5 px-3 rounded-xl text-center flex items-center justify-center gap-1.5 cursor-not-allowed">
                             <CheckCircle className="w-4 h-4 text-emerald-500" />
@@ -3138,7 +3737,8 @@ export default function OrderParser({
                         ) : (
                           <button
                             onClick={(e) => handleCreateXuatFromTempOrder(order, e)}
-                            className="w-full bg-emerald-600 hover:bg-emerald-500 hover:shadow-sm text-white text-xs font-bold py-2 px-3 rounded-xl transition-all cursor-pointer flex items-center justify-center gap-1"
+                            disabled={cardMode !== 'NORMAL'}
+                            className="w-full bg-emerald-600 hover:bg-emerald-500 disabled:bg-slate-200 disabled:text-slate-400 hover:shadow-sm text-white text-xs font-bold py-2 px-3 rounded-xl transition-all cursor-pointer disabled:cursor-not-allowed flex items-center justify-center gap-1"
                           >
                             <ShoppingBag className="w-3.5 h-3.5" />
                             Tạo Phiếu Xuất Kho
@@ -4132,8 +4732,15 @@ export default function OrderParser({
                   <h4 className="font-sans font-bold text-sm text-slate-100">
                     {deleteConfirm.message}
                   </h4>
+                  {deleteConfirm.itemText && (
+                    <p className="text-xs font-mono text-amber-400 font-semibold pt-0.5">
+                      {deleteConfirm.itemText}
+                    </p>
+                  )}
                   <p className="text-[11px] text-slate-400 leading-normal font-sans">
-                    Thao tác này chỉ dọn dẹp các đơn tạm và hoàn toàn không ảnh hưởng tới phiếu xuất hay tồn kho.
+                    {deleteConfirm.type === 'bulk_sku' || deleteConfirm.type === 'detail_item'
+                      ? 'Các sản phẩm đã chọn sẽ bị xóa khỏi đơn gom này. Các SKU khác trong đơn vẫn được giữ nguyên.'
+                      : 'Thao tác này chỉ dọn dẹp các đơn tạm và hoàn toàn không ảnh hưởng tới phiếu xuất hay tồn kho.'}
                   </p>
                 </div>
               </div>
