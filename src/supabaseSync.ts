@@ -100,7 +100,7 @@ export async function tryCreateColumnsOnSupabase() {
   if (hasCreatedColumns) return;
   hasCreatedColumns = true;
 
-  const SCHEMA_VERSION = 'v5_gomdon_realtime_sync';
+  const SCHEMA_VERSION = 'v6_fix_invoice_regex_seq';
   if (typeof window !== 'undefined') {
     if (localStorage.getItem('SUPABASE_RPC_NOT_AVAILABLE') === 'true') {
       console.log("Bỏ qua cấu hình tự động do không được hỗ trợ trên Supabase này.");
@@ -675,12 +675,12 @@ export async function tryCreateColumnsOnSupabase() {
           IF p_prefix = 'PKK' THEN
             SELECT max(nullif(regexp_replace("MA_PHIEU", '^PKK', ''), ''))::integer 
             FROM public.b_kiemkho 
-            WHERE "MA_PHIEU" LIKE 'PKK%'
+            WHERE "MA_PHIEU" ~ '^PKK[0-9]+$'
             INTO v_max_id;
           ELSE
             SELECT max(nullif(regexp_replace("HOA_DON", '^' || p_prefix, ''), ''))::integer 
             FROM public.b_nhapxuat 
-            WHERE "HOA_DON" LIKE p_prefix || '%'
+            WHERE "HOA_DON" ~ ('^' || p_prefix || '[0-9]+$')
             INTO v_max_id;
           END IF;
 
@@ -3150,9 +3150,10 @@ async function fallbackGetNextInvoiceId(prefix: string, userId: string): Promise
       return prefix + Math.floor(Math.random() * 1000000).toString().padStart(6, '0');
     }
     let maxNum = 0;
+    const regex = new RegExp(`^${prefix}\\d+$`);
     data.forEach(item => {
       const h = item.HOA_DON;
-      if (h.startsWith(prefix)) {
+      if (regex.test(h)) {
         const numPart = parseInt(h.substring(prefix.length), 10);
         if (!isNaN(numPart) && numPart > maxNum) {
           maxNum = numPart;
@@ -3179,9 +3180,10 @@ async function fallbackGetNextKiemKhoId(prefix: string, userId: string): Promise
       return prefix + Math.floor(Math.random() * 1000000).toString().padStart(6, '0');
     }
     let maxNum = 0;
+    const regex = new RegExp(`^${prefix}\\d+$`);
     data.forEach(item => {
       const m = item.MA_PHIEU;
-      if (m.startsWith(prefix)) {
+      if (regex.test(m)) {
         const numPart = parseInt(m.substring(prefix.length), 10);
         if (!isNaN(numPart) && numPart > maxNum) {
           maxNum = numPart;
