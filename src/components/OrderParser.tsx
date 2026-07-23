@@ -3408,7 +3408,7 @@ export default function OrderParser({
                           handleToggleSelectTempOrder(order.id);
                         }
                       }}
-                      className={`bg-white rounded-2xl border-2 p-4 flex flex-col justify-between gap-4 transition-all hover:shadow-md cursor-pointer select-none ${
+                      className={`bg-white rounded-2xl border-2 p-3 sm:p-4 flex flex-col justify-between gap-3 sm:gap-4 transition-all hover:shadow-md cursor-pointer select-none ${
                         isChecked && cardMode === 'NORMAL'
                           ? 'border-indigo-600 bg-indigo-50/5 ring-1 ring-indigo-600/10 shadow-sm'
                           : 'border-slate-200 hover:border-slate-300'
@@ -3416,17 +3416,17 @@ export default function OrderParser({
                     >
                       {/* Card Header */}
                       <div className="space-y-2">
-                        <div className="flex items-start justify-between gap-2">
-                          <div className="flex items-center gap-2.5 min-w-0">
+                        <div className="flex items-center justify-between gap-1.5 min-w-0">
+                          <div className="flex items-center gap-2 min-w-0 flex-1">
                             <input
                               type="checkbox"
                               checked={isChecked}
                               onChange={() => {}} // toggled by card click
                               className="w-4 h-4 rounded-md border-slate-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer shrink-0"
                             />
-                            <div className="space-y-0.5 min-w-0">
-                              <div className="flex items-center gap-1.5 flex-wrap">
-                                <Building2 className="w-4 h-4 text-indigo-500 shrink-0" />
+                            <div className="space-y-0.5 min-w-0 flex-1">
+                              <div className="flex items-center gap-1 min-w-0">
+                                <Building2 className="w-3.5 h-3.5 text-indigo-500 shrink-0" />
                                 <select
                                   value={order.branch}
                                   onChange={(e) => {
@@ -3435,7 +3435,7 @@ export default function OrderParser({
                                   }}
                                   onClick={(e) => e.stopPropagation()}
                                   disabled={order.trangThai === 'Đã xuất' || cardMode !== 'NORMAL'}
-                                  className="font-sans font-bold text-slate-800 text-base md:text-xs bg-slate-50 border border-slate-200 hover:border-slate-300 rounded-lg py-1 px-2 focus:ring-1 focus:ring-indigo-500 focus:border-indigo-500 cursor-pointer outline-none transition-colors disabled:bg-slate-100 disabled:cursor-not-allowed"
+                                  className="font-sans font-bold text-slate-800 text-xs bg-slate-50 border border-slate-200 hover:border-slate-300 rounded-lg py-1 px-1.5 focus:ring-1 focus:ring-indigo-500 focus:border-indigo-500 cursor-pointer outline-none transition-colors truncate max-w-[110px] xs:max-w-[140px] sm:max-w-[200px] disabled:bg-slate-100 disabled:cursor-not-allowed"
                                   id={`branch_select_card_${order.id}`}
                                 >
                                   {chiNhanhs.map((branch) => (
@@ -3445,12 +3445,12 @@ export default function OrderParser({
                                   ))}
                                 </select>
                               </div>
-                              <p className="text-[10px] text-slate-400 font-medium font-mono">{order.createdAt}</p>
+                              <p className="text-[10px] text-slate-400 font-medium font-mono truncate">{order.createdAt}</p>
                             </div>
                           </div>
                           
                           {/* Header Action Buttons (Sửa / Xóa) */}
-                          <div className="flex items-center gap-1 shrink-0" onClick={(e) => e.stopPropagation()}>
+                          <div className="flex items-center gap-1 shrink-0 ml-auto" onClick={(e) => e.stopPropagation()}>
                             {canDeleteSkuFromGomDon && order.trangThai !== 'Đã xuất' && (
                               <>
                                 {cardMode === 'NORMAL' && (
@@ -3458,22 +3458,22 @@ export default function OrderParser({
                                     <button
                                       type="button"
                                       onClick={(e) => handleEnterEditMode(order.id, order.items, e)}
-                                      className="px-2 py-1 text-[11px] font-bold text-slate-600 hover:text-indigo-600 bg-slate-100 hover:bg-indigo-50 rounded-lg transition-all cursor-pointer flex items-center gap-1 border border-slate-200/60"
+                                      className="px-1.5 sm:px-2 py-1 text-[11px] font-bold text-slate-600 hover:text-indigo-600 bg-slate-100 hover:bg-indigo-50 rounded-lg transition-all cursor-pointer flex items-center gap-1 border border-slate-200/60 shrink-0"
                                       title="Chỉnh sửa số lượng các SKU trong đơn"
                                       id={`edit_mode_btn_${order.id}`}
                                     >
-                                      <Pencil className="w-3 h-3 text-indigo-500" />
-                                      Sửa
+                                      <Pencil className="w-3 h-3 text-indigo-500 shrink-0" />
+                                      <span>Sửa</span>
                                     </button>
                                     <button
                                       type="button"
                                       onClick={(e) => handleEnterDeleteMode(order.id, e)}
-                                      className="px-2 py-1 text-[11px] font-bold text-slate-600 hover:text-rose-600 bg-slate-100 hover:bg-rose-50 rounded-lg transition-all cursor-pointer flex items-center gap-1 border border-slate-200/60"
+                                      className="px-1.5 sm:px-2 py-1 text-[11px] font-bold text-slate-600 hover:text-rose-600 bg-slate-100 hover:bg-rose-50 rounded-lg transition-all cursor-pointer flex items-center gap-1 border border-slate-200/60 shrink-0"
                                       title="Chọn SKU để xóa khỏi đơn gom"
                                       id={`delete_mode_btn_${order.id}`}
                                     >
-                                      <Trash2 className="w-3 h-3 text-rose-500" />
-                                      Xóa
+                                      <Trash2 className="w-3 h-3 text-rose-500 shrink-0" />
+                                      <span>Xóa</span>
                                     </button>
                                   </div>
                                 )}
@@ -3482,11 +3482,11 @@ export default function OrderParser({
                                   <button
                                     type="button"
                                     onClick={(e) => handleExitCardMode(order.id, e)}
-                                    className="px-2 py-1 text-[11px] font-bold text-slate-600 hover:text-slate-900 bg-slate-200/80 hover:bg-slate-300 rounded-lg transition-all cursor-pointer flex items-center gap-1"
+                                    className="px-2 py-1 text-[11px] font-bold text-slate-600 hover:text-slate-900 bg-slate-200/80 hover:bg-slate-300 rounded-lg transition-all cursor-pointer flex items-center gap-1 shrink-0"
                                     title="Thoát chế độ"
                                   >
-                                    <X className="w-3 h-3" />
-                                    Hủy
+                                    <X className="w-3 h-3 shrink-0" />
+                                    <span>Hủy</span>
                                   </button>
                                 )}
                               </>
@@ -3496,7 +3496,7 @@ export default function OrderParser({
                             <button
                               type="button"
                               onClick={(e) => handleDeleteTempOrder(order.id, e)}
-                              className="text-slate-400 hover:text-rose-600 p-1.5 rounded-lg hover:bg-slate-100 transition-all cursor-pointer"
+                              className="text-slate-400 hover:text-rose-600 p-1 sm:p-1.5 rounded-lg hover:bg-slate-100 transition-all cursor-pointer shrink-0"
                               title="Xóa toàn bộ đơn gom này"
                             >
                               <Trash2 className="w-4 h-4" />
@@ -3506,15 +3506,15 @@ export default function OrderParser({
 
                         {/* Mode Indicator Banners */}
                         {cardMode === 'EDIT' && (
-                          <div className="bg-indigo-50 border border-indigo-200 text-indigo-800 text-[11px] font-bold px-2.5 py-1 rounded-lg flex items-center justify-between">
-                            <span>✏️ Chế độ chỉnh sửa số lượng</span>
-                            <span className="text-[10px] text-indigo-600 font-normal">Tích chọn & sửa số lượng</span>
+                          <div className="bg-indigo-50 border border-indigo-200 text-indigo-800 text-[11px] font-bold px-2.5 py-1 rounded-lg flex items-center justify-between gap-1">
+                            <span>✏️ Chế độ sửa số lượng</span>
+                            <span className="text-[10px] text-indigo-600 font-normal truncate">Tích chọn &amp; sửa</span>
                           </div>
                         )}
                         {cardMode === 'DELETE' && (
-                          <div className="bg-rose-50 border border-rose-200 text-rose-800 text-[11px] font-bold px-2.5 py-1 rounded-lg flex items-center justify-between">
-                            <span>🗑 Chế độ chọn SKU để xóa</span>
-                            <span className="text-[10px] text-rose-600 font-normal">Tích chọn SKU cần xóa</span>
+                          <div className="bg-rose-50 border border-rose-200 text-rose-800 text-[11px] font-bold px-2.5 py-1 rounded-lg flex items-center justify-between gap-1">
+                            <span>🗑 Chế độ chọn SKU xóa</span>
+                            <span className="text-[10px] text-rose-600 font-normal truncate">Tích chọn SKU</span>
                           </div>
                         )}
 
