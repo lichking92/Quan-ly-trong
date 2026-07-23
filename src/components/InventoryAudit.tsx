@@ -21,7 +21,10 @@ import {
   Plus,
   Trash2,
   SlidersHorizontal,
-  Filter
+  Filter,
+  FileSpreadsheet,
+  Loader2,
+  Download
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { SanPham, KiemKho, User as UserType, ThuongHieu } from '../types';
@@ -431,6 +434,201 @@ export default function InventoryAudit({
     setFilterKho('');
   };
 
+  // --- 7. XUẤT EXCEL DỮ LIỆU KIỂM KÊ KHO ---
+  const [isExporting, setIsExporting] = useState<boolean>(false);
+
+  // Map SKU sang thông tin sản phẩm để lấy tên đầy đủ
+  const productMap = useMemo(() => {
+    const map = new Map<string, SanPham>();
+    sanPhams.forEach(p => map.set(p.SKU, p));
+    return map;
+  }, [sanPhams]);
+
+  const handleExportExcel = async () => {
+    if (filteredKiemKhos.length === 0) {
+      setErrorMsg('Không có dữ liệu kiểm kê kho trùng khớp với bộ lọc để xuất Excel.');
+      setTimeout(() => setErrorMsg(''), 4000);
+      return;
+    }
+
+    setIsExporting(true);
+    setErrorMsg('');
+    try {
+      const { getExcelJS } = await import('../utils/exportEngine');
+      const ExcelJS = await getExcelJS();
+      const workbook = new ExcelJS.Workbook();
+      const sheet = workbook.addWorksheet('Kiem_Ke_Kho');
+
+      // Cố định dòng tiêu đề (Freeze Header)
+      sheet.views = [{ state: 'frozen', xSplit: 0, ySplit: 5 }];
+
+      // Khai báo cấu trúc các cột với nhãn UI rõ ràng
+      sheet.columns = [
+        { header: 'STT', key: 'stt', width: 8 },
+        { header: 'Mã Phiếu', key: 'maPhieu', width: 16 },
+        { header: 'Mã SKU', key: 'sku', width: 28 },
+        { header: 'Tên Sản Phẩm', key: 'tenSp', width: 35 },
+        { header: 'Chi Nhánh / Kho', key: 'kho', width: 22 },
+        { header: 'Tồn Hệ Thống', key: 'tonHeThong', width: 16 },
+        { header: 'Tồn Thực Tế', key: 'tonThucTe', width: 16 },
+        { header: 'Chênh Lệch', key: 'lech', width: 14 },
+        { header: 'Loại Bù Trừ', key: 'loaiBu', width: 16 },
+        { header: 'Người Kiểm Kê', key: 'nguoiKiem', width: 22 },
+        { header: 'Thời Điểm Kiểm Kê', key: 'thoiDiem', width: 22 }
+      ];
+
+      // Dòng 1: Tiêu đề báo cáo
+      sheet.mergeCells('A1:K1');
+      const titleCell = sheet.getCell('A1');
+      titleCell.value = 'BÁO CÁO KIỂM KÊ KHO TRÒNG KÍNH';
+      titleCell.font = { name: 'Segoe UI', size: 16, bold: true, color: { argb: 'FF1E3A8A' } };
+      titleCell.alignment = { horizontal: 'center', vertical: 'middle' };
+
+      // Dòng 2: Thông tin bộ lọc áp dụng
+      sheet.mergeCells('A2:K2');
+      const subTitleCell = sheet.getCell('A2');
+      const filterSummaryParts = [
+        filterKho ? `Chi Nhánh/Kho: ${filterKho}` : 'Chi Nhánh/Kho: Tất cả',
+        filterMaPhieu ? `Mã PKK: ${filterMaPhieu}` : null,
+        filterSKU ? `SKU: ${filterSKU}` : null,
+        filterNguoiKiem ? `Người kiểm: ${filterNguoiKiem}` : null,
+        filterNgay ? `Ngày kiểm: ${filterNgay}` : null
+      ].filter(Boolean);
+
+      subTitleCell.value = `Thời điểm xuất: ${getVietnamDateTimeString()} | Bộ lọc đang áp dụng: ${filterSummaryParts.join(' | ')}`;
+      subTitleCell.font = { name: 'Segoe UI', size: 10, italic: true, color: { argb: 'FF475569' } };
+      subTitleCell.alignment = { horizontal: 'center', vertical: 'middle' };
+
+      // Dòng 3: Thống kê tổng quan
+      sheet.mergeCells('A3:K3');
+      const summaryCell = sheet.getCell('A3');
+      const totalRecords = filteredKiemKhos.length;
+      const totalLech = filteredKiemKhos.reduce((sum, item) => sum + (item.LECH || 0), 0);
+      summaryCell.value = `Tổng số bản ghi kiểm kê: ${totalRecords} | Tổng chênh lệch số lượng: ${totalLech > 0 ? '+' + totalLech : totalLech}`;
+      summaryCell.font = { name: 'Segoe UI', size: 10, bold: true, color: { argb: 'FF0F766E' } };
+      summaryCell.alignment = { horizontal: 'center', vertical: 'middle' };
+
+      // Dòng 5: Header bảng
+      const headerRow = sheet.getRow(5);
+      headerRow.values = [
+        'STT',
+        'Mã Phiếu',
+        'Mã SKU',
+        'Tên Sản Phẩm',
+        'Chi Nhánh / Kho',
+        'Tồn Hệ Thống',
+        'Tồn Thực Tế',
+        'Chênh Lệch',
+        'Loại Bù Trừ',
+        'Người Kiểm Kê',
+        'Thời Điểm Kiểm Kê'
+      ];
+      headerRow.height = 28;
+      headerRow.font = { name: 'Segoe UI', size: 10, bold: true, color: { argb: 'FFFFFFFF' } };
+      headerRow.eachCell((cell) => {
+        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1E3A8A' } };
+        cell.alignment = { horizontal: 'center', vertical: 'middle' };
+        cell.border = {
+          top: { style: 'thin', color: { argb: 'FF1E40AF' } },
+          bottom: { style: 'medium', color: { argb: 'FF1E40AF' } },
+          left: { style: 'thin', color: { argb: 'FF1E40AF' } },
+          right: { style: 'thin', color: { argb: 'FF1E40AF' } }
+        };
+      });
+
+      // Điền từng dòng dữ liệu từ dataset hiển thị
+      filteredKiemKhos.forEach((audit, idx) => {
+        const sp = productMap.get(audit.SKU);
+        const row = sheet.addRow([
+          idx + 1,
+          audit.MA_PHIEU,
+          audit.SKU,
+          sp ? sp.TEN_SAN_PHAM : '',
+          audit.KHO || 'Chưa rõ',
+          Number(audit.TON_HE_THONG || 0),
+          Number(audit.TON_THUC_TE || 0),
+          Number(audit.LECH || 0),
+          audit.LOAI_BU || 'KHÔNG LỆCH',
+          audit.NGUOI_KIEM || '',
+          audit.THOI_DIEM || ''
+        ]);
+
+        row.height = 22;
+        row.font = { name: 'Segoe UI', size: 9.5 };
+
+        // Định dạng căn lề, viền và kiểu số
+        row.eachCell((cell, colNum) => {
+          cell.border = {
+            bottom: { style: 'thin', color: { argb: 'FFE2E8F0' } },
+            left: { style: 'thin', color: { argb: 'FFE2E8F0' } },
+            right: { style: 'thin', color: { argb: 'FFE2E8F0' } }
+          };
+
+          // Căn lề
+          if (colNum === 1 || colNum === 2 || colNum === 9 || colNum === 11) {
+            cell.alignment = { horizontal: 'center', vertical: 'middle' };
+          } else if (colNum === 6 || colNum === 7 || colNum === 8) {
+            cell.alignment = { horizontal: 'right', vertical: 'middle' };
+            cell.numFmt = '#,##0'; // Đảm bảo lưu kiểu số nguyên vẹn
+          } else {
+            cell.alignment = { horizontal: 'left', vertical: 'middle' };
+          }
+
+          // Nổi bật màu cho cột Chênh Lệch
+          if (colNum === 8) {
+            const val = Number(audit.LECH || 0);
+            if (val > 0) {
+              cell.font = { name: 'Segoe UI', size: 9.5, bold: true, color: { argb: 'FF047857' } };
+            } else if (val < 0) {
+              cell.font = { name: 'Segoe UI', size: 9.5, bold: true, color: { argb: 'FFBE123C' } };
+            }
+          }
+        });
+      });
+
+      // Tự động tính toán độ rộng cột vừa vặn (Auto width)
+      sheet.columns.forEach(col => {
+        let maxLen = col.header ? String(col.header).length : 10;
+        sheet.eachRow({ includeEmpty: false }, (row, rowNum) => {
+          if (rowNum >= 5) {
+            const cellValue = row.getCell(col.number!).value;
+            if (cellValue !== null && cellValue !== undefined) {
+              const len = String(cellValue).length;
+              if (len > maxLen) maxLen = len;
+            }
+          }
+        });
+        col.width = Math.min(Math.max(maxLen + 4, 10), 50);
+      });
+
+      // Xuất file binary và kích hoạt tải về
+      const buffer = await workbook.xlsx.writeBuffer();
+      const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+      
+      const todayStr = getVietnamDateString();
+      let branchPart = filterKho ? `_${filterKho.replace(/\s+/g, '_')}` : '';
+      const fileName = `KiemKeKho${branchPart}_${todayStr}.xlsx`;
+
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = fileName;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+
+      setSuccessMsg(`Đã xuất thành công ${filteredKiemKhos.length} dòng kiểm kê ra file Excel [${fileName}]!`);
+      setTimeout(() => setSuccessMsg(''), 5000);
+    } catch (err) {
+      console.error('Lỗi khi xuất file Excel kiểm kê:', err);
+      setErrorMsg('Đã xảy ra lỗi khi tạo file Excel. Vui lòng thử lại.');
+      setTimeout(() => setErrorMsg(''), 5000);
+    } finally {
+      setIsExporting(false);
+    }
+  };
+
   return (
     <div className="space-y-6">
       
@@ -445,6 +643,21 @@ export default function InventoryAudit({
             <p className="text-xs text-slate-500 font-medium">So khớp tồn thực đếm vật lý với hệ thống & tự động bù trừ</p>
           </div>
         </div>
+
+        {/* Nút Xuất Excel ở Header chính */}
+        <button
+          type="button"
+          onClick={handleExportExcel}
+          disabled={isExporting}
+          className="flex items-center justify-center gap-2 bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white font-extrabold text-xs py-2 px-4 rounded-xl cursor-pointer transition-all shadow-sm disabled:opacity-50"
+        >
+          {isExporting ? (
+            <Loader2 className="w-4 h-4 animate-spin" />
+          ) : (
+            <FileSpreadsheet className="w-4 h-4" />
+          )}
+          <span>Xuất Excel</span>
+        </button>
       </div>
 
       {/* THÔNG BÁO */}
@@ -869,14 +1082,32 @@ export default function InventoryAudit({
                 <h3 className="font-sans font-bold text-slate-800 text-xs uppercase tracking-wider">Lịch sử kiểm kê toàn hệ thống</h3>
               </div>
               
-              {/* Nút bật/tắt bộ lọc tìm kiếm */}
-              <button
-                onClick={() => setShowFilterSettings(!showFilterSettings)}
-                className={`text-[10px] font-extrabold py-1 px-3 rounded-full flex items-center gap-1 cursor-pointer transition-all ${showFilterSettings ? 'bg-red-50 text-red-600 border border-red-200' : 'bg-slate-50 text-slate-500 border border-slate-150'}`}
-              >
-                <Filter className="w-3 h-3" />
-                Bộ lọc tìm kiếm
-              </button>
+              <div className="flex items-center gap-2">
+                {/* Nút Xuất Excel cạnh bộ lọc */}
+                <button
+                  type="button"
+                  onClick={handleExportExcel}
+                  disabled={isExporting}
+                  className="text-[10px] font-extrabold py-1 px-3 rounded-full flex items-center gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white cursor-pointer transition-all shadow-xs disabled:opacity-50"
+                  title="Xuất dữ liệu kiểm kê đang hiển thị ra Excel"
+                >
+                  {isExporting ? (
+                    <Loader2 className="w-3 h-3 animate-spin" />
+                  ) : (
+                    <FileSpreadsheet className="w-3 h-3" />
+                  )}
+                  <span>Xuất Excel</span>
+                </button>
+
+                {/* Nút bật/tắt bộ lọc tìm kiếm */}
+                <button
+                  onClick={() => setShowFilterSettings(!showFilterSettings)}
+                  className={`text-[10px] font-extrabold py-1 px-3 rounded-full flex items-center gap-1 cursor-pointer transition-all ${showFilterSettings ? 'bg-red-50 text-red-600 border border-red-200' : 'bg-slate-50 text-slate-500 border border-slate-150'}`}
+                >
+                  <Filter className="w-3 h-3" />
+                  Bộ lọc tìm kiếm
+                </button>
+              </div>
             </div>
 
             {/* BỘ LỌC TÌM KIẾM CHI TIẾT THEO YÊU CẦU */}

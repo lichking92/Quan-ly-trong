@@ -3185,3 +3185,128 @@ export function removeVietnameseTones(str: string): string {
   return str;
 }
 
+/**
+ * Hàm Xuất Excel danh sách Lịch sử Nhập Xuất (Transaction History)
+ * - Xuất đúng dữ liệu đang hiển thị sau khi áp dụng bộ lọc.
+ * - Header dòng 1: Số Phiếu, Loại Phiếu, Ngày Tạo, Chi Nhánh, Người Tạo, Tổng Số Lượng, Ghi Chú
+ * - Cố định dòng tiêu đề (Freeze Pane)
+ * - In đậm tiêu đề, tự động chỉnh độ rộng cột
+ * - Định dạng số lượng bảo toàn kiểu số
+ * - Đặt tên file: LichSuNhapXuat_[YYYY-MM-DD].xlsx
+ */
+export async function exportTransactionHistoryToExcel({
+  invoices,
+  onDownload
+}: {
+  invoices: NhapXuat[];
+  onDownload?: (blob: Blob, fileName: string) => void;
+}) {
+  const ExcelJS = await getExcelJS();
+  const workbook = new ExcelJS.Workbook();
+  const sheet = workbook.addWorksheet('Lịch_Sử_Nhập_Xuất');
+
+  // Cố định dòng tiêu đề (Freeze Pane)
+  sheet.views = [{ state: 'frozen', xSplit: 0, ySplit: 1 }];
+
+  // Tiêu đề cột chuẩn
+  const headers = [
+    'Số Phiếu',
+    'Loại Phiếu',
+    'Ngày Tạo',
+    'Chi Nhánh',
+    'Người Tạo',
+    'Tổng Số Lượng',
+    'Ghi Chú'
+  ];
+
+  const headerRow = sheet.getRow(1);
+  headerRow.values = headers;
+  headerRow.font = { name: 'Segoe UI', size: 10, bold: true, color: { argb: 'FFFFFFFF' } };
+  headerRow.height = 26;
+  headerRow.eachCell((cell) => {
+    cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1E3A8A' } };
+    cell.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true };
+    cell.border = {
+      top: { style: 'thin', color: { argb: 'FF1D4ED8' } },
+      bottom: { style: 'medium', color: { argb: 'FF1D4ED8' } },
+      left: { style: 'thin', color: { argb: 'FF1D4ED8' } },
+      right: { style: 'thin', color: { argb: 'FF1D4ED8' } }
+    };
+  });
+
+  // Điền danh sách dòng dữ liệu đang hiển thị
+  invoices.forEach((inv) => {
+    const row = sheet.addRow([
+      inv.HOA_DON || '',
+      inv.LOAI || '',
+      inv.NGAY || (inv.TG_TAO ? inv.TG_TAO.split(' ')[0] : ''),
+      inv.CHI_NHANH || '',
+      inv.TEN_NGUOI_TAO || inv.NGUOI_TAO || '',
+      Number(inv.TONG_SL) || 0,
+      inv.GHI_CHU || ''
+    ]);
+
+    row.height = 22;
+    row.font = { name: 'Segoe UI', size: 9.5 };
+
+    // Căn lề thích hợp cho từng cột
+    row.getCell(1).alignment = { horizontal: 'center', vertical: 'middle' };
+    row.getCell(2).alignment = { horizontal: 'center', vertical: 'middle' };
+    row.getCell(3).alignment = { horizontal: 'center', vertical: 'middle' };
+    row.getCell(4).alignment = { horizontal: 'left', vertical: 'middle' };
+    row.getCell(5).alignment = { horizontal: 'left', vertical: 'middle' };
+
+    // Định dạng số lượng kiểu Number (#,##0)
+    const qtyCell = row.getCell(6);
+    qtyCell.alignment = { horizontal: 'right', vertical: 'middle' };
+    qtyCell.numFmt = '#,##0';
+
+    row.getCell(7).alignment = { horizontal: 'left', vertical: 'middle' };
+
+    row.eachCell((cell) => {
+      cell.border = {
+        bottom: { style: 'thin', color: { argb: 'FFE2E8F0' } },
+        left: { style: 'thin', color: { argb: 'FFE2E8F0' } },
+        right: { style: 'thin', color: { argb: 'FFE2E8F0' } }
+      };
+    });
+  });
+
+  // Tự động tính toán độ rộng cột (Auto column width)
+  sheet.columns.forEach((column, i) => {
+    let maxLen = headers[i].length;
+    invoices.forEach((inv) => {
+      let valStr = '';
+      if (i === 0) valStr = inv.HOA_DON || '';
+      else if (i === 1) valStr = inv.LOAI || '';
+      else if (i === 2) valStr = inv.NGAY || '';
+      else if (i === 3) valStr = inv.CHI_NHANH || '';
+      else if (i === 4) valStr = inv.TEN_NGUOI_TAO || inv.NGUOI_TAO || '';
+      else if (i === 5) valStr = String(inv.TONG_SL || 0);
+      else if (i === 6) valStr = inv.GHI_CHU || '';
+
+      if (valStr.length > maxLen) maxLen = valStr.length;
+    });
+    column.width = Math.min(Math.max(maxLen + 4, 12), 40);
+  });
+
+  const todayStr = getVietnamDateString();
+  const fileName = `LichSuNhapXuat_${todayStr}.xlsx`;
+
+  const buffer = await workbook.xlsx.writeBuffer();
+  const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+
+  if (onDownload) {
+    onDownload(blob, fileName);
+  } else {
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = fileName;
+    document.body.appendChild(a);
+    a.click();
+    window.URL.revokeObjectURL(url);
+    document.body.removeChild(a);
+  }
+}
+

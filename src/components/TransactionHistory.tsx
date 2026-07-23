@@ -27,11 +27,13 @@ import {
   Save,
   CheckSquare,
   Ban,
-  ChevronsUp
+  ChevronsUp,
+  FileSpreadsheet
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { NhapXuat, NhapXuatCT, SanPham, LoaiPhieu, User as UserType, KiemKho } from '../types';
 import { formatDop, formatSKUForDisplay, cleanSKU, getVietnamDateString, getVietnamDateTimeString } from '../data/mockData';
+import { exportTransactionHistoryToExcel } from '../utils/exportEngine';
 
 export interface AuditLog {
   id: string;
@@ -841,6 +843,31 @@ export default function TransactionHistory({
     setSortBy('NGAY');
     setSortOrder('desc');
     setIsGroupedByDate(false);
+  };
+
+  const [isExporting, setIsExporting] = useState<boolean>(false);
+
+  const handleExportExcel = async () => {
+    if (!hasPerm('history.export')) {
+      triggerHistoryToast('Bạn không có quyền xuất Excel lịch sử nhập xuất.', 'error');
+      return;
+    }
+    if (filteredInvoices.length === 0) {
+      triggerHistoryToast('Không có dữ liệu phiếu nào để xuất Excel theo bộ lọc hiện tại.', 'warning');
+      return;
+    }
+    try {
+      setIsExporting(true);
+      await exportTransactionHistoryToExcel({
+        invoices: filteredInvoices
+      });
+      triggerHistoryToast(`Đã xuất thành công ${filteredInvoices.length} phiếu ra Excel!`, 'success');
+    } catch (err) {
+      console.error('Lỗi khi xuất Excel:', err);
+      triggerHistoryToast('Không thể xuất file Excel. Vui lòng thử lại!', 'error');
+    } finally {
+      setIsExporting(false);
+    }
   };
 
   // --- 5. CHỈNH SỬA DÒNG CHI TIẾT ---
@@ -2116,6 +2143,19 @@ export default function TransactionHistory({
               <RefreshCw className="w-3.5 h-3.5" />
               Xóa bộ lọc
             </button>
+
+            {/* Export Excel Button (Requires history.export permission) */}
+            {hasPerm('history.export') && (
+              <button
+                onClick={handleExportExcel}
+                disabled={isExporting}
+                className="flex items-center justify-center gap-1.5 py-2 px-3.5 text-xs font-bold bg-emerald-600 hover:bg-emerald-700 disabled:bg-emerald-300 text-white rounded-xl shadow-xs transition-all cursor-pointer grow sm:grow-0"
+                title="Xuất dữ liệu phiếu đang hiển thị ra file Excel"
+              >
+                <FileSpreadsheet className="w-3.5 h-3.5" />
+                {isExporting ? 'Đang xuất...' : 'Xuất Excel'}
+              </button>
+            )}
 
             {/* Group by Date Button */}
             <button
