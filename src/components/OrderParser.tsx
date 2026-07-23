@@ -3416,8 +3416,9 @@ export default function OrderParser({
                     >
                       {/* Card Header */}
                       <div className="space-y-2">
-                        <div className="flex items-center justify-between gap-1.5 min-w-0">
-                          <div className="flex items-center gap-2 min-w-0 flex-1">
+                        <div className="flex items-center justify-between gap-1.5 min-w-0 w-full">
+                          {/* Left side: Checkbox + Branch Dropdown & Time */}
+                          <div className="flex items-center gap-1.5 min-w-0 flex-1 max-w-[55%] sm:max-w-[65%]">
                             <input
                               type="checkbox"
                               checked={isChecked}
@@ -3425,7 +3426,7 @@ export default function OrderParser({
                               className="w-4 h-4 rounded-md border-slate-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer shrink-0"
                             />
                             <div className="space-y-0.5 min-w-0 flex-1">
-                              <div className="flex items-center gap-1 min-w-0">
+                              <div className="flex items-center gap-1 min-w-0 w-full">
                                 <Building2 className="w-3.5 h-3.5 text-indigo-500 shrink-0" />
                                 <select
                                   value={order.branch}
@@ -3435,7 +3436,7 @@ export default function OrderParser({
                                   }}
                                   onClick={(e) => e.stopPropagation()}
                                   disabled={order.trangThai === 'Đã xuất' || cardMode !== 'NORMAL'}
-                                  className="font-sans font-bold text-slate-800 text-xs bg-slate-50 border border-slate-200 hover:border-slate-300 rounded-lg py-1 px-1.5 focus:ring-1 focus:ring-indigo-500 focus:border-indigo-500 cursor-pointer outline-none transition-colors truncate max-w-[110px] xs:max-w-[140px] sm:max-w-[200px] disabled:bg-slate-100 disabled:cursor-not-allowed"
+                                  className="w-full font-sans font-bold text-slate-800 text-[12px] bg-slate-50 border border-slate-200 hover:border-slate-300 rounded-lg py-1 px-1.5 focus:ring-1 focus:ring-indigo-500 focus:border-indigo-500 cursor-pointer outline-none transition-colors truncate disabled:bg-slate-100 disabled:cursor-not-allowed"
                                   id={`branch_select_card_${order.id}`}
                                 >
                                   {chiNhanhs.map((branch) => (
@@ -3445,7 +3446,7 @@ export default function OrderParser({
                                   ))}
                                 </select>
                               </div>
-                              <p className="text-[10px] text-slate-400 font-medium font-mono truncate">{order.createdAt}</p>
+                              <p className="text-[10px] text-slate-400 font-medium font-mono truncate pl-4.5">{order.createdAt}</p>
                             </div>
                           </div>
                           
