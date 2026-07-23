@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { 
   FileText, 
   MapPin, 
@@ -539,6 +539,11 @@ export default function TransactionHistory({
     localStorage.setItem(`${currentUser.username}_HISTORY_FILTER_TO_DATE`, toDate);
   }, [toDate, currentUser]);
 
+  const onClearDrillDownRef = useRef(onClearDrillDownFilters);
+  useEffect(() => {
+    onClearDrillDownRef.current = onClearDrillDownFilters;
+  });
+
   useEffect(() => {
     if (drillDownFilters) {
       if (drillDownFilters.historyTypeFilter) {
@@ -553,11 +558,11 @@ export default function TransactionHistory({
       if (drillDownFilters.toDate !== undefined) {
         setToDate(drillDownFilters.toDate);
       }
-      if (onClearDrillDownFilters) {
-        onClearDrillDownFilters();
+      if (onClearDrillDownRef.current) {
+        onClearDrillDownRef.current();
       }
     }
-  }, [drillDownFilters, onClearDrillDownFilters]);
+  }, [drillDownFilters]);
   const [columnOrder, setColumnOrder] = useState<string[]>(() => {
     const defaultColumnKeys = ['invoiceNo', 'type', 'status', 'datetime', 'branch', 'creator', 'totalQty', 'note'];
     const saved = localStorage.getItem(`${currentUser.username}_HISTORY_COLUMN_ORDER`);

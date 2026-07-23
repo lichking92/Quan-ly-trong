@@ -187,11 +187,16 @@ export default function CategoryManagement({
     }
   }, [currentUser]);
 
+  const onSubTabChangeRef = React.useRef(onSubTabChange);
   React.useEffect(() => {
-    if (onSubTabChange) {
-      onSubTabChange(activeSubTab);
+    onSubTabChangeRef.current = onSubTabChange;
+  });
+
+  React.useEffect(() => {
+    if (onSubTabChangeRef.current) {
+      onSubTabChangeRef.current(activeSubTab);
     }
-  }, [activeSubTab, onSubTabChange]);
+  }, [activeSubTab]);
 
   const canWriteCurrentTab = () => {
     if (activeSubTab === 'BRAND') return hasPerm('inventory.view'); // Brands are editable under inventory.view

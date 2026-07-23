@@ -385,7 +385,7 @@ export default function App() {
 
     // Kiểm tra quyền cấp 1 trực tiếp
     return userPermissions.has(permissionCode);
-  }, [currentUser, roles]);
+  }, [currentUser?.role, currentUser?.ROLES, roles]);
 
   const handleLogout = async () => {
     if (currentUser) {
@@ -770,7 +770,7 @@ export default function App() {
     }, 600000); // 10 phút
 
     return () => clearInterval(checkActiveUserInterval);
-  }, [currentUser]);
+  }, [currentUser?.id, currentUser?.username]);
 
   const [isSyncing, setIsSyncing] = useState<boolean>(false);
 
@@ -812,7 +812,7 @@ export default function App() {
     if (isDebug) {
       console.log("[Sync] Định kỳ tải lại đã được tắt. Hệ thống chuyển sang cơ chế Realtime Incremental siêu nhẹ.");
     }
-  }, [currentUser]);
+  }, [currentUser?.username]);
 
   // Hàm tải dữ liệu chuyên biệt từ Supabase Cloud và gán đồng bộ vào State và LocalStorage
   const syncAllDataFromSupabase = async (userId: string, email: string, silent = false, forceRefresh = false) => {
@@ -1026,7 +1026,7 @@ export default function App() {
       }
     }
     wasOfflineRef.current = isOffline;
-  }, [isOffline, currentUser]);
+  }, [isOffline, currentUser?.id, currentUser?.username]);
 
   // Quản lý Auth và Realtime đồng bộ hóa dữ liệu từ Supabase
   useEffect(() => {
@@ -1565,6 +1565,14 @@ export default function App() {
     toDate: string;
   } | null>(null);
 
+  const handleCategorySubTabChange = useCallback((subTab: string) => {
+    setActiveCategorySubTab(subTab);
+  }, []);
+
+  const handleClearDrillDownFilters = useCallback(() => {
+    setHistoryFiltersOverride(null);
+  }, []);
+
   // Trạng thái theo dõi đang lazy loading để tránh gọi song song nhiều lần
   const lazyLoadingRef = useRef<Record<string, boolean>>({});
 
@@ -1640,7 +1648,7 @@ export default function App() {
     };
 
     loadData();
-  }, [activeTab, activeCategorySubTab, currentUser, isOffline]);
+  }, [activeTab, activeCategorySubTab, currentUser?.id, isOffline]);
 
   // Tự động chuyển đổi activeTab khi phân quyền thay đổi để tránh màn hình trắng
   useEffect(() => {
@@ -1675,11 +1683,11 @@ export default function App() {
       ];
       
       const firstAllowed = allowedTabs.find(t => t.isAllowed);
-      if (firstAllowed) {
+      if (firstAllowed && firstAllowed.id !== activeTab) {
         setActiveTab(firstAllowed.id);
       }
     }
-  }, [currentUser, hasPermission, activeTab]);
+  }, [currentUser?.role, currentUser?.ROLES, hasPermission, activeTab]);
 
   useEffect(() => {
     if (typeof window !== 'undefined') {
@@ -3892,7 +3900,7 @@ export default function App() {
                     chiNhanhs={listBranchNames}
                     thuongHieus={listBrandNames}
                     drillDownFilters={historyFiltersOverride}
-                    onClearDrillDownFilters={() => setHistoryFiltersOverride(null)}
+                    onClearDrillDownFilters={handleClearDrillDownFilters}
                   />
                 )}
 
@@ -3904,7 +3912,7 @@ export default function App() {
                     chiNhanhs={chiNhanhs}
                     nhanViens={nhanViens}
                     emailLogs={emailLogs}
-                    onSubTabChange={(subTab) => setActiveCategorySubTab(subTab)}
+                    onSubTabChange={handleCategorySubTabChange}
                     onAddThuongHieu={handleAddThuongHieu}
                     onAddChiNhanh={handleAddChiNhanh}
                     onAddNhanVien={handleAddNhanVien}
