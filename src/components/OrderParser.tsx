@@ -373,7 +373,7 @@ export default function OrderParser({
   useEffect(() => {
     const userPrefix = currentUser?.username || 'default';
     localStorage.setItem(`batch_sorting_priority_${userPrefix}`, JSON.stringify(sortingPriority));
-  }, [sortingPriority, currentUser]);
+  }, [sortingPriority, currentUser?.username]);
 
   const movePriorityField = (index: number, direction: 'UP' | 'DOWN') => {
     const nextList = [...sortingPriority];
@@ -563,7 +563,7 @@ export default function OrderParser({
     return () => {
       active = false;
     };
-  }, [currentUser]);
+  }, [currentUser?.id, currentUser?.username]);
 
   // Thiết lập kênh Realtime đồng bộ hóa Gom đơn và Soạn hàng (Có Debounce >= 2500ms và Ignore Local Events)
   useEffect(() => {
@@ -651,7 +651,7 @@ export default function OrderParser({
         realtimeChannelRef.current = null;
       }
     };
-  }, [currentUser]);
+  }, [currentUser?.id, currentUser?.username]);
 
   // Set default branch when chiNhanhs loaded
   useEffect(() => {

@@ -229,6 +229,21 @@ export interface SanPham {
 export type LoaiPhieu = 'NHẬP' | 'XUẤT' | 'KIỂM KHO';
 
 // B_NHAPXUAT: Lưu trữ thông tin Header của phiếu Nhập/Xuất/Kiểm kho
+export type InvoiceCategory = 'PN' | 'PX' | 'PKK' | 'PNK' | 'PXK';
+
+export function getInvoiceCategory(hoaDon?: string, loai?: string): InvoiceCategory {
+  const hd = (hoaDon || '').toUpperCase().trim();
+  const l = (loai || '').toUpperCase().trim();
+
+  if (hd.startsWith('PNK')) return 'PNK';
+  if (hd.startsWith('PXK')) return 'PXK';
+  if (hd.startsWith('PKK') || l === 'KIỂM KHO') return 'PKK';
+  if (hd.startsWith('PN') || l === 'NHẬP') return 'PN';
+  if (hd.startsWith('PX') || l === 'XUẤT') return 'PX';
+
+  return 'PX';
+}
+
 export interface NhapXuat {
   HOA_DON: string;         // Số phiếu tự tăng (Ví dụ: PN000001, PX000001, PKK000001)
   CHI_NHANH: string;       // Chi nhánh thực hiện giao dịch (Kho Trung Tâm, CN Quận 1...)

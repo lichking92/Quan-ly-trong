@@ -331,6 +331,13 @@ export default function App() {
   // --- 2B. QUẢN LÝ VAI TRÒ & QUYỀN HẠN (RBAC) ---
   const [roles, setRoles] = useState<Role[]>(DEFAULT_ROLES);
 
+  // Tạo khóa duy nhất ổn định đại diện cho vai trò/quyền của user (dạng primitive string)
+  const userRolesKey = useMemo(() => {
+    if (!currentUser) return '';
+    const rolesArr = safeParseArray(currentUser.ROLES) || [];
+    return `${currentUser.id}_${currentUser.role}_${rolesArr.join(',')}`;
+  }, [currentUser?.id, currentUser?.role, currentUser?.ROLES]);
+
   const hasPermission = useCallback((permissionCode: string): boolean => {
     if (!currentUser) return false;
 
@@ -398,7 +405,7 @@ export default function App() {
 
     // Kiểm tra quyền cấp 1 trực tiếp
     return userPermissions.has(permissionCode);
-  }, [currentUser?.role, currentUser?.ROLES, roles]);
+  }, [userRolesKey, roles]);
 
   const handleLogout = async () => {
     if (currentUser) {
@@ -969,7 +976,18 @@ export default function App() {
                 return;
               }
 
-              setCurrentUser(u);
+              setCurrentUser(prevUser => {
+                if (!prevUser) return u;
+                const isSame = 
+                  prevUser.id === u.id &&
+                  prevUser.username === u.username &&
+                  prevUser.role === u.role &&
+                  prevUser.branch === u.branch &&
+                  prevUser.writeAccess === u.writeAccess &&
+                  prevUser.user_id === u.user_id &&
+                  JSON.stringify(prevUser.ROLES || []) === JSON.stringify(u.ROLES || []);
+                return isSame ? prevUser : u;
+              });
               localStorage.setItem('CURRENT_USER', JSON.stringify(u));
               return;
             } else {
@@ -1700,7 +1718,7 @@ export default function App() {
         setActiveTab(firstAllowed.id);
       }
     }
-  }, [currentUser?.role, currentUser?.ROLES, hasPermission, activeTab]);
+  }, [userRolesKey, activeTab]);
 
   useEffect(() => {
     if (typeof window !== 'undefined') {
@@ -1822,7 +1840,7 @@ export default function App() {
       const saved = localStorage.getItem(`sidebar_collapsed_pref_${currentUser.username}`);
       setSidebarCollapsed(saved === 'true');
     }
-  }, [currentUser]);
+  }, [currentUser?.username]);
 
   const toggleSidebar = () => {
     setSidebarCollapsed(prev => {
@@ -1848,7 +1866,7 @@ export default function App() {
       setThemeMode('light');
       setAccentColor('red');
     }
-  }, [currentUser]);
+  }, [currentUser?.username]);
 
   const handleUpdateTheme = (theme: 'light' | 'dark', accent: 'blue' | 'green' | 'orange' | 'red' | 'purple') => {
     setThemeMode(theme);

@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { SanPham, NhapXuat, NhapXuatCT } from '../types';
+import { SanPham, NhapXuat, NhapXuatCT, getInvoiceCategory } from '../types';
 import { supabase, SUPABASE_STORAGE_BUCKET } from '../supabaseClient';
 import { getVietnamDateString } from '../data/mockData';
 import { compareChietXuat } from './chietXuatHelper';
@@ -253,16 +253,17 @@ export function calculateResolvedValues({
         // Lọc theo Loại phiếu
         let matchType = true;
         if (selectedTypeFilter !== 'Tất cả') {
+          const cat = getInvoiceCategory(h.HOA_DON, h.LOAI);
           if (selectedTypeFilter === 'Phiếu nhập') {
-            matchType = h.LOAI === 'NHẬP';
+            matchType = cat === 'PN';
           } else if (selectedTypeFilter === 'Phiếu xuất') {
-            matchType = h.LOAI === 'XUẤT';
+            matchType = cat === 'PX';
           } else if (selectedTypeFilter === 'Phiếu kiểm kho') {
-            matchType = h.LOAI === 'KIỂM KHO' || h.HOA_DON.startsWith('PKK') || h.HOA_DON.startsWith('PNK') || h.HOA_DON.startsWith('PXK');
+            matchType = cat === 'PKK';
           } else if (selectedTypeFilter === 'Phiếu nhập kho') {
-            matchType = h.LOAI === 'NHẬP' && !h.HOA_DON.startsWith('PNK');
+            matchType = cat === 'PNK';
           } else if (selectedTypeFilter === 'Phiếu xuất kho') {
-            matchType = h.LOAI === 'XUẤT' && !h.HOA_DON.startsWith('PXK');
+            matchType = cat === 'PXK';
           }
         }
 
@@ -1075,16 +1076,17 @@ export function getFilteredSourceData({
     // Lọc theo Loại phiếu
     let matchType = true;
     if (selectedTypeFilter !== 'Tất cả') {
+      const cat = getInvoiceCategory(h.HOA_DON, h.LOAI);
       if (selectedTypeFilter === 'Phiếu nhập') {
-        matchType = h.LOAI === 'NHẬP';
+        matchType = cat === 'PN';
       } else if (selectedTypeFilter === 'Phiếu xuất') {
-        matchType = h.LOAI === 'XUẤT';
+        matchType = cat === 'PX';
       } else if (selectedTypeFilter === 'Phiếu kiểm kho') {
-        matchType = h.LOAI === 'KIỂM KHO' || h.HOA_DON.startsWith('PKK') || h.HOA_DON.startsWith('PNK') || h.HOA_DON.startsWith('PXK');
+        matchType = cat === 'PKK';
       } else if (selectedTypeFilter === 'Phiếu nhập kho') {
-        matchType = h.LOAI === 'NHẬP' && !h.HOA_DON.startsWith('PNK');
+        matchType = cat === 'PNK';
       } else if (selectedTypeFilter === 'Phiếu xuất kho') {
-        matchType = h.LOAI === 'XUẤT' && !h.HOA_DON.startsWith('PXK');
+        matchType = cat === 'PXK';
       }
     }
 

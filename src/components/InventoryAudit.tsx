@@ -155,7 +155,7 @@ export default function InventoryAudit({
     } else if (chiNhanhs.length > 0) {
       setSelectedBranch(chiNhanhs[0]);
     }
-  }, [currentUser, chiNhanhs]);
+  }, [currentUser?.branch, chiNhanhs]);
 
   // --- 4. ĐỒNG BỘ CHIẾT XUẤT VÀ TÍNH NĂNG THEO THƯƠNG HIỆU (Giống TransactionForm) ---
   const availableFeatures = useMemo(() => {

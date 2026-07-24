@@ -187,12 +187,12 @@ export default function CategoryManagement({
         setActiveSubTab('ROLE');
       }
     }
-  }, [currentUser]);
+  }, [currentUser?.username]);
 
   const onSubTabChangeRef = React.useRef(onSubTabChange);
   React.useEffect(() => {
     onSubTabChangeRef.current = onSubTabChange;
-  });
+  }, [onSubTabChange]);
 
   React.useEffect(() => {
     if (onSubTabChangeRef.current) {

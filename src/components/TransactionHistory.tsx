@@ -504,45 +504,45 @@ export default function TransactionHistory({
 
   // Đồng bộ hóa trạng thái bộ lọc vào localStorage
   useEffect(() => {
-    localStorage.setItem(`${currentUser.username}_HISTORY_FILTER_SEARCH`, searchQuery);
-  }, [searchQuery, currentUser]);
+    localStorage.setItem(`${currentUser?.username}_HISTORY_FILTER_SEARCH`, searchQuery);
+  }, [searchQuery, currentUser?.username]);
 
   useEffect(() => {
-    localStorage.setItem(`${currentUser.username}_HISTORY_FILTER_TYPE`, historyTypeFilter);
-  }, [historyTypeFilter, currentUser]);
+    localStorage.setItem(`${currentUser?.username}_HISTORY_FILTER_TYPE`, historyTypeFilter);
+  }, [historyTypeFilter, currentUser?.username]);
 
   useEffect(() => {
-    localStorage.setItem(`${currentUser.username}_HISTORY_FILTER_SORT_BY`, sortBy);
-  }, [sortBy, currentUser]);
+    localStorage.setItem(`${currentUser?.username}_HISTORY_FILTER_SORT_BY`, sortBy);
+  }, [sortBy, currentUser?.username]);
 
   useEffect(() => {
-    localStorage.setItem(`${currentUser.username}_HISTORY_FILTER_SORT_ORDER`, sortOrder);
-  }, [sortOrder, currentUser]);
+    localStorage.setItem(`${currentUser?.username}_HISTORY_FILTER_SORT_ORDER`, sortOrder);
+  }, [sortOrder, currentUser?.username]);
 
   useEffect(() => {
-    localStorage.setItem(`${currentUser.username}_HISTORY_FILTER_GROUPED`, String(isGroupedByDate));
-  }, [isGroupedByDate, currentUser]);
+    localStorage.setItem(`${currentUser?.username}_HISTORY_FILTER_GROUPED`, String(isGroupedByDate));
+  }, [isGroupedByDate, currentUser?.username]);
 
   useEffect(() => {
-    localStorage.setItem(`${currentUser.username}_HISTORY_FILTER_BRANCH`, branchFilter);
-  }, [branchFilter, currentUser]);
+    localStorage.setItem(`${currentUser?.username}_HISTORY_FILTER_BRANCH`, branchFilter);
+  }, [branchFilter, currentUser?.username]);
 
   useEffect(() => {
-    localStorage.setItem(`${currentUser.username}_HISTORY_FILTER_WAREHOUSE`, warehouseFilter);
-  }, [warehouseFilter, currentUser]);
+    localStorage.setItem(`${currentUser?.username}_HISTORY_FILTER_WAREHOUSE`, warehouseFilter);
+  }, [warehouseFilter, currentUser?.username]);
 
   useEffect(() => {
-    localStorage.setItem(`${currentUser.username}_HISTORY_FILTER_FROM_DATE`, fromDate);
-  }, [fromDate, currentUser]);
+    localStorage.setItem(`${currentUser?.username}_HISTORY_FILTER_FROM_DATE`, fromDate);
+  }, [fromDate, currentUser?.username]);
 
   useEffect(() => {
-    localStorage.setItem(`${currentUser.username}_HISTORY_FILTER_TO_DATE`, toDate);
-  }, [toDate, currentUser]);
+    localStorage.setItem(`${currentUser?.username}_HISTORY_FILTER_TO_DATE`, toDate);
+  }, [toDate, currentUser?.username]);
 
   const onClearDrillDownRef = useRef(onClearDrillDownFilters);
   useEffect(() => {
     onClearDrillDownRef.current = onClearDrillDownFilters;
-  });
+  }, [onClearDrillDownFilters]);
 
   useEffect(() => {
     if (drillDownFilters) {

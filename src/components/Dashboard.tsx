@@ -58,7 +58,7 @@ import {
   Line,
   ReferenceArea
 } from 'recharts';
-import { SanPham, NhapXuat, NhapXuatCT } from '../types';
+import { SanPham, NhapXuat, NhapXuatCT, getInvoiceCategory } from '../types';
 import { normalizeChietXuat, compareChietXuat } from '../utils/chietXuatHelper';
 import TemplateExportManager from './TemplateExportManager';
 import { monitor } from '../utils/debugMonitor';
@@ -306,6 +306,15 @@ export default function Dashboard({
 
   React.useEffect(() => {
     localStorage.setItem('DASHBOARD_FILTER_TYPE', selectedTypeFilter);
+    if (selectedTypeFilter === 'Phiếu xuất' || selectedTypeFilter === 'Phiếu xuất kho') {
+      setSalesDbTxType('XUẤT');
+      setSalesDbTopType('XUẤT');
+      setDiopterTxType('XUẤT');
+    } else if (selectedTypeFilter === 'Phiếu nhập' || selectedTypeFilter === 'Phiếu nhập kho') {
+      setSalesDbTxType('NHẬP');
+      setSalesDbTopType('NHẬP');
+      setDiopterTxType('NHẬP');
+    }
   }, [selectedTypeFilter]);
 
   React.useEffect(() => {
@@ -685,16 +694,17 @@ export default function Dashboard({
       // Lọc theo Loại phiếu
       let matchType = true;
       if (selectedTypeFilter !== 'Tất cả') {
+        const cat = getInvoiceCategory(h.HOA_DON, h.LOAI);
         if (selectedTypeFilter === 'Phiếu nhập') {
-          matchType = h.LOAI === 'NHẬP';
+          matchType = cat === 'PN';
         } else if (selectedTypeFilter === 'Phiếu xuất') {
-          matchType = h.LOAI === 'XUẤT';
+          matchType = cat === 'PX';
         } else if (selectedTypeFilter === 'Phiếu kiểm kho') {
-          matchType = h.LOAI === 'KIỂM KHO' || h.HOA_DON.startsWith('PKK') || h.HOA_DON.startsWith('PNK') || h.HOA_DON.startsWith('PXK');
+          matchType = cat === 'PKK';
         } else if (selectedTypeFilter === 'Phiếu nhập kho') {
-          matchType = h.LOAI === 'NHẬP' && !h.HOA_DON.startsWith('PNK');
+          matchType = cat === 'PNK';
         } else if (selectedTypeFilter === 'Phiếu xuất kho') {
-          matchType = h.LOAI === 'XUẤT' && !h.HOA_DON.startsWith('PXK');
+          matchType = cat === 'PXK';
         }
       }
 
@@ -763,28 +773,23 @@ export default function Dashboard({
     let numPhieuXuatKK = 0;
 
     filteredHeaders.forEach(h => {
-      if (h.LOAI === 'NHẬP') {
-        if (h.HOA_DON.startsWith('PNK')) {
-          numPhieuNhapKK++;
-        } else {
-          numPhieuNhap++;
-        }
-      }
-      if (h.LOAI === 'XUẤT') {
-        if (h.HOA_DON.startsWith('PXK')) {
-          numPhieuXuatKK++;
-        } else {
-          numPhieuXuat++;
-        }
-      }
+      const cat = getInvoiceCategory(h.HOA_DON, h.LOAI);
+      if (cat === 'PN') numPhieuNhap++;
+      else if (cat === 'PNK') numPhieuNhapKK++;
+      else if (cat === 'PX') numPhieuXuat++;
+      else if (cat === 'PXK') numPhieuXuatKK++;
     });
 
     let totalNhap = 0;
     let totalXuat = 0;
 
     filteredDetails.forEach(d => {
-      if (d.LOAI === 'NHẬP') totalNhap += d.SO_LUONG;
-      if (d.LOAI === 'XUẤT') totalXuat += d.SO_LUONG;
+      const cat = getInvoiceCategory(d.HOA_DON, d.LOAI);
+      if (cat === 'PN' || cat === 'PNK' || d.LOAI === 'NHẬP') {
+        totalNhap += d.SO_LUONG;
+      } else if (cat === 'PX' || cat === 'PXK' || d.LOAI === 'XUẤT') {
+        totalXuat += d.SO_LUONG;
+      }
     });
 
     const lowStockCount = sanPhams.filter(p => p.TON_CUOI <= p.TON_TOI_THIEU).length;
@@ -806,7 +811,8 @@ export default function Dashboard({
     const mapXuat: Record<string, { sku: string; qty: number; name: string }> = {};
 
     filteredDetails.forEach(d => {
-      if (d.LOAI === 'XUẤT') {
+      const cat = getInvoiceCategory(d.HOA_DON, d.LOAI);
+      if (cat === 'PX' || cat === 'PXK' || d.LOAI === 'XUẤT') {
         if (!mapXuat[d.SKU]) {
           mapXuat[d.SKU] = { sku: d.SKU, qty: 0, name: d.TEN_SP };
         }
@@ -841,7 +847,8 @@ export default function Dashboard({
     });
 
     filteredDetails.forEach(d => {
-      if (d.LOAI === 'XUẤT') {
+      const cat = getInvoiceCategory(d.HOA_DON, d.LOAI);
+      if (cat === 'PX' || cat === 'PXK' || d.LOAI === 'XUẤT') {
         const parent = headerMap.get(d.HOA_DON);
         const branch = parent ? parent.CHI_NHANH : 'Không xác định';
         if (!mapBranch[branch]) {
@@ -864,12 +871,13 @@ export default function Dashboard({
     const mapDate: Record<string, { date: string; nhap: number; xuất: number }> = {};
 
     filteredDetails.forEach(d => {
+      const cat = getInvoiceCategory(d.HOA_DON, d.LOAI);
       const dateStr = d.NGAY;
       if (!mapDate[dateStr]) {
         mapDate[dateStr] = { date: dateStr, nhap: 0, xuất: 0 };
       }
-      if (d.LOAI === 'NHẬP') mapDate[dateStr].nhap += d.SO_LUONG;
-      if (d.LOAI === 'XUẤT') mapDate[dateStr].xuất += d.SO_LUONG;
+      if (cat === 'PN' || cat === 'PNK' || d.LOAI === 'NHẬP') mapDate[dateStr].nhap += d.SO_LUONG;
+      if (cat === 'PX' || cat === 'PXK' || d.LOAI === 'XUẤT') mapDate[dateStr].xuất += d.SO_LUONG;
     });
 
     return Object.values(mapDate)
@@ -1079,7 +1087,11 @@ export default function Dashboard({
     const dataMap: Record<string, number> = {};
 
     filteredDetails.forEach(d => {
-      if (d.LOAI !== diopterTxType) return;
+      const cat = getInvoiceCategory(d.HOA_DON, d.LOAI);
+      const isXuat = cat === 'PX' || cat === 'PXK' || d.LOAI === 'XUẤT';
+      const isNhap = cat === 'PN' || cat === 'PNK' || d.LOAI === 'NHẬP';
+      if (diopterTxType === 'XUẤT' && !isXuat) return;
+      if (diopterTxType === 'NHẬP' && !isNhap) return;
 
       const { sph, cyl, add } = getSphCylAdd(d);
 
@@ -1198,7 +1210,11 @@ export default function Dashboard({
     const dataMap: Record<string, number> = {};
 
     filteredDetails.forEach(d => {
-      if (d.LOAI !== salesDbTxType) return;
+      const cat = getInvoiceCategory(d.HOA_DON, d.LOAI);
+      const isXuat = cat === 'PX' || cat === 'PXK' || d.LOAI === 'XUẤT';
+      const isNhap = cat === 'PN' || cat === 'PNK' || d.LOAI === 'NHẬP';
+      if (salesDbTxType === 'XUẤT' && !isXuat) return;
+      if (salesDbTxType === 'NHẬP' && !isNhap) return;
       const { sph, cyl } = getSphCylAdd(d);
 
       if (salesDbBarMode === 'SPH_TO_CYL') {
@@ -1270,9 +1286,10 @@ export default function Dashboard({
       if (!grid[key]) {
         grid[key] = { n_qty: 0, x_qty: 0 };
       }
-      if (d.LOAI === 'NHẬP') {
+      const cat = getInvoiceCategory(d.HOA_DON, d.LOAI);
+      if (cat === 'PN' || cat === 'PNK' || d.LOAI === 'NHẬP') {
         grid[key].n_qty += d.SO_LUONG;
-      } else if (d.LOAI === 'XUẤT') {
+      } else if (cat === 'PX' || cat === 'PXK' || d.LOAI === 'XUẤT') {
         grid[key].x_qty += d.SO_LUONG;
       }
     });
@@ -1312,10 +1329,11 @@ export default function Dashboard({
     let totalNhapInPeriod = 0;
     let totalXuatInPeriod = 0;
     filteredDetails.forEach(d => {
+      const cat = getInvoiceCategory(d.HOA_DON, d.LOAI);
       const { sph: s, cyl: c } = getSphCylAdd(d);
       if (s === sph && c === cyl) {
-        if (d.LOAI === 'NHẬP') totalNhapInPeriod += d.SO_LUONG;
-        if (d.LOAI === 'XUẤT') totalXuatInPeriod += d.SO_LUONG;
+        if (cat === 'PN' || cat === 'PNK' || d.LOAI === 'NHẬP') totalNhapInPeriod += d.SO_LUONG;
+        if (cat === 'PX' || cat === 'PXK' || d.LOAI === 'XUẤT') totalXuatInPeriod += d.SO_LUONG;
       }
     });
 
@@ -1342,7 +1360,11 @@ export default function Dashboard({
     const comboMap: Record<string, { sph: number; cyl: number; qty: number }> = {};
 
     filteredDetails.forEach(d => {
-      if (d.LOAI !== salesDbTopType) return;
+      const cat = getInvoiceCategory(d.HOA_DON, d.LOAI);
+      const isXuat = cat === 'PX' || cat === 'PXK' || d.LOAI === 'XUẤT';
+      const isNhap = cat === 'PN' || cat === 'PNK' || d.LOAI === 'NHẬP';
+      if (salesDbTopType === 'XUẤT' && !isXuat) return;
+      if (salesDbTopType === 'NHẬP' && !isNhap) return;
       const { sph, cyl } = getSphCylAdd(d);
       const key = `${sph}_${cyl}`;
       if (!comboMap[key]) {
