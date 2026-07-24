@@ -74,11 +74,18 @@ const containsWord = (text: string, word: string): boolean => {
   return false;
 };
 
+// Brand Aliases dictionary mapping shorthand or colloquial names to full brand names
+const BRAND_ALIASES: Record<string, string> = {
+  'ROCK': 'Essilor Rock',
+  'CLEAR': 'Zeiss Clear',
+  'PRE': 'Essilor Pre',
+};
+
 // Helper to parse a token as a numeric diopter value
-// Supports standard decimals, shorthand formats (e.g. -050 -> -0.50, -125 -> -1.25), and PL / PLANO
+// Supports standard decimals, shorthand formats (e.g. -050 -> -0.50, -125 -> -1.25), and PL / PLANO / PLN
 const parseDiopterValue = (token: string): number => {
   const tu = token.toUpperCase().trim();
-  if (tu === 'PL' || tu === 'PLANO') {
+  if (tu === 'PL' || tu === 'PLANO' || tu === 'PLN') {
     return 0.00;
   }
 
@@ -762,13 +769,34 @@ export default function OrderParser({
       }
     });
 
+    // 4. Register brand aliases
+    Object.entries(BRAND_ALIASES).forEach(([aliasKey, targetBrandName]) => {
+      const aliasUpper = aliasKey.toUpperCase();
+      const targetUpper = targetBrandName.toUpperCase();
+
+      const existingProfile = profiles[targetUpper];
+      if (existingProfile) {
+        profiles[aliasUpper] = { ...existingProfile, name: existingProfile.name };
+      } else {
+        const newProf = {
+          name: targetBrandName,
+          defaultChietXuat: '',
+          defaultFeature: '',
+          allChietXuats: [],
+          allFeatures: []
+        };
+        profiles[aliasUpper] = newProf;
+        profiles[targetUpper] = newProf;
+      }
+    });
+
     return profiles;
   }, [brandList, sanPhams]);
 
   // Preprocessor helpers for multi-line blocks with shared diopter lists
   const isDiopterToken = (t: string): boolean => {
     const tu = t.toUpperCase().trim();
-    if (tu === 'PL' || tu === 'PLANO') return true;
+    if (tu === 'PL' || tu === 'PLANO' || tu === 'PLN') return true;
     if (tu === '0' || tu === '0.00' || tu === '-0.00' || tu === '+0.00') return true;
     if (/^[+-]\d+(\.\d+)?$/.test(tu)) return true;
     if (/^[+-]\d{3,4}$/.test(tu)) return true;
@@ -797,7 +825,8 @@ export default function OrderParser({
       .replace(/([+-])\s+(\d+)/g, '$1$2')
       .replace(/[,;]/g, ' ')
       .replace(/(\d+)\s*(M|C|CẶP|CAP|MIẾNG|MIENG|X|V|PCS)(?=\s|$)/gi, '$1$2')
-      .replace(/(\d)([-+])(\d)/g, '$1 $2$3');
+      .replace(/(\d)([-+])(\d)/g, '$1 $2$3')
+      .replace(/(PLANO|PLN|PL)\s*([-+]?\d)/gi, '$1 $2');
     return processed.split(/\s+/).filter(Boolean);
   };
 
@@ -1001,6 +1030,7 @@ export default function OrderParser({
 
     // Dynamically retrieve brand list from state, fallback if empty
     const uniqueBrands = Array.from(new Set([
+      ...Object.keys(BRAND_ALIASES),
       ...brandList.map(b => (b.THUONG_HIEU || '').toUpperCase().replace(/[\s\u00a0\u200b]+/g, ' ').trim()),
       ...sanPhams.map(p => (p.THUONG_HIEU || '').toUpperCase().replace(/[\s\u00a0\u200b]+/g, ' ').trim())
     ])).filter(Boolean).sort((a, b) => b.length - a.length); // Sort longest first for accurate greedy matching
@@ -1012,7 +1042,7 @@ export default function OrderParser({
     ])).filter(Boolean).sort((a, b) => b.length - a.length);
 
     const uniqueFeatures = Array.from(new Set([
-      'ASX', 'ĐM', 'ĐỔI MÀU', 'DOI MAU', 'CLEAR', 'BLUE', 'ROCK', 'PRE', 'ASG', 'BLUE CUT', 'CORON',
+      'ASX', 'ĐM', 'ĐỔI MÀU', 'DOI MAU', 'CLEAR', 'BLUE', 'ROCK', 'PRE', 'ASG', 'BLUE CUT', 'CORON', 'UV',
       ...brandList.map(b => (b.TINH_NANG_MAC_DINH || '').toUpperCase().replace(/[\s\u00a0\u200b]+/g, ' ').trim()),
       ...brandList.map(b => (b.TINH_NANG || '').toUpperCase().replace(/[\s\u00a0\u200b]+/g, ' ').trim()),
       ...sanPhams.map(p => (p.TINH_NANG || '').toUpperCase().replace(/[\s\u00a0\u200b]+/g, ' ').trim())
@@ -1198,8 +1228,8 @@ export default function OrderParser({
       // Separate consecutive SPH and CYL written consecutively (e.g., -2.00-0.50 -> -2.00 -0.50)
       processedLine = processedLine.replace(/(\d)([-+])(\d)/g, '$1 $2$3');
 
-      // Ensure Plano/PL followed directly by a sign and a digit is separated by a space (e.g. Plano-4.25 -> PLANO -4.25)
-      processedLine = processedLine.replace(/(PLANO|PL)\s*([-+]?\d)/gi, '$1 $2');
+      // Ensure Plano/PL/PLN followed directly by a sign and a digit is separated by a space (e.g. Plano-4.25 -> PLANO -4.25)
+      processedLine = processedLine.replace(/(PLANO|PLN|PL)\s*([-+]?\d)/gi, '$1 $2');
 
       const rawTokens = processedLine.split(/\s+/).filter(Boolean);
 
@@ -1247,7 +1277,7 @@ export default function OrderParser({
       // Let's check if there are any diopter tokens in the remaining tokens
       const isDiopterToken = (t: string): boolean => {
         const tu = t.toUpperCase();
-        if (tu === 'PL' || tu === 'PLANO') return true;
+        if (tu === 'PL' || tu === 'PLANO' || tu === 'PLN') return true;
         if (tu === '0' || tu === '0.00' || tu === '-0.00' || tu === '+0.00') return true;
         if (/^[+-]\d+(\.\d+)?$/.test(tu)) return true;
         
