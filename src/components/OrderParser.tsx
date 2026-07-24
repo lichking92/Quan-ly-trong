@@ -74,13 +74,6 @@ const containsWord = (text: string, word: string): boolean => {
   return false;
 };
 
-// Brand Aliases dictionary mapping shorthand or colloquial names to full brand names
-const BRAND_ALIASES: Record<string, string> = {
-  'ROCK': 'Essilor Rock',
-  'CLEAR': 'Zeiss Clear',
-  'PRE': 'Essilor Pre',
-};
-
 // Helper to parse a token as a numeric diopter value
 // Supports standard decimals, shorthand formats (e.g. -050 -> -0.50, -125 -> -1.25), and PL / PLANO / PLN
 const parseDiopterValue = (token: string): number => {
@@ -668,7 +661,22 @@ export default function OrderParser({
       defaultFeature: string;
       allChietXuats: string[];
       allFeatures: string[];
+      isAlias?: boolean;
     }> = {};
+
+    const brandCounts: Record<string, number> = {};
+    const brandOrder: Record<string, number> = {};
+
+    // Track original brandList index order & usage counts
+    brandList.forEach((b, idx) => {
+      const bName = (b.THUONG_HIEU || '').trim();
+      if (!bName) return;
+      const bUpper = bName.toUpperCase().replace(/[\s\u00a0\u200b]+/g, ' ').trim();
+      if (brandOrder[bUpper] === undefined) {
+        brandOrder[bUpper] = idx;
+      }
+      brandCounts[bUpper] = (brandCounts[bUpper] || 0) + 1;
+    });
 
     // 1. Gather from brandList
     brandList.forEach(b => {
@@ -725,6 +733,8 @@ export default function OrderParser({
       if (!bName) return;
       const bUpper = bName.toUpperCase().replace(/[\s\u00a0\u200b]+/g, ' ').trim();
 
+      brandCounts[bUpper] = (brandCounts[bUpper] || 0) + 1;
+
       if (!profiles[bUpper]) {
         profiles[bUpper] = {
           name: bName,
@@ -769,24 +779,53 @@ export default function OrderParser({
       }
     });
 
-    // 4. Register brand aliases
-    Object.entries(BRAND_ALIASES).forEach(([aliasKey, targetBrandName]) => {
-      const aliasUpper = aliasKey.toUpperCase();
-      const targetUpper = targetBrandName.toUpperCase();
+    // 4. Generate dynamic last-word aliases for multi-word brands
+    const fullBrandKeys = Object.keys(profiles);
+    const lastWordMap: Record<string, string[]> = {};
+    const reservedWords = new Set(['SPH', 'CYL', 'ADD', 'MM', 'PCS', 'CAP', 'MIENG', 'CHINHANH', 'KHONG']);
 
-      const existingProfile = profiles[targetUpper];
-      if (existingProfile) {
-        profiles[aliasUpper] = { ...existingProfile, name: existingProfile.name };
-      } else {
-        const newProf = {
-          name: targetBrandName,
-          defaultChietXuat: '',
-          defaultFeature: '',
-          allChietXuats: [],
-          allFeatures: []
+    fullBrandKeys.forEach(fullKey => {
+      const words = fullKey.split(/\s+/).filter(Boolean);
+      if (words.length > 1) {
+        const lastWord = words[words.length - 1];
+        if (lastWord.length >= 2 && !reservedWords.has(lastWord)) {
+          if (!lastWordMap[lastWord]) {
+            lastWordMap[lastWord] = [];
+          }
+          if (!lastWordMap[lastWord].includes(fullKey)) {
+            lastWordMap[lastWord].push(fullKey);
+          }
+        }
+      }
+    });
+
+    Object.entries(lastWordMap).forEach(([lastWord, candidateFullKeys]) => {
+      // If an exact full brand name exists equal to lastWord, keep it as full brand
+      if (profiles[lastWord] && !profiles[lastWord].isAlias) {
+        return;
+      }
+
+      // Disambiguate if multiple candidates share the same last word:
+      // Prioritize brand frequency in sanPhams, then order in brandList
+      candidateFullKeys.sort((a, b) => {
+        const countA = brandCounts[a] || 0;
+        const countB = brandCounts[b] || 0;
+        if (countA !== countB) {
+          return countB - countA;
+        }
+        const orderA = brandOrder[a] !== undefined ? brandOrder[a] : 999999;
+        const orderB = brandOrder[b] !== undefined ? brandOrder[b] : 999999;
+        return orderA - orderB;
+      });
+
+      const bestTargetKey = candidateFullKeys[0];
+      const targetProfile = profiles[bestTargetKey];
+      if (targetProfile) {
+        profiles[lastWord] = {
+          ...targetProfile,
+          name: targetProfile.name,
+          isAlias: true
         };
-        profiles[aliasUpper] = newProf;
-        profiles[targetUpper] = newProf;
       }
     });
 
@@ -1029,8 +1068,16 @@ export default function OrderParser({
     let currentFeature = '';
 
     // Dynamically retrieve brand list from state, fallback if empty
+    const allBrandKeys = Object.keys(brandProfiles);
+    const fullBrandKeys = allBrandKeys
+      .filter(k => !brandProfiles[k].isAlias)
+      .sort((a, b) => b.length - a.length);
+    const aliasBrandKeys = allBrandKeys
+      .filter(k => brandProfiles[k].isAlias)
+      .sort((a, b) => b.length - a.length);
+
     const uniqueBrands = Array.from(new Set([
-      ...Object.keys(BRAND_ALIASES),
+      ...allBrandKeys,
       ...brandList.map(b => (b.THUONG_HIEU || '').toUpperCase().replace(/[\s\u00a0\u200b]+/g, ' ').trim()),
       ...sanPhams.map(p => (p.THUONG_HIEU || '').toUpperCase().replace(/[\s\u00a0\u200b]+/g, ' ').trim())
     ])).filter(Boolean).sort((a, b) => b.length - a.length); // Sort longest first for accurate greedy matching
@@ -1042,7 +1089,7 @@ export default function OrderParser({
     ])).filter(Boolean).sort((a, b) => b.length - a.length);
 
     const uniqueFeatures = Array.from(new Set([
-      'ASX', 'ĐM', 'ĐỔI MÀU', 'DOI MAU', 'CLEAR', 'BLUE', 'ROCK', 'PRE', 'ASG', 'BLUE CUT', 'CORON', 'UV',
+      'ASX', 'ĐM', 'ĐỔI MÀU', 'DOI MAU', 'ASG', 'BLUE', 'BLUE CUT', 'CORON', 'UV',
       ...brandList.map(b => (b.TINH_NANG_MAC_DINH || '').toUpperCase().replace(/[\s\u00a0\u200b]+/g, ' ').trim()),
       ...brandList.map(b => (b.TINH_NANG || '').toUpperCase().replace(/[\s\u00a0\u200b]+/g, ' ').trim()),
       ...sanPhams.map(p => (p.TINH_NANG || '').toUpperCase().replace(/[\s\u00a0\u200b]+/g, ' ').trim())
@@ -1058,9 +1105,6 @@ export default function OrderParser({
     console.log('  - Registered Brands:', uniqueBrands);
     console.log('  - Registered Chiết Suấts:', uniqueChietXuats);
     console.log('  - Registered Features:', uniqueFeatures);
-
-    // Sorted keys for our precise brandProfiles lookup
-    const sortedBrandKeys = Object.keys(brandProfiles).sort((a, b) => b.length - a.length);
 
     // Boundary word search helper to verify words/tokens accurately
     const findWordIndex = (textUpper: string, wordUpper: string): number => {
@@ -1098,14 +1142,26 @@ export default function OrderParser({
 
       let remainingLineUpper = lineUpper;
 
-      // 1. Find Brand (longest matching first to avoid greedy collision)
-      for (const brandKey of sortedBrandKeys) {
+      // 1. Find Brand: Pass 1 for full brand names (longest matching first to avoid greedy collision)
+      for (const brandKey of fullBrandKeys) {
         const brandIdx = findWordIndex(remainingLineUpper, brandKey);
         if (brandIdx !== -1) {
           foundBrand = brandProfiles[brandKey].name;
           // Blank out matched brand characters to prevent any sub-part of the brand name from being matched as a feature/chiết suất
           remainingLineUpper = remainingLineUpper.substring(0, brandIdx) + ' '.repeat(brandKey.length) + remainingLineUpper.substring(brandIdx + brandKey.length);
           break;
+        }
+      }
+
+      // Pass 2 for brand aliases if no full brand name matched
+      if (!foundBrand) {
+        for (const brandKey of aliasBrandKeys) {
+          const brandIdx = findWordIndex(remainingLineUpper, brandKey);
+          if (brandIdx !== -1) {
+            foundBrand = brandProfiles[brandKey].name;
+            remainingLineUpper = remainingLineUpper.substring(0, brandIdx) + ' '.repeat(brandKey.length) + remainingLineUpper.substring(brandIdx + brandKey.length);
+            break;
+          }
         }
       }
 
