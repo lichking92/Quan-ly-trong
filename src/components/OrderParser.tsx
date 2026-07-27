@@ -1694,14 +1694,76 @@ export default function OrderParser({
     setParsedItems(prev => prev.filter(item => item.id !== id));
   };
 
-  // Bulk remove unfulfillable/unavailable items (stock <= 0)
+  // Bulk remove unfulfillable/unavailable items (stock < required quantity, stock <= 0, syntax error, or unmatched product)
   const handleRemoveUnavailableSKUs = () => {
-    setParsedItems(prev => prev.filter(item => {
-      if (item.error) return false;
-      if (!item.matchedProduct) return false;
-      const stock = getProductStockByBranch(item.sku, selectedOrderBranch, item.matchedProduct, nhapXuats, nhapXuatCTs);
-      return stock > 0;
-    }));
+    console.log('Before Filter', parsedItems);
+    
+    setParsedItems(prev => {
+      const filtered = prev.filter(item => {
+        if (item.error) {
+          console.log(`[FILTER_AUDIT] SKU: "${item.sku || 'N/A'}" | TON_KHO: 0 | SO_LUONG_CAN: ${item.quantity} => REMOVE (Syntax Error)`);
+          return false;
+        }
+
+        if (!item.matchedProduct) {
+          console.log(`[FILTER_AUDIT] SKU: "${item.sku}" | TON_KHO: 0 | SO_LUONG_CAN: ${item.quantity} => REMOVE (Not Matched)`);
+          return false;
+        }
+
+        const stock = getProductStockByBranch(item.sku, selectedOrderBranch, item.matchedProduct, nhapXuats, nhapXuatCTs);
+        const isSufficient = stock >= item.quantity;
+
+        console.log(`[FILTER_AUDIT] SKU: "${item.sku}" | TON_KHO: ${stock} | SO_LUONG_CAN: ${item.quantity} => ${isSufficient ? 'KEEP' : 'REMOVE'}`);
+
+        return isSufficient;
+      });
+
+      console.log('After Filter', filtered);
+      return filtered;
+    });
+
+    if (onTriggerToast) {
+      onTriggerToast('Đã loại bỏ tất cả SKU thiếu hàng và hết hàng khỏi danh sách!', 'success');
+    }
+  };
+
+  // Bulk remove unfulfillable/unavailable items from temporary cards (Gom đơn)
+  const handleRemoveUnavailableSKUsFromTempOrders = () => {
+    console.log('Before Filter TempOrders', tempOrders);
+
+    const updatedTempOrders = tempOrders.map(order => {
+      const filteredItems = order.items.filter((item: any) => {
+        if (item.error) {
+          console.log(`[FILTER_AUDIT][TempOrder ${order.id}] SKU: "${item.sku || 'N/A'}" | TON_KHO: 0 | SO_LUONG_CAN: ${item.quantity} => REMOVE (Syntax Error)`);
+          return false;
+        }
+
+        const liveProd = sanPhams.find(p => cleanSKU(p.SKU) === cleanSKU(item.sku));
+        if (!liveProd) {
+          console.log(`[FILTER_AUDIT][TempOrder ${order.id}] SKU: "${item.sku}" | TON_KHO: 0 | SO_LUONG_CAN: ${item.quantity} => REMOVE (Not Matched)`);
+          return false;
+        }
+
+        const stock = getProductStockByBranch(item.sku, order.branch, liveProd, nhapXuats, nhapXuatCTs);
+        const isSufficient = stock >= item.quantity;
+
+        console.log(`[FILTER_AUDIT][TempOrder ${order.id}] SKU: "${item.sku}" | TON_KHO: ${stock} | SO_LUONG_CAN: ${item.quantity} => ${isSufficient ? 'KEEP' : 'REMOVE'}`);
+
+        return isSufficient;
+      });
+
+      return {
+        ...order,
+        items: filteredItems
+      };
+    }).filter(order => order.items.length > 0);
+
+    console.log('After Filter TempOrders', updatedTempOrders);
+    setTempOrders(updatedTempOrders);
+
+    if (onTriggerToast) {
+      onTriggerToast('Đã loại bỏ tất cả SKU thiếu hàng và hết hàng khỏi các đơn gom!', 'success');
+    }
   };
 
   // Auto transition selected items with export quantities to transaction sales form
@@ -3137,7 +3199,7 @@ export default function OrderParser({
                         id="remove_unavailable_btn"
                       >
                         <Trash2 className="w-3.5 h-3.5 text-rose-600" />
-                        Lọc Bỏ SKU Thiếu/Hết
+                        Loại bỏ SKU thiếu / hết hàng
                       </button>
                     )}
                   </div>
@@ -3396,7 +3458,24 @@ export default function OrderParser({
                   </div>
                 </div>
 
-                <div className="flex items-center gap-2.5">
+                <div className="flex flex-wrap items-center gap-2.5">
+                  {tempOrders.some(order => order.items.some((item: any) => {
+                    if (item.error) return true;
+                    const liveProd = sanPhams.find(p => cleanSKU(p.SKU) === cleanSKU(item.sku));
+                    const liveStock = liveProd ? getProductStockByBranch(item.sku, order.branch, liveProd, nhapXuats, nhapXuatCTs) : 0;
+                    return liveStock < item.quantity;
+                  })) && (
+                    <button
+                      onClick={handleRemoveUnavailableSKUsFromTempOrders}
+                      className="bg-rose-50 hover:bg-rose-100 text-rose-700 text-xs font-bold py-2.5 px-3 rounded-xl border border-rose-200 transition-all flex items-center gap-1.5 cursor-pointer"
+                      id="remove_unavailable_temp_orders_btn"
+                      title="Loại bỏ các SKU thiếu hàng hoặc hết hàng khỏi tất cả đơn hàng tạm"
+                    >
+                      <Trash2 className="w-4 h-4 text-rose-600" />
+                      Loại bỏ SKU thiếu / hết hàng
+                    </button>
+                  )}
+
                   <button
                     onClick={handleStartBatchPicking}
                     disabled={selectedTempOrderIds.length === 0}
