@@ -1578,16 +1578,22 @@ export function isCacheValid(key: keyof typeof cache): boolean {
 
 export async function fetchNhanVien(force = false): Promise<any[]> {
   if (isOfflineMode) return inMemoryCache['B_NHANVIEN'] || [];
-  if (!force && isCacheValid('nhanvien')) return cache.nhanvien!;
+  if (!force && isCacheValid('nhanvien')) {
+    console.log('[CACHE HIT] b_nhanvien (RAM Cache TTL 5m)');
+    return cache.nhanvien!;
+  }
   if (activePromises.nhanvien) return activePromises.nhanvien;
 
   const promise = (async () => {
     try {
+      console.log('[CACHE MISS] [FETCH] b_nhanvien');
+      console.time('FETCH b_nhanvien');
       const { data, error } = await supabase
         .from('b_nhanvien')
         .select('MA_NV, HO_TEN, CHUC_VU, BO_PHAN, CHI_NHANH, EMAIL, ROLE, PERMISSIONS, WRITE_ACCESS, TEN_DANG_NHAP, MAT_KHAU, TRANG_THAI, YEU_CAU_RESET, ROLES, user_id, active, NGAY_DANG_KY');
       if (error) throw error;
       const mapped = data || [];
+      console.timeEnd('FETCH b_nhanvien');
       updateInMemoryAndCentralCache('nhanvien', mapped);
       return mapped;
     } catch (err) {
@@ -1604,20 +1610,26 @@ export async function fetchNhanVien(force = false): Promise<any[]> {
 
 export async function fetchRole(force = false): Promise<any[]> {
   if (isOfflineMode) return inMemoryCache['B_ROLE'] || [];
-  if (!force && isCacheValid('role')) return cache.role!;
+  if (!force && isCacheValid('role')) {
+    console.log('[CACHE HIT] b_role (RAM Cache TTL 5m)');
+    return cache.role!;
+  }
   if (activePromises.role) return activePromises.role;
-
-  const userId = await resolveEffectiveUserId();
-  if (!isValidUuid(userId)) return inMemoryCache['B_ROLE'] || [];
 
   const promise = (async () => {
     try {
+      const userId = await resolveEffectiveUserId();
+      if (!isValidUuid(userId)) return inMemoryCache['B_ROLE'] || [];
+
+      console.log('[CACHE MISS] [FETCH] b_role');
+      console.time('FETCH b_role');
       const { data, error } = await supabase
         .from('b_role')
         .select('ROLE_CODE, TEN_ROLE, PERMISSIONS, user_id')
         .eq('user_id', userId);
       if (error) throw error;
       const mapped = data || [];
+      console.timeEnd('FETCH b_role');
       updateInMemoryAndCentralCache('role', mapped);
       return mapped;
     } catch (err) {
@@ -1634,20 +1646,26 @@ export async function fetchRole(force = false): Promise<any[]> {
 
 export async function fetchThuongHieu(force = false): Promise<any[]> {
   if (isOfflineMode) return inMemoryCache['B_THUONGHIEU'] || [];
-  if (!force && isCacheValid('thuonghieu')) return cache.thuonghieu!;
+  if (!force && isCacheValid('thuonghieu')) {
+    console.log('[CACHE HIT] b_thuonghieu (RAM Cache TTL 5m)');
+    return cache.thuonghieu!;
+  }
   if (activePromises.thuonghieu) return activePromises.thuonghieu;
-
-  const userId = await resolveEffectiveUserId();
-  if (!isValidUuid(userId)) return inMemoryCache['B_THUONGHIEU'] || [];
 
   const promise = (async () => {
     try {
+      const userId = await resolveEffectiveUserId();
+      if (!isValidUuid(userId)) return inMemoryCache['B_THUONGHIEU'] || [];
+
+      console.log('[CACHE MISS] [FETCH] b_thuonghieu');
+      console.time('FETCH b_thuonghieu');
       const { data, error } = await supabase
         .from('b_thuonghieu')
         .select('THUONG_HIEU, CHIET_XUAT_MAC_DINH, TINH_NANG_MAC_DINH, SPH_TU, SPH_DEN, SPH_VIEN_TU, SPH_VIEN_DEN, BUOC_NHAY, user_id')
         .eq('user_id', userId);
       if (error) throw error;
       const mapped = data || [];
+      console.timeEnd('FETCH b_thuonghieu');
       updateInMemoryAndCentralCache('thuonghieu', mapped);
       return mapped;
     } catch (err) {
@@ -1664,20 +1682,26 @@ export async function fetchThuongHieu(force = false): Promise<any[]> {
 
 export async function fetchChiNhanh(force = false): Promise<any[]> {
   if (isOfflineMode) return inMemoryCache['B_CHINHANH'] || [];
-  if (!force && isCacheValid('chinhanh')) return cache.chinhanh!;
+  if (!force && isCacheValid('chinhanh')) {
+    console.log('[CACHE HIT] b_chinhanh (RAM Cache TTL 5m)');
+    return cache.chinhanh!;
+  }
   if (activePromises.chinhanh) return activePromises.chinhanh;
-
-  const userId = await resolveEffectiveUserId();
-  if (!isValidUuid(userId)) return inMemoryCache['B_CHINHANH'] || [];
 
   const promise = (async () => {
     try {
+      const userId = await resolveEffectiveUserId();
+      if (!isValidUuid(userId)) return inMemoryCache['B_CHINHANH'] || [];
+
+      console.log('[CACHE MISS] [FETCH] b_chinhanh');
+      console.time('FETCH b_chinhanh');
       const { data, error } = await supabase
         .from('b_chinhanh')
         .select('CHI_NHANH, DIA_CHI, SDT, user_id')
         .eq('user_id', userId);
       if (error) throw error;
       const mapped = data || [];
+      console.timeEnd('FETCH b_chinhanh');
       updateInMemoryAndCentralCache('chinhanh', mapped);
       return mapped;
     } catch (err) {
@@ -1694,20 +1718,36 @@ export async function fetchChiNhanh(force = false): Promise<any[]> {
 
 export async function fetchSanPham(force = false): Promise<any[]> {
   if (isOfflineMode) return inMemoryCache['B_SANPHAM'] || [];
-  if (!force && isCacheValid('sanpham')) return cache.sanpham!;
-  if (activePromises.sanpham) return activePromises.sanpham;
-
-  const userId = await resolveEffectiveUserId();
-  if (!isValidUuid(userId)) return inMemoryCache['B_SANPHAM'] || [];
+  if (!force && isCacheValid('sanpham')) {
+    console.log('[CACHE HIT] b_sanpham (RAM Cache TTL 5m)');
+    return cache.sanpham!;
+  }
+  if (activePromises.sanpham) {
+    console.log('[FETCH DEDUP] Reusing active fetchSanPham promise');
+    return activePromises.sanpham;
+  }
 
   const promise = (async () => {
     try {
+      const userId = await resolveEffectiveUserId();
+      if (!isValidUuid(userId)) return inMemoryCache['B_SANPHAM'] || [];
+
+      console.log('[CACHE MISS] [FETCH] b_sanpham starting...');
+      console.time('FETCH b_sanpham');
       let allData: any[] = [];
       let from = 0;
       const pageSize = 1000;
       let hasMore = true;
+      const fetchedOffsets = new Set<number>();
 
       while (hasMore) {
+        if (fetchedOffsets.has(from)) {
+          console.warn(`[FETCH DEDUP PREVENTED] Offset ${from} already fetched in this pass`);
+          break;
+        }
+        fetchedOffsets.add(from);
+
+        console.log(`[FETCH] b_sanpham offset=${from} limit=${pageSize}`);
         const { data, error } = await supabase
           .from('b_sanpham')
           .select('SKU, TEN_SAN_PHAM, THUONG_HIEU, CHIET_XUAT, TINH_NANG, CAN, LOAN, DVT, TON_DAU, NHAP, XUAT, TON_CUOI, TON_TOI_THIEU, user_id')
@@ -1728,6 +1768,7 @@ export async function fetchSanPham(force = false): Promise<any[]> {
         }
       }
 
+      console.timeEnd('FETCH b_sanpham');
       updateInMemoryAndCentralCache('sanpham', allData);
       return allData;
     } catch (err) {
@@ -1744,21 +1785,25 @@ export async function fetchSanPham(force = false): Promise<any[]> {
 
 export async function fetchKiemKho(force = false): Promise<any[]> {
   if (isOfflineMode) return inMemoryCache['B_KIEMKHO'] || [];
-  if (!force && isCacheValid('kiemkho')) return cache.kiemkho!;
+  if (!force && isCacheValid('kiemkho')) {
+    console.log('[CACHE HIT] b_kiemkho (RAM Cache TTL 5m)');
+    return cache.kiemkho!;
+  }
   if (activePromises.kiemkho) return activePromises.kiemkho;
-
-  const userId = await resolveEffectiveUserId();
-  if (!isValidUuid(userId)) return inMemoryCache['B_KIEMKHO'] || [];
 
   const promise = (async () => {
     try {
+      const userId = await resolveEffectiveUserId();
+      if (!isValidUuid(userId)) return inMemoryCache['B_KIEMKHO'] || [];
+
+      console.log('[CACHE MISS] [FETCH] b_kiemkho');
+      console.time('FETCH b_kiemkho');
       let dataRes = await supabase
         .from('b_kiemkho')
         .select('*')
         .eq('user_id', userId);
 
       if (dataRes.error) {
-        // Fallback query if select('*') fails
         dataRes = await supabase
           .from('b_kiemkho')
           .select('MA_PHIEU, SKU, TON_HE_THONG, TON_THUC_TE, LECH, LOAI_BU, NGUOI_KIEM, THOI_DIEM, user_id')
@@ -1779,6 +1824,7 @@ export async function fetchKiemKho(force = false): Promise<any[]> {
         MA_NV: item.MA_NV || undefined,
         TEN_DANG_NHAP: item.TEN_DANG_NHAP || undefined
       }));
+      console.timeEnd('FETCH b_kiemkho');
       updateInMemoryAndCentralCache('kiemkho', mapped);
       return mapped;
     } catch (err) {
@@ -1795,13 +1841,18 @@ export async function fetchKiemKho(force = false): Promise<any[]> {
 
 export async function fetchEmailLogs(userId: string, force = false): Promise<any[]> {
   if (isOfflineMode) return inMemoryCache['B_EMAILLOG'] || [];
-  if (!force && isCacheValid('emaillog')) return cache.emaillog!;
+  if (!force && isCacheValid('emaillog')) {
+    console.log('[CACHE HIT] b_emaillog (RAM Cache TTL 5m)');
+    return cache.emaillog!;
+  }
   if (activePromises.emaillog) return activePromises.emaillog;
-
-  if (!isValidUuid(userId)) return inMemoryCache['B_EMAILLOG'] || [];
 
   const promise = (async () => {
     try {
+      if (!isValidUuid(userId)) return inMemoryCache['B_EMAILLOG'] || [];
+
+      console.log('[CACHE MISS] [FETCH] b_emaillog');
+      console.time('FETCH b_emaillog');
       const { data, error } = await supabase
         .from('b_emaillog')
         .select('id, EMAIL, TIEU_DE, NOI_DUNG, NGAY_GUI, TRANG_THAI, LOAI_EMAIL, user_id')
@@ -1810,6 +1861,7 @@ export async function fetchEmailLogs(userId: string, force = false): Promise<any
         .limit(100);
       if (error) throw error;
       const mapped = data || [];
+      console.timeEnd('FETCH b_emaillog');
       updateInMemoryAndCentralCache('emaillog', mapped);
       return mapped;
     } catch (err) {
@@ -1826,20 +1878,36 @@ export async function fetchEmailLogs(userId: string, force = false): Promise<any
 
 export async function fetchNhapXuat(force = false): Promise<any[]> {
   if (isOfflineMode) return inMemoryCache['B_NHAPXUAT'] || [];
-  if (!force && isCacheValid('nhapxuat')) return cache.nhapxuat!;
-  if (activePromises.nhapxuat) return activePromises.nhapxuat;
-
-  const userId = await resolveEffectiveUserId();
-  if (!isValidUuid(userId)) return inMemoryCache['B_NHAPXUAT'] || [];
+  if (!force && isCacheValid('nhapxuat')) {
+    console.log('[CACHE HIT] b_nhapxuat (RAM Cache TTL 5m)');
+    return cache.nhapxuat!;
+  }
+  if (activePromises.nhapxuat) {
+    console.log('[FETCH DEDUP] Reusing active fetchNhapXuat promise');
+    return activePromises.nhapxuat;
+  }
 
   const promise = (async () => {
     try {
+      const userId = await resolveEffectiveUserId();
+      if (!isValidUuid(userId)) return inMemoryCache['B_NHAPXUAT'] || [];
+
+      console.log('[CACHE MISS] [FETCH] b_nhapxuat starting...');
+      console.time('FETCH b_nhapxuat');
       let allData: any[] = [];
       let from = 0;
       const pageSize = 1000;
       let hasMore = true;
+      const fetchedOffsets = new Set<number>();
 
       while (hasMore) {
+        if (fetchedOffsets.has(from)) {
+          console.warn(`[FETCH DEDUP PREVENTED] b_nhapxuat offset ${from} already fetched in this pass`);
+          break;
+        }
+        fetchedOffsets.add(from);
+
+        console.log(`[FETCH] b_nhapxuat offset=${from} limit=${pageSize}`);
         const { data, error } = await supabase
           .from('b_nhapxuat')
           .select('HOA_DON, CHI_NHANH, NGAY, LOAI, TONG_SL, NGUOI_TAO, TEN_NGUOI_TAO, TG_TAO, GHI_CHU, MA_NV, TEN_DANG_NHAP, TRANG_THAI, user_id')
@@ -1860,6 +1928,7 @@ export async function fetchNhapXuat(force = false): Promise<any[]> {
         }
       }
 
+      console.timeEnd('FETCH b_nhapxuat');
       updateInMemoryAndCentralCache('nhapxuat', allData);
       return allData;
     } catch (err) {
@@ -1876,20 +1945,36 @@ export async function fetchNhapXuat(force = false): Promise<any[]> {
 
 export async function fetchNhapXuatCT(force = false): Promise<any[]> {
   if (isOfflineMode) return inMemoryCache['B_NHAPXUATCT'] || [];
-  if (!force && isCacheValid('nhapxuatct')) return cache.nhapxuatct!;
-  if (activePromises.nhapxuatct) return activePromises.nhapxuatct;
-
-  const userId = await resolveEffectiveUserId();
-  if (!isValidUuid(userId)) return inMemoryCache['B_NHAPXUATCT'] || [];
+  if (!force && isCacheValid('nhapxuatct')) {
+    console.log('[CACHE HIT] b_nhapxuatct (RAM Cache TTL 5m)');
+    return cache.nhapxuatct!;
+  }
+  if (activePromises.nhapxuatct) {
+    console.log('[FETCH DEDUP] Reusing active fetchNhapXuatCT promise');
+    return activePromises.nhapxuatct;
+  }
 
   const promise = (async () => {
     try {
+      const userId = await resolveEffectiveUserId();
+      if (!isValidUuid(userId)) return inMemoryCache['B_NHAPXUATCT'] || [];
+
+      console.log('[CACHE MISS] [FETCH] b_nhapxuatct starting...');
+      console.time('FETCH b_nhapxuatct');
       let allData: any[] = [];
       let from = 0;
       const pageSize = 1000;
       let hasMore = true;
+      const fetchedOffsets = new Set<number>();
 
       while (hasMore) {
+        if (fetchedOffsets.has(from)) {
+          console.warn(`[FETCH DEDUP PREVENTED] b_nhapxuatct offset ${from} already fetched in this pass`);
+          break;
+        }
+        fetchedOffsets.add(from);
+
+        console.log(`[FETCH] b_nhapxuatct offset=${from} limit=${pageSize}`);
         const { data, error } = await supabase
           .from('b_nhapxuatct')
           .select('id, HOA_DON, SKU, TEN_SP, THUONG_HIEU, CHIET_XUAT, TINH_NANG, SPH, CYL, SO_LUONG, DVT, GHI_CHU, LOAI, NGAY, user_id')
@@ -1914,6 +1999,7 @@ export async function fetchNhapXuatCT(force = false): Promise<any[]> {
         ...item,
         ID: item.id !== undefined ? item.id : item.ID
       }));
+      console.timeEnd('FETCH b_nhapxuatct');
       updateInMemoryAndCentralCache('nhapxuatct', mappedData);
       return mappedData;
     } catch (err) {

@@ -1061,9 +1061,15 @@ export default function App() {
     wasOfflineRef.current = isOffline;
   }, [isOffline, currentUser?.id, currentUser?.username]);
 
+  // Channel Realtime dùng chung trong App
+  const realtimeChannelRef = useRef<any>(null);
+  const setupRealtimeRef = useRef<((userId: string) => void) | null>(null);
+
+  // --- 3. ĐIỀU HƯỚNG TAB CHỨC NĂNG ---
+  const [activeTab, setActiveTab] = useState<string>('DASHBOARD');
+
   // Quản lý Auth và Realtime đồng bộ hóa dữ liệu từ Supabase
   useEffect(() => {
-    let realtimeChannel: any = null;
     let currentUserId: string | null = null;
 
     // Hàm cập nhật gia tăng các state cục bộ từ sự kiện realtime mà không tải lại toàn bộ database từ xa
@@ -1500,18 +1506,17 @@ export default function App() {
 
     // Hàm thiết lập kênh Realtime lắng nghe mọi thay đổi trên Supabase
     const setupRealtime = (userId: string) => {
-      if (realtimeChannel) {
-        console.log('Đang hủy và gỡ bỏ kênh Realtime cũ...');
-        supabase.removeChannel(realtimeChannel);
-        realtimeChannel = null;
+      if (realtimeChannelRef.current) {
+        console.log('[UNSUBSCRIBE] Gỡ bỏ kênh Realtime cũ...');
+        supabase.removeChannel(realtimeChannelRef.current);
+        realtimeChannelRef.current = null;
       }
 
-      console.log('Đang thiết lập kênh Supabase Realtime cho User ID:', userId);
-      // Sử dụng tên kênh độc nhất kèm theo chuỗi ngẫu nhiên để tránh lỗi xung đột kênh cũ
+      console.log('[SUBSCRIBE] Đang thiết lập kênh Supabase Realtime cho User ID:', userId);
       const channelName = `realtime-sync-${userId}-${Math.random().toString(36).substring(2, 8)}`;
       monitor.trackSubscription(channelName);
       
-      realtimeChannel = supabase
+      realtimeChannelRef.current = supabase
         .channel(channelName)
         .on(
           'postgres_changes',
@@ -1522,15 +1527,12 @@ export default function App() {
             const eventType = payload.eventType;
             const isDelete = eventType === 'DELETE';
             
-            // Lấy user_id từ dữ liệu thay đổi
             const newRow = payload.new;
             const oldRow = payload.old;
             const rowUserId = (newRow && newRow.user_id) || (oldRow && oldRow.user_id);
 
-            // Log chi tiết sự kiện nhận được
             console.log(`[REALTIME LOG] Nhận sự kiện ${eventType} trên bảng ${payload.table}:`, payload);
 
-            // Nếu là sự kiện DELETE (không có user_id trong oldRow) hoặc dữ liệu thuộc về user hiện tại/Owner
             const ownerId = localStorage.getItem('DB_OWNER_USER_ID') || userId;
             if (isDelete || rowUserId === userId || rowUserId === ownerId || rowUserId === '00000000-0000-0000-0000-000000000000') {
               if (ignoreRealtimeRef.current) {
@@ -1539,7 +1541,6 @@ export default function App() {
               }
               
               console.log(`[REALTIME LOG] Chấp nhận và xử lý sự kiện ${eventType} trên bảng ${payload.table}`);
-              // Cập nhật gia tăng (Incremental update) tại chỗ, không reload lại toàn bộ dữ liệu từ xa
               handleIncrementalRealtimeUpdate(payload);
             } else {
               console.log(`[REALTIME LOG] Bỏ qua sự kiện ${eventType} trên bảng ${payload.table} vì không trùng user_id (rowUserId: ${rowUserId}, userId: ${userId}, ownerId: ${ownerId})`);
@@ -1551,9 +1552,12 @@ export default function App() {
         });
     };
 
+    setupRealtimeRef.current = setupRealtime;
+
     // 1. Kiểm tra session ngay khi trang web khởi chạy và tự động tải dữ liệu
     const initializeAuth = async () => {
       try {
+        console.time('Startup');
         safeTime('loadUser');
         const savedUserStr = localStorage.getItem('CURRENT_USER');
         if (savedUserStr) {
@@ -1563,36 +1567,66 @@ export default function App() {
 
           if (userId) {
             currentUserId = userId;
-            console.log('Phát hiện session hợp lệ khi khởi chạy. Thực hiện tải dữ liệu mới nhất từ Supabase Cloud...');
-            setupRealtime(userId);
+            console.log('[STARTUP] Session hợp lệ. Khởi tạo nạp dữ liệu từ Supabase Cloud...');
             await syncAllDataFromSupabase(userId, email);
           }
         } else {
-          console.log('Không phát hiện session hoạt động. Khôi phục trạng thái về màn hình đăng nhập...');
+          console.log('[STARTUP] Không phát hiện session. Khôi phục màn hình đăng nhập...');
           setCurrentUser(null);
           localStorage.removeItem('CURRENT_USER');
         }
         safeTimeEnd('loadUser');
+        console.timeEnd('Startup');
       } catch (e) {
         console.error("Lỗi trong quá trình khởi tạo Auth:", e);
         safeTimeEnd('loadUser');
+        console.timeEnd('Startup');
       }
     };
 
     initializeAuth();
 
-    // 2. Không cần lắng nghe onAuthStateChange vì Auth đã chuyển hoàn toàn sang b_nhanvien trực tiếp.
-
     return () => {
-      if (realtimeChannel) {
-        supabase.removeChannel(realtimeChannel);
+      if (realtimeChannelRef.current) {
+        console.log('[UNSUBSCRIBE] Cleaning up global realtime channel');
+        supabase.removeChannel(realtimeChannelRef.current);
+        realtimeChannelRef.current = null;
       }
     };
   }, []);
 
+  // Lazy-load & subscribe Realtime channel only on tabs requiring Realtime
+  useEffect(() => {
+    const REALTIME_TABS = ['ORDER_PARSER', 'TRANSACTION_NHAP', 'TRANSACTION_XUAT', 'HISTORY', 'AUDIT'];
+    
+    if (!currentUser || isOffline) {
+      if (realtimeChannelRef.current) {
+        console.log('[UNSUBSCRIBE] Unsubscribing Realtime (User logged out or offline)');
+        supabase.removeChannel(realtimeChannelRef.current);
+        realtimeChannelRef.current = null;
+      }
+      return;
+    }
+
+    const userId = currentUser.user_id || currentUser.id;
+    const isRealtimeTab = REALTIME_TABS.includes(activeTab);
+
+    if (isRealtimeTab) {
+      if (!realtimeChannelRef.current) {
+        console.log(`[SUBSCRIBE] Entering tab '${activeTab}' requiring Realtime. Initializing channel...`);
+        setupRealtimeRef.current?.(userId);
+      }
+    } else {
+      if (realtimeChannelRef.current) {
+        console.log(`[UNSUBSCRIBE] Leaving realtime tab. Tab '${activeTab}' does not require Realtime. Closing channel...`);
+        supabase.removeChannel(realtimeChannelRef.current);
+        realtimeChannelRef.current = null;
+      }
+    }
+  }, [activeTab, currentUser?.id, isOffline]);
+
 
   // --- 3. ĐIỀU HƯỚNG TAB CHỨC NĂNG ---
-  const [activeTab, setActiveTab] = useState<string>('DASHBOARD');
   const [activeCategorySubTab, setActiveCategorySubTab] = useState<string>('BRAND');
   const [historyFiltersOverride, setHistoryFiltersOverride] = useState<{
     historyTypeFilter: 'Tất cả' | 'NHẬP' | 'XUẤT' | 'KIỂM KHO' | 'NHẬP_KIEM_KHO' | 'XUAT_KIEM_KHO';
