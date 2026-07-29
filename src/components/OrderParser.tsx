@@ -662,6 +662,7 @@ export default function OrderParser({
       allChietXuats: string[];
       allFeatures: string[];
       isAlias?: boolean;
+      aliasType?: 'explicit' | 'shortened';
     }> = {};
 
     const brandCounts: Record<string, number> = {};
@@ -779,8 +780,53 @@ export default function OrderParser({
       }
     });
 
-    // 4. Generate dynamic last-word aliases for multi-word brands
-    const fullBrandKeys = Object.keys(profiles);
+    // 4. Register explicit brand aliases (e.g., Element -> Elements, Rock -> Essilor Rock, Clear -> Zeiss Clear, Pre -> Essilor Pre)
+    const EXPLICIT_BRAND_ALIASES: Record<string, string> = {
+      'ELEMENT': 'Elements',
+      'ELEMENTS': 'Elements',
+      'ROCK': 'Essilor Rock',
+      'CLEAR': 'Zeiss Clear',
+      'PRE': 'Essilor Pre',
+    };
+
+    // Ensure target brand profiles exist for explicit aliases
+    Object.values(EXPLICIT_BRAND_ALIASES).forEach(targetBrand => {
+      const targetUpper = targetBrand.toUpperCase().replace(/[\s\u00a0\u200b]+/g, ' ').trim();
+      if (!profiles[targetUpper]) {
+        // If target was previously registered under 'ELEMENT', inherit its properties
+        if (targetUpper === 'ELEMENTS' && profiles['ELEMENT']) {
+          profiles[targetUpper] = {
+            ...profiles['ELEMENT'],
+            name: targetBrand,
+            isAlias: false
+          };
+        } else {
+          profiles[targetUpper] = {
+            name: targetBrand,
+            defaultChietXuat: '',
+            defaultFeature: '',
+            allChietXuats: [],
+            allFeatures: []
+          };
+        }
+      }
+    });
+
+    Object.entries(EXPLICIT_BRAND_ALIASES).forEach(([aliasKeyUpper, targetBrand]) => {
+      const targetUpper = targetBrand.toUpperCase().replace(/[\s\u00a0\u200b]+/g, ' ').trim();
+      const targetProfile = profiles[targetUpper];
+      if (targetProfile) {
+        profiles[aliasKeyUpper] = {
+          ...targetProfile,
+          name: targetBrand,
+          isAlias: aliasKeyUpper !== targetUpper,
+          aliasType: aliasKeyUpper !== targetUpper ? 'explicit' : undefined
+        };
+      }
+    });
+
+    // 5. Generate dynamic last-word aliases for multi-word brands
+    const fullBrandKeys = Object.keys(profiles).filter(k => !profiles[k].isAlias);
     const lastWordMap: Record<string, string[]> = {};
     const reservedWords = new Set(['SPH', 'CYL', 'ADD', 'MM', 'PCS', 'CAP', 'MIENG', 'CHINHANH', 'KHONG']);
 
@@ -800,8 +846,8 @@ export default function OrderParser({
     });
 
     Object.entries(lastWordMap).forEach(([lastWord, candidateFullKeys]) => {
-      // If an exact full brand name exists equal to lastWord, keep it as full brand
-      if (profiles[lastWord] && !profiles[lastWord].isAlias) {
+      // If an exact full brand name or explicit alias exists equal to lastWord, keep it as is
+      if (profiles[lastWord]) {
         return;
       }
 
@@ -824,7 +870,8 @@ export default function OrderParser({
         profiles[lastWord] = {
           ...targetProfile,
           name: targetProfile.name,
-          isAlias: true
+          isAlias: true,
+          aliasType: 'shortened'
         };
       }
     });
@@ -1072,8 +1119,11 @@ export default function OrderParser({
     const fullBrandKeys = allBrandKeys
       .filter(k => !brandProfiles[k].isAlias)
       .sort((a, b) => b.length - a.length);
-    const aliasBrandKeys = allBrandKeys
-      .filter(k => brandProfiles[k].isAlias)
+    const explicitAliasBrandKeys = allBrandKeys
+      .filter(k => brandProfiles[k].isAlias && brandProfiles[k].aliasType === 'explicit')
+      .sort((a, b) => b.length - a.length);
+    const shortenedAliasBrandKeys = allBrandKeys
+      .filter(k => brandProfiles[k].isAlias && brandProfiles[k].aliasType === 'shortened')
       .sort((a, b) => b.length - a.length);
 
     const uniqueBrands = Array.from(new Set([
@@ -1142,7 +1192,8 @@ export default function OrderParser({
 
       let remainingLineUpper = lineUpper;
 
-      // 1. Find Brand: Pass 1 for full brand names (longest matching first to avoid greedy collision)
+      // 1. Find Brand:
+      // Priority 1: Full brand names (longest matching first to avoid greedy collision)
       for (const brandKey of fullBrandKeys) {
         const brandIdx = findWordIndex(remainingLineUpper, brandKey);
         if (brandIdx !== -1) {
@@ -1153,9 +1204,21 @@ export default function OrderParser({
         }
       }
 
-      // Pass 2 for brand aliases if no full brand name matched
+      // Priority 2: Explicit brand aliases (e.g. Element -> Elements)
       if (!foundBrand) {
-        for (const brandKey of aliasBrandKeys) {
+        for (const brandKey of explicitAliasBrandKeys) {
+          const brandIdx = findWordIndex(remainingLineUpper, brandKey);
+          if (brandIdx !== -1) {
+            foundBrand = brandProfiles[brandKey].name;
+            remainingLineUpper = remainingLineUpper.substring(0, brandIdx) + ' '.repeat(brandKey.length) + remainingLineUpper.substring(brandIdx + brandKey.length);
+            break;
+          }
+        }
+      }
+
+      // Priority 3: Shortened multi-word brand aliases (e.g. Rock -> Essilor Rock, Clear -> Zeiss Clear, Pre -> Essilor Pre)
+      if (!foundBrand) {
+        for (const brandKey of shortenedAliasBrandKeys) {
           const brandIdx = findWordIndex(remainingLineUpper, brandKey);
           if (brandIdx !== -1) {
             foundBrand = brandProfiles[brandKey].name;

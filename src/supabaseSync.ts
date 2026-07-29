@@ -441,6 +441,11 @@ export async function tryCreateColumnsOnSupabase() {
       EXCEPTION WHEN others THEN NULL;
       END;
 
+      BEGIN
+        ALTER TABLE b_kiemkho ADD COLUMN IF NOT EXISTS "KHO" text;
+      EXCEPTION WHEN others THEN NULL;
+      END;
+
       -- Thử thêm bảng vào publication supabase_realtime để kích hoạt đồng bộ thời gian thực
       IF EXISTS (SELECT 1 FROM pg_publication WHERE pubname = 'supabase_realtime') THEN
         BEGIN
@@ -1004,13 +1009,14 @@ export async function tryCreateColumnsOnSupabase() {
               "LOAI_BU" = v_audit->>'LOAI_BU',
               "NGUOI_KIEM" = v_audit->>'NGUOI_KIEM',
               "THOI_DIEM" = v_audit->>'THOI_DIEM',
+              "KHO" = v_audit->>'KHO',
               "MA_NV" = v_audit->>'MA_NV',
               "TEN_DANG_NHAP" = v_audit->>'TEN_DANG_NHAP'
             WHERE "MA_PHIEU" = v_ma_phieu AND "SKU" = (v_audit->>'SKU') AND "user_id" = p_user_id;
           ELSE
             INSERT INTO public.b_kiemkho (
               "MA_PHIEU", "SKU", "TON_HE_THONG", "TON_THUC_TE", "LECH", 
-              "LOAI_BU", "NGUOI_KIEM", "THOI_DIEM", "MA_NV", "TEN_DANG_NHAP", "user_id"
+              "LOAI_BU", "NGUOI_KIEM", "THOI_DIEM", "KHO", "MA_NV", "TEN_DANG_NHAP", "user_id"
             ) VALUES (
               v_ma_phieu,
               v_audit->>'SKU',
@@ -1020,6 +1026,7 @@ export async function tryCreateColumnsOnSupabase() {
               v_audit->>'LOAI_BU',
               v_audit->>'NGUOI_KIEM',
               v_audit->>'THOI_DIEM',
+              v_audit->>'KHO',
               v_audit->>'MA_NV',
               v_audit->>'TEN_DANG_NHAP',
               p_user_id
@@ -1745,12 +1752,33 @@ export async function fetchKiemKho(force = false): Promise<any[]> {
 
   const promise = (async () => {
     try {
-      const { data, error } = await supabase
+      let dataRes = await supabase
         .from('b_kiemkho')
-        .select('MA_PHIEU, SKU, TON_HE_THONG, TON_THUC_TE, LECH, LOAI_BU, NGUOI_KIEM, THOI_DIEM, user_id')
+        .select('*')
         .eq('user_id', userId);
-      if (error) throw error;
-      const mapped = data || [];
+
+      if (dataRes.error) {
+        // Fallback query if select('*') fails
+        dataRes = await supabase
+          .from('b_kiemkho')
+          .select('MA_PHIEU, SKU, TON_HE_THONG, TON_THUC_TE, LECH, LOAI_BU, NGUOI_KIEM, THOI_DIEM, user_id')
+          .eq('user_id', userId);
+      }
+
+      if (dataRes.error) throw dataRes.error;
+      const mapped = (dataRes.data || []).map((item: any) => ({
+        MA_PHIEU: item.MA_PHIEU,
+        SKU: item.SKU,
+        TON_HE_THONG: Number(item.TON_HE_THONG ?? 0),
+        TON_THUC_TE: Number(item.TON_THUC_TE ?? 0),
+        LECH: Number(item.LECH ?? 0),
+        LOAI_BU: item.LOAI_BU,
+        NGUOI_KIEM: item.NGUOI_KIEM,
+        THOI_DIEM: item.THOI_DIEM,
+        KHO: item.KHO || undefined,
+        MA_NV: item.MA_NV || undefined,
+        TEN_DANG_NHAP: item.TEN_DANG_NHAP || undefined
+      }));
       updateInMemoryAndCentralCache('kiemkho', mapped);
       return mapped;
     } catch (err) {
@@ -2005,7 +2033,7 @@ export async function fetchAllUserData(userId: string): Promise<UserDataPayload>
   const sanPhamsRaw = cache.sanpham || [];
   const nhapXuatsRaw = cache.nhapxuat || [];
   const nhapXuatCTsRaw = cache.nhapxuatct || [];
-  const kiemKhosRaw = cache.kiemkho || [];
+  const kiemKhosRaw = (cache.kiemkho && cache.kiemkho.length >= 0) ? cache.kiemkho : await fetchKiemKho(false);
 
   const sanPhams: SanPham[] = sanPhamsRaw.map(item => ({
     SKU: item.SKU,
@@ -2063,7 +2091,10 @@ export async function fetchAllUserData(userId: string): Promise<UserDataPayload>
     LECH: Number(item.LECH ?? 0),
     LOAI_BU: item.LOAI_BU,
     NGUOI_KIEM: item.NGUOI_KIEM,
-    THOI_DIEM: item.THOI_DIEM
+    THOI_DIEM: item.THOI_DIEM,
+    KHO: item.KHO || undefined,
+    MA_NV: item.MA_NV || undefined,
+    TEN_DANG_NHAP: item.TEN_DANG_NHAP || undefined
   }));
 
   const thuongHieus: ThuongHieu[] = thuongHieusRaw.map(item => ({
@@ -2381,6 +2412,7 @@ export async function syncKiemKho(k: KiemKho, userId: string) {
       "LOAI_BU": k.LOAI_BU,
       "NGUOI_KIEM": k.NGUOI_KIEM,
       "THOI_DIEM": k.THOI_DIEM,
+      "KHO": k.KHO || null,
       "MA_NV": k.MA_NV || null,
       "TEN_DANG_NHAP": k.TEN_DANG_NHAP || null,
       user_id: userId
@@ -3470,6 +3502,7 @@ async function fallbackSaveAudit(audits: any[], headers: any[], details: any[], 
       LOAI_BU: audit.LOAI_BU,
       NGUOI_KIEM: audit.NGUOI_KIEM,
       THOI_DIEM: audit.THOI_DIEM,
+      KHO: audit.KHO || null,
       MA_NV: audit.MA_NV,
       TEN_DANG_NHAP: audit.TEN_DANG_NHAP,
       user_id: userId

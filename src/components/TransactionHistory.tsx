@@ -711,6 +711,8 @@ export default function TransactionHistory({
         matchType = h.LOAI === 'NHẬP' && h.HOA_DON.startsWith('PNK');
       } else if (historyTypeFilter === 'XUAT_KIEM_KHO') {
         matchType = h.LOAI === 'XUẤT' && h.HOA_DON.startsWith('PXK');
+      } else if (historyTypeFilter === 'KIỂM KHO') {
+        matchType = h.HOA_DON.startsWith('PNK') || h.HOA_DON.startsWith('PXK') || h.HOA_DON.startsWith('PKK') || h.LOAI === 'KIỂM KHO';
       } else {
         matchType = h.LOAI === historyTypeFilter;
       }

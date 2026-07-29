@@ -856,13 +856,14 @@ export default function App() {
       safeTime('loadPermissions');
 
       // Tải trực tiếp tất cả dữ liệu sản phẩm, phiếu, người dùng và vai trò song song 1 lần duy nhất bằng Promise.all
-      let payload, sanPhamsData, nhapXuatsData, nhapXuatCTsData;
+      let payload, sanPhamsData, nhapXuatsData, nhapXuatCTsData, kiemKhosData;
       try {
-        [payload, sanPhamsData, nhapXuatsData, nhapXuatCTsData] = await Promise.all([
+        [payload, sanPhamsData, nhapXuatsData, nhapXuatCTsData, kiemKhosData] = await Promise.all([
           ensureUserOnboarded(userId),
           fetchSanPham(forceFetch),
           fetchNhapXuat(forceFetch),
-          fetchNhapXuatCT(forceFetch)
+          fetchNhapXuatCT(forceFetch),
+          fetchKiemKho(forceFetch)
         ]);
       } finally {
         safeTimeEnd('loadInventory');
@@ -917,7 +918,8 @@ export default function App() {
 
       setNhapXuats(mergedNhapXuats);
       setNhapXuatCTs(mergedNhapXuatCTs);
-      setKiemKhos(payload.kiemKhos);
+      const rawDbKiemKhos = (kiemKhosData && kiemKhosData.length > 0) ? kiemKhosData : (payload.kiemKhos || []);
+      setKiemKhos(rawDbKiemKhos);
       setThuongHieus(payload.thuongHieus);
       setChiNhanhs(payload.chiNhanhs);
       setNhanViens(payload.nhanViens);
@@ -1236,7 +1238,10 @@ export default function App() {
               LECH: Number(newRow.LECH ?? 0),
               LOAI_BU: newRow.LOAI_BU,
               NGUOI_KIEM: newRow.NGUOI_KIEM,
-              THOI_DIEM: newRow.THOI_DIEM
+              THOI_DIEM: newRow.THOI_DIEM,
+              KHO: newRow.KHO,
+              MA_NV: newRow.MA_NV,
+              TEN_DANG_NHAP: newRow.TEN_DANG_NHAP
             };
             setKiemKhos(prev => {
               const keyMap = (mappedItem.MA_PHIEU || '') + '_' + (mappedItem.SKU || '');
@@ -1631,7 +1636,7 @@ export default function App() {
       }
 
       // 2. Lazy load b_kiemkho
-      const needsKiemKho = activeTab === 'AUDIT';
+      const needsKiemKho = activeTab === 'AUDIT' || activeTab === 'HISTORY';
       if (needsKiemKho && !isCacheValid('kiemkho') && !lazyLoadingRef.current.kiemkho) {
         lazyLoadingRef.current.kiemkho = true;
         try {
@@ -2589,6 +2594,7 @@ export default function App() {
       return {
         ...audit,
         MA_PHIEU: 'PKK', // Trình tạo mã tự động PostgreSQL Sequence sẽ sinh ra PKKxxxxxx
+        KHO: audit.KHO || currentUser?.branch || 'Kho Trung Tâm',
         MA_NV: currentUser?.id,
         TEN_DANG_NHAP: currentUser?.username
       };
