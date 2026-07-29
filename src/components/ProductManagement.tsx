@@ -239,17 +239,19 @@ export default function ProductManagement({
     return result.length > 0 ? result : ['1.56', '1.60', '1.61', '1.67', '1.74'];
   }, [brandList, formBrand]);
 
+  const availableFeaturesKey = availableFeatures.join(',');
   React.useEffect(() => {
     if (availableFeatures && availableFeatures.length > 0 && !availableFeatures.includes(formTinhNang)) {
       setFormTinhNang(availableFeatures[0]);
     }
-  }, [availableFeatures, formTinhNang]);
+  }, [availableFeaturesKey, formTinhNang]);
 
+  const availableChietXuatsKey = availableChietXuats.join(',');
   React.useEffect(() => {
     if (availableChietXuats && availableChietXuats.length > 0 && !availableChietXuats.includes(formChietXuat)) {
       setFormChietXuat(availableChietXuats[0]);
     }
-  }, [availableChietXuats, formChietXuat]);
+  }, [availableChietXuatsKey, formChietXuat]);
 
   const handleBrandChange = (brand: string) => {
     setFormBrand(brand);

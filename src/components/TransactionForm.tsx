@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { monitor } from '../utils/debugMonitor';
 import { 
   FileText, 
@@ -133,6 +133,17 @@ export default function TransactionForm({
   const [selectDvt, setSelectDvt] = useState<string>('miếng');
   const [selectGhiChuDong, setSelectGhiChuDong] = useState<string>('');
 
+  // Stabilize callbacks to prevent unnecessary effect triggers
+  const onClearPrefilledSkuRef = useRef(onClearPrefilledSku);
+  useEffect(() => {
+    onClearPrefilledSkuRef.current = onClearPrefilledSku;
+  });
+
+  const onClearPrefilledCartItemsRef = useRef(onClearPrefilledCartItems);
+  useEffect(() => {
+    onClearPrefilledCartItemsRef.current = onClearPrefilledCartItems;
+  });
+
   // Tự động điền dữ liệu khi có SKU cần restock nhanh từ Dashboard
   useEffect(() => {
     if (prefilledSku) {
@@ -159,11 +170,11 @@ export default function TransactionForm({
         setTimeout(() => setSuccessMsg(''), 6000);
       }
       
-      if (onClearPrefilledSku) {
-        onClearPrefilledSku();
+      if (onClearPrefilledSkuRef.current) {
+        onClearPrefilledSkuRef.current();
       }
     }
-  }, [prefilledSku, sanPhams, onClearPrefilledSku]);
+  }, [prefilledSku, sanPhams]);
 
   // Tự động điền hàng loạt sản phẩm khi được chuyển từ "Kiểm tra đơn hàng"
   useEffect(() => {
@@ -194,11 +205,11 @@ export default function TransactionForm({
         setSuccessMsg(`Đã tự động thêm ${newItems.length} sản phẩm từ đơn hàng tin nhắn vào Phiếu Xuất.`);
         setTimeout(() => setSuccessMsg(''), 6000);
       }
-      if (onClearPrefilledCartItems) {
-        onClearPrefilledCartItems();
+      if (onClearPrefilledCartItemsRef.current) {
+        onClearPrefilledCartItemsRef.current();
       }
     }
-  }, [prefilledCartItems, sanPhams, onClearPrefilledCartItems]);
+  }, [prefilledCartItems, sanPhams]);
 
   // Chế độ tìm kiếm nhanh / Quét barcode giả lập
   const [isBarcodeMode, setIsBarcodeMode] = useState<boolean>(false);
@@ -240,17 +251,19 @@ export default function TransactionForm({
     return result.length > 0 ? result : ['1.56', '1.60', '1.61', '1.67', '1.74'];
   }, [brandList, selectBrand]);
 
+  const availableFeaturesKey = availableFeatures.join(',');
   useEffect(() => {
     if (availableFeatures.length > 0 && !availableFeatures.includes(selectTinhNang)) {
       setSelectTinhNang(availableFeatures[0]);
     }
-  }, [availableFeatures, selectTinhNang]);
+  }, [availableFeaturesKey, selectTinhNang]);
 
+  const availableChietXuatsKey = availableChietXuats.join(',');
   useEffect(() => {
     if (availableChietXuats.length > 0 && !availableChietXuats.includes(selectChietXuat)) {
       setSelectChietXuat(availableChietXuats[0]);
     }
-  }, [availableChietXuats, selectChietXuat]);
+  }, [availableChietXuatsKey, selectChietXuat]);
 
   const handleBrandChange = (brand: string) => {
     setSelectBrand(brand);
@@ -311,6 +324,7 @@ export default function TransactionForm({
     return generateSphOptions(selectBrand, selectChietXuat, brandList || [], selectDoSphType);
   }, [selectBrand, selectChietXuat, brandList, selectDoSphType]);
 
+  const sphOptionsKey = sphOptions.join(',');
   useEffect(() => {
     if (sphOptions.length > 0) {
       if (!sphOptions.includes(selectDoSph)) {
@@ -324,7 +338,7 @@ export default function TransactionForm({
         }
       }
     }
-  }, [sphOptions, selectDoSph, selectDoSphType]);
+  }, [sphOptionsKey, selectDoSph, selectDoSphType]);
 
   // Độ loạn: -0.00 đến -2.00 (bước nhảy 0.25)
   const cylOptions = useMemo(() => {

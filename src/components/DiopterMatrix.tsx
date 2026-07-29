@@ -89,11 +89,12 @@ export default function DiopterMatrix({
   const [selectedFeature, setSelectedFeature] = useState<string>('ĐM');
 
   // Đảm bảo tính năng được chọn luôn hợp lệ khi đổi thương hiệu
+  const availableFeaturesKey = availableFeatures.join(',');
   React.useEffect(() => {
     if (availableFeatures.length > 0 && !availableFeatures.includes(selectedFeature)) {
       setSelectedFeature(availableFeatures[0]);
     }
-  }, [availableFeatures, selectedFeature]);
+  }, [availableFeaturesKey, selectedFeature]);
 
   // Lấy các chiết suất khả dụng của thương hiệu được chọn
   const availableChietXuats = useMemo(() => {
@@ -114,11 +115,12 @@ export default function DiopterMatrix({
   const [selectedChietXuat, setSelectedChietXuat] = useState<string>('1.56');
 
   // Đảm bảo chiết suất được chọn luôn hợp lệ khi đổi thương hiệu
+  const availableChietXuatsKey = availableChietXuats.join(',');
   React.useEffect(() => {
     if (availableChietXuats.length > 0 && !availableChietXuats.includes(selectedChietXuat)) {
       setSelectedChietXuat(availableChietXuats[0]);
     }
-  }, [availableChietXuats, selectedChietXuat]);
+  }, [availableChietXuatsKey, selectedChietXuat]);
 
   // Đồng bộ tức thời để loại bỏ triệt để độ trễ (lag) hoặc trùng chéo dữ liệu giữa các thương hiệu
   const currentFeature = useMemo(() => {

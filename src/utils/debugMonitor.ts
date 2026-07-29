@@ -32,12 +32,13 @@ class DebugMonitor {
     this.renders[componentName] = (this.renders[componentName] || 0) + 1;
     this.hasChanges = true;
 
-    // Warning if rendering exceeds 100 times in a short span
-    if (this.renders[componentName] > 150 && this.renders[componentName] % 50 === 0) {
+    // Warning and stack trace if rendering exceeds 50 times
+    if (this.renders[componentName] > 50 && (this.renders[componentName] % 50 === 0 || this.renders[componentName] === 51)) {
       console.warn(
         `🚨 [LOOP DETECTED] Component '${componentName}' has rendered ${this.renders[componentName]} times! ` +
         `This might indicate an infinite loop or unstable dependencies.`
       );
+      console.trace(`[LOOP DETECTED] Stack trace for '${componentName}' (render count = ${this.renders[componentName]})`);
     }
   }
 

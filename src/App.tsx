@@ -3298,6 +3298,17 @@ export default function App() {
   const listBrandNames = useMemo(() => Array.from(new Set(thuongHieus.map(t => t.THUONG_HIEU))), [thuongHieus]);
   const listBranchNames = useMemo(() => chiNhanhs.map(c => c.CHI_NHANH), [chiNhanhs]);
 
+  // Handler được ghi nhớ để tránh re-render gián tiếp
+  const handleClearPrefilledSku = useCallback(() => setPrefilledSku(null), []);
+  const handleClearPrefilledCartItems = useCallback(() => {
+    setPrefilledCartItems(null);
+    setPrefilledGomDonId(null);
+  }, []);
+  const handleNavigateToHistory = useCallback(() => setActiveTab('HISTORY'), []);
+  const handleTriggerToast = useCallback((msg: string) => {
+    setSuccessToast({ show: true, message: msg, type: 'success' });
+  }, []);
+
   // --- 7. ĐỒNG BỘ CHUYỂN ĐỔI NGƯỜI DÙNG ĐỂ KIỂM THỬ PHÂN QUYỀN TRỰC QUAN ---
   const handleSwitchUser = (email: string) => {
     const found = nhanViens.find(n => n.EMAIL === email);
@@ -3815,15 +3826,12 @@ export default function App() {
                     brandList={thuongHieus}
                     loaiPhieuMacDinh="NHẬP"
                     prefilledSku={prefilledSku || undefined}
-                    onClearPrefilledSku={() => setPrefilledSku(null)}
+                    onClearPrefilledSku={handleClearPrefilledSku}
                     prefilledCartItems={prefilledCartItems || undefined}
-                    onClearPrefilledCartItems={() => {
-                      setPrefilledCartItems(null);
-                      setPrefilledGomDonId(null);
-                    }}
+                    onClearPrefilledCartItems={handleClearPrefilledCartItems}
                     onSaveTransaction={handleSaveTransaction}
-                    onNavigateToHistory={() => setActiveTab('HISTORY')}
-                    onTriggerToast={(msg) => setSuccessToast({ show: true, message: msg, type: 'success' })}
+                    onNavigateToHistory={handleNavigateToHistory}
+                    onTriggerToast={handleTriggerToast}
                   />
                 )}
 
@@ -3837,15 +3845,12 @@ export default function App() {
                     brandList={thuongHieus}
                     loaiPhieuMacDinh="XUẤT"
                     prefilledSku={prefilledSku || undefined}
-                    onClearPrefilledSku={() => setPrefilledSku(null)}
+                    onClearPrefilledSku={handleClearPrefilledSku}
                     prefilledCartItems={prefilledCartItems || undefined}
-                    onClearPrefilledCartItems={() => {
-                      setPrefilledCartItems(null);
-                      setPrefilledGomDonId(null);
-                    }}
+                    onClearPrefilledCartItems={handleClearPrefilledCartItems}
                     onSaveTransaction={handleSaveTransaction}
-                    onNavigateToHistory={() => setActiveTab('HISTORY')}
-                    onTriggerToast={(msg) => setSuccessToast({ show: true, message: msg, type: 'success' })}
+                    onNavigateToHistory={handleNavigateToHistory}
+                    onTriggerToast={handleTriggerToast}
                   />
                 )}
 
