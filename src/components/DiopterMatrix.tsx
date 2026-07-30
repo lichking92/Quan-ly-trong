@@ -98,7 +98,7 @@ export default function DiopterMatrix({
 
   // Lấy các chiết suất khả dụng của thương hiệu được chọn
   const availableChietXuats = useMemo(() => {
-    if (!brandList || brandList.length === 0) return ['1.56', '1.60', '1.61', '1.67', '1.74'];
+    if (!brandList || brandList.length === 0) return [];
     const cxSet = new Set<string>();
     brandList
       .filter(b => b.THUONG_HIEU.trim().toLowerCase() === selectedBrand.trim().toLowerCase())
@@ -108,8 +108,7 @@ export default function DiopterMatrix({
           valStr.split(',').map(s => s.trim()).filter(Boolean).forEach(cx => cxSet.add(cx));
         }
       });
-    const result = Array.from(cxSet);
-    return result.length > 0 ? result : ['1.56', '1.60', '1.61', '1.67', '1.74'];
+    return Array.from(cxSet);
   }, [brandList, selectedBrand]);
 
   const [selectedChietXuat, setSelectedChietXuat] = useState<string>('1.56');

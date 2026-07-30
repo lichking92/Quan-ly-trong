@@ -174,18 +174,17 @@ export default function InventoryAudit({
   }, [brandList, selectBrand]);
 
   const availableChietXuats = useMemo(() => {
-    if (!brandList) return ['1.56', '1.60', '1.61', '1.67', '1.74'];
+    if (!brandList || brandList.length === 0) return [];
     const cxSet = new Set<string>();
     brandList
-      .filter(b => b.THUONG_HIEU.trim() === selectBrand.trim())
+      .filter(b => b.THUONG_HIEU.trim().toLowerCase() === selectBrand.trim().toLowerCase())
       .forEach(b => {
         const valStr = b.CHIET_XUAT_MAC_DINH || '';
         if (valStr) {
           valStr.split(',').map(s => s.trim()).filter(Boolean).forEach(cx => cxSet.add(cx));
         }
       });
-    const result = Array.from(cxSet);
-    return result.length > 0 ? result : ['1.56', '1.60', '1.61', '1.67', '1.74'];
+    return Array.from(cxSet);
   }, [brandList, selectBrand]);
 
   useEffect(() => {

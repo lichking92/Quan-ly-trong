@@ -221,102 +221,164 @@ export default function TransactionForm({
   const [cart, setCart] = useState<CartItem[]>([]);
 
   // --- 3. QUY TẮC NGHIỆP VỤ - ĐỒNG BỘ CHIẾT XUẤT VÀ TÍNH NĂNG THEO THƯƠNG HIỆU ---
-  const availableFeatures = useMemo(() => {
-    if (!brandList) return ['ĐM', 'ASX'];
-    const featuresSet = new Set<string>();
-    brandList
-      .filter(b => b.THUONG_HIEU.trim() === selectBrand.trim())
-      .forEach(b => {
-        const valStr = b.TINH_NANG_MAC_DINH || b.TINH_NANG || '';
-        if (valStr) {
-          valStr.split(',').map(s => s.trim()).filter(Boolean).forEach(f => featuresSet.add(f));
-        }
-      });
-    const result = Array.from(featuresSet);
-    return result.length > 0 ? result : ['ĐM', 'ASX'];
-  }, [brandList, selectBrand]);
+  // Tự động đồng bộ Thương hiệu nếu chưa nằm trong danh mục
+  useEffect(() => {
+    if (thuongHieus && thuongHieus.length > 0) {
+      if (!thuongHieus.includes(selectBrand)) {
+        handleBrandChange(thuongHieus[0]);
+      }
+    }
+  }, [thuongHieus]);
 
+  // Danh sách Chiết xuất hợp lệ phụ thuộc 100% vào b_thuonghieu (brandList) cho Thương hiệu đang chọn
   const availableChietXuats = useMemo(() => {
-    if (!brandList) return ['1.56', '1.60', '1.61', '1.67', '1.74'];
+    if (!brandList || brandList.length === 0) return [];
     const cxSet = new Set<string>();
     brandList
-      .filter(b => b.THUONG_HIEU.trim() === selectBrand.trim())
+      .filter(b => b.THUONG_HIEU.trim().toLowerCase() === selectBrand.trim().toLowerCase())
       .forEach(b => {
         const valStr = b.CHIET_XUAT_MAC_DINH || '';
         if (valStr) {
           valStr.split(',').map(s => s.trim()).filter(Boolean).forEach(cx => cxSet.add(cx));
         }
       });
-    const result = Array.from(cxSet);
-    return result.length > 0 ? result : ['1.56', '1.60', '1.61', '1.67', '1.74'];
+    return Array.from(cxSet);
   }, [brandList, selectBrand]);
 
-  const availableFeaturesKey = availableFeatures.join(',');
-  useEffect(() => {
-    if (availableFeatures.length > 0 && !availableFeatures.includes(selectTinhNang)) {
-      setSelectTinhNang(availableFeatures[0]);
-    }
-  }, [availableFeaturesKey, selectTinhNang]);
+  // Danh sách Tính năng hợp lệ phụ thuộc vào Thương hiệu và Chiết xuất đang chọn từ b_thuonghieu
+  const availableFeatures = useMemo(() => {
+    if (!brandList || brandList.length === 0) return [];
+    const matched = brandList.filter(
+      b => b.THUONG_HIEU.trim().toLowerCase() === selectBrand.trim().toLowerCase()
+    );
+    if (matched.length === 0) return [];
 
+    // Lọc theo Chiết suất đã chọn nếu bản ghi b_thuonghieu chỉ định cụ thể Chiết suất
+    const cxMatched = matched.filter(b => {
+      if (!b.CHIET_XUAT_MAC_DINH) return false;
+      return b.CHIET_XUAT_MAC_DINH.split(',').map(s => s.trim().toLowerCase()).includes(selectChietXuat.trim().toLowerCase());
+    });
+    const targetBrands = cxMatched.length > 0 ? cxMatched : matched;
+
+    const featuresSet = new Set<string>();
+    targetBrands.forEach(b => {
+      const valStr = b.TINH_NANG_MAC_DINH || b.TINH_NANG || '';
+      if (valStr) {
+        valStr.split(',').map(s => s.trim()).filter(Boolean).forEach(f => featuresSet.add(f));
+      }
+    });
+    return Array.from(featuresSet);
+  }, [brandList, selectBrand, selectChietXuat]);
+
+  // Đồng bộ tự động giá trị Chiết suất khi danh sách Chiết suất khả dụng thay đổi
   const availableChietXuatsKey = availableChietXuats.join(',');
   useEffect(() => {
-    if (availableChietXuats.length > 0 && !availableChietXuats.includes(selectChietXuat)) {
-      setSelectChietXuat(availableChietXuats[0]);
+    if (availableChietXuats.length > 0) {
+      if (!availableChietXuats.includes(selectChietXuat)) {
+        setSelectChietXuat(availableChietXuats[0]);
+      }
+    } else if (selectChietXuat !== '') {
+      setSelectChietXuat('');
     }
   }, [availableChietXuatsKey, selectChietXuat]);
 
+  // Đồng bộ tự động giá trị Tính năng khi danh sách Tính năng khả dụng thay đổi
+  const availableFeaturesKey = availableFeatures.join(',');
+  useEffect(() => {
+    if (availableFeatures.length > 0) {
+      if (!availableFeatures.includes(selectTinhNang)) {
+        setSelectTinhNang(availableFeatures[0]);
+      }
+    } else if (selectTinhNang !== '') {
+      setSelectTinhNang('');
+    }
+  }, [availableFeaturesKey, selectTinhNang]);
+
+  // Khi thay đổi Thương hiệu: Reset toàn bộ filter phía dưới (Chiết suất -> Tính năng -> Sản phẩm / SPH / CYL)
   const handleBrandChange = (brand: string) => {
     setSelectBrand(brand);
     
-    let nextFeature = '';
-    let nextChietXuat = '';
+    const matched = (brandList || []).filter(
+      b => b.THUONG_HIEU.trim().toLowerCase() === brand.trim().toLowerCase()
+    );
 
-    if (brandList) {
-      const matchedBrands = brandList.filter(b => b.THUONG_HIEU.trim() === brand.trim());
-      
-      const featuresSet = new Set<string>();
-      const cxSet = new Set<string>();
-
-      matchedBrands.forEach(b => {
-        const fStr = b.TINH_NANG_MAC_DINH || b.TINH_NANG || '';
-        if (fStr) {
-          fStr.split(',').map(s => s.trim()).filter(Boolean).forEach(f => featuresSet.add(f));
-        }
-        const cxStr = b.CHIET_XUAT_MAC_DINH || '';
-        if (cxStr) {
-          cxStr.split(',').map(s => s.trim()).filter(Boolean).forEach(cx => cxSet.add(cx));
-        }
-      });
-
-      const fList = Array.from(featuresSet);
-      const cxList = Array.from(cxSet);
-
-      if (fList.length > 0) {
-        nextFeature = fList[0];
+    // 1. Reset Chiết suất về giá trị hợp lệ đầu tiên của thương hiệu mới
+    const cxSet = new Set<string>();
+    matched.forEach(b => {
+      if (b.CHIET_XUAT_MAC_DINH) {
+        b.CHIET_XUAT_MAC_DINH.split(',').map(s => s.trim()).filter(Boolean).forEach(cx => cxSet.add(cx));
       }
-      if (cxList.length > 0) {
-        nextChietXuat = cxList[0];
-      }
-    }
+    });
+    const cxList = Array.from(cxSet);
+    const nextCx = cxList.length > 0 ? cxList[0] : '';
+    setSelectChietXuat(nextCx);
 
-    if (nextFeature) {
-      setSelectTinhNang(nextFeature);
+    // 2. Reset Tính năng về giá trị hợp lệ đầu tiên theo thương hiệu và chiết suất mới
+    const cxMatched = matched.filter(b => {
+      if (!b.CHIET_XUAT_MAC_DINH) return false;
+      return b.CHIET_XUAT_MAC_DINH.split(',').map(s => s.trim().toLowerCase()).includes(nextCx.trim().toLowerCase());
+    });
+    const targetBrands = cxMatched.length > 0 ? cxMatched : matched;
+
+    const featureSet = new Set<string>();
+    targetBrands.forEach(b => {
+      const fStr = b.TINH_NANG_MAC_DINH || b.TINH_NANG || '';
+      if (fStr) {
+        fStr.split(',').map(s => s.trim()).filter(Boolean).forEach(f => featureSet.add(f));
+      }
+    });
+    const featureList = Array.from(featureSet);
+    const nextFeature = featureList.length > 0 ? featureList[0] : '';
+    setSelectTinhNang(nextFeature);
+
+    // 3. Reset các thuộc tính độ SPH / CYL / Số lượng
+    setSelectDoSphType('CẬN');
+    const newSphOptions = generateSphOptions(brand, nextCx, brandList || [], 'CẬN');
+    if (newSphOptions.length > 0) {
+      setSelectDoSph(newSphOptions.includes(-2.00) ? -2.00 : newSphOptions[0]);
     } else {
-      const isDM = ['Blick', 'Element', 'Nikki'].includes(brand);
-      setSelectTinhNang(isDM ? 'ĐM' : 'ASX');
+      setSelectDoSph(0.00);
+    }
+    setSelectDoCyl(0.00);
+    setSelectSoLuong(1);
+    setSelectGhiChuDong('');
+    setErrorMsg('');
+  };
+
+  // Khi thay đổi Chiết suất: Reset Tính năng và Độ SPH tương ứng
+  const handleChietXuatChange = (cx: string) => {
+    setSelectChietXuat(cx);
+
+    const matched = (brandList || []).filter(
+      b => b.THUONG_HIEU.trim().toLowerCase() === selectBrand.trim().toLowerCase()
+    );
+    const cxMatched = matched.filter(b => {
+      if (!b.CHIET_XUAT_MAC_DINH) return false;
+      return b.CHIET_XUAT_MAC_DINH.split(',').map(s => s.trim().toLowerCase()).includes(cx.trim().toLowerCase());
+    });
+    const targetBrands = cxMatched.length > 0 ? cxMatched : matched;
+
+    const featureSet = new Set<string>();
+    targetBrands.forEach(b => {
+      const fStr = b.TINH_NANG_MAC_DINH || b.TINH_NANG || '';
+      if (fStr) {
+        fStr.split(',').map(s => s.trim()).filter(Boolean).forEach(f => featureSet.add(f));
+      }
+    });
+    const featureList = Array.from(featureSet);
+    if (featureList.length > 0 && !featureList.includes(selectTinhNang)) {
+      setSelectTinhNang(featureList[0]);
     }
 
-    if (nextChietXuat) {
-      setSelectChietXuat(nextChietXuat);
-    } else {
-      if (['Blick', 'Zeiss Clear', 'Essilor Pre', 'Essilor Rock'].includes(brand)) {
-        setSelectChietXuat('1.56');
-      } else if (brand === 'Zeiss Blue') {
-        setSelectChietXuat('1.60');
-      } else {
-        setSelectChietXuat('1.61');
-      }
+    const newSphOptions = generateSphOptions(selectBrand, cx, brandList || [], selectDoSphType);
+    if (newSphOptions.length > 0 && !newSphOptions.includes(selectDoSph)) {
+      setSelectDoSph(newSphOptions.includes(-2.00) && selectDoSphType === 'CẬN' ? -2.00 : newSphOptions[0]);
     }
+  };
+
+  // Khi thay đổi Tính năng
+  const handleTinhNangChange = (feature: string) => {
+    setSelectTinhNang(feature);
   };
 
   // Độ cầu SPH: Lấy theo cấu hình phạm vi của thương hiệu / chiết suất đang chọn
@@ -830,7 +892,7 @@ export default function TransactionForm({
                         <label className="text-[10px] font-bold text-slate-400 uppercase">Chiết suất</label>
                         <select
                           value={selectChietXuat}
-                          onChange={(e) => setSelectChietXuat(e.target.value)}
+                          onChange={(e) => handleChietXuatChange(e.target.value)}
                           className="w-full text-sm font-semibold text-slate-700 bg-slate-50 border border-slate-200 p-2.5 rounded-xl focus:outline-hidden font-mono"
                         >
                           {availableChietXuats.map(cx => (
@@ -844,7 +906,7 @@ export default function TransactionForm({
                         <label className="text-[10px] font-bold text-slate-400 uppercase">Tính năng</label>
                         <select
                           value={selectTinhNang}
-                          onChange={(e) => setSelectTinhNang(e.target.value)}
+                          onChange={(e) => handleTinhNangChange(e.target.value)}
                           className="w-full text-sm font-semibold text-slate-700 bg-slate-50 border border-slate-200 p-2.5 rounded-xl focus:outline-hidden"
                         >
                           {availableFeatures.map(f => (
@@ -1431,20 +1493,18 @@ export default function TransactionForm({
                   </div>
                 </div>
 
-                {/* Chiết suất (Luôn cho phép lựa chọn linh hoạt theo yêu cầu người dùng) */}
+                {/* Chiết suất */}
                 <div className="flex flex-col sm:space-y-1 sm:block grid grid-cols-3 items-center gap-2 py-0.5 sm:py-0">
                   <label className="col-span-1 text-[10px] font-bold text-slate-400 uppercase">Chiết suất</label>
                   <div className="col-span-2">
                     <select
                       value={selectChietXuat}
-                      onChange={(e) => setSelectChietXuat(e.target.value)}
+                      onChange={(e) => handleChietXuatChange(e.target.value)}
                       className="w-full text-base md:text-xs font-semibold text-slate-700 bg-slate-50 border border-slate-100 p-1.5 sm:p-2 rounded-lg focus:outline-hidden"
                     >
-                      <option value="1.56">1.56</option>
-                      <option value="1.60">1.60</option>
-                      <option value="1.61">1.61</option>
-                      <option value="1.67">1.67</option>
-                      <option value="1.74">1.74</option>
+                      {availableChietXuats.map(cx => (
+                        <option key={cx} value={cx}>{cx}</option>
+                      ))}
                     </select>
                   </div>
                 </div>
@@ -1455,7 +1515,7 @@ export default function TransactionForm({
                   <div className="col-span-2">
                     <select
                       value={selectTinhNang}
-                      onChange={(e) => setSelectTinhNang(e.target.value)}
+                      onChange={(e) => handleTinhNangChange(e.target.value)}
                       className="w-full text-base md:text-xs font-semibold text-slate-700 bg-slate-50 border border-slate-100 p-1.5 sm:p-2 rounded-lg focus:outline-hidden"
                     >
                       {availableFeatures.map(f => (
