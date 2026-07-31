@@ -34,6 +34,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { NhapXuat, NhapXuatCT, SanPham, LoaiPhieu, User as UserType, KiemKho } from '../types';
 import { formatDop, formatSKUForDisplay, cleanSKU, getVietnamDateString, getVietnamDateTimeString } from '../data/mockData';
 import { exportTransactionHistoryToExcel } from '../utils/exportEngine';
+import { SkuAutocompleteSearch } from './SkuAutocompleteSearch';
 
 export interface AuditLog {
   id: string;
@@ -1259,18 +1260,14 @@ export default function TransactionHistory({
               </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div className="space-y-1">
-                  <label className="text-[10px] font-bold text-slate-400">Chọn SKU tròng kính</label>
-                  <select
+                <div className="space-y-1 sm:col-span-2">
+                  <label className="text-[10px] font-bold text-slate-400">Chọn SKU tròng kính (Tìm kiếm thông minh)</label>
+                  <SkuAutocompleteSearch
+                    sanPhams={sanPhams}
                     value={newRowSKU}
-                    onChange={(e) => setNewRowSKU(e.target.value)}
-                    className="w-full text-xs font-semibold text-slate-700 bg-white border border-slate-200 rounded p-1.5 focus:outline-hidden"
-                  >
-                    <option value="">-- Chọn tròng kính --</option>
-                    {sanPhams.map((p, idx) => (
-                      <option key={`${p.SKU}-${idx}`} value={p.SKU}>{formatSKUForDisplay(p.SKU)} (Còn tồn: {p.TON_CUOI})</option>
-                    ))}
-                  </select>
+                    onChange={setNewRowSKU}
+                    placeholder="Tìm theo SKU, Thương hiệu (HEN), Chiết suất (1.56), Độ cận (-2.00)..."
+                  />
                 </div>
 
                 <div className="space-y-1">
@@ -1885,18 +1882,12 @@ export default function TransactionHistory({
           <div className="grid grid-cols-1 md:grid-cols-12 gap-3 items-end">
             <div className="md:col-span-5 space-y-1">
               <label className="text-[9px] font-bold text-slate-400 uppercase tracking-wider">Chọn Tròng Kính (SKU)</label>
-              <select
+              <SkuAutocompleteSearch
+                sanPhams={sanPhams}
                 value={editorSearchSku}
-                onChange={(e) => setEditorSearchSku(e.target.value)}
-                className="w-full text-xs font-semibold text-slate-700 bg-white border border-slate-200 rounded-xl px-3 py-2 focus:outline-hidden"
-              >
-                <option value="">-- Chọn tròng kính từ danh mục --</option>
-                {sanPhams.map(p => (
-                  <option key={p.SKU} value={p.SKU}>
-                    [{p.SKU}] {p.TEN_SAN_PHAM} (Kho: {p.TON_CUOI})
-                  </option>
-                ))}
-              </select>
+                onChange={setEditorSearchSku}
+                placeholder="Tìm SKU, Thương hiệu, Chiết suất, Độ cận..."
+              />
             </div>
 
             <div className="md:col-span-2 space-y-1">
