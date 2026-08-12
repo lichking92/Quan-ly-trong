@@ -5,7 +5,7 @@
 
 import { SanPham, NhapXuat, NhapXuatCT, getInvoiceCategory } from '../types';
 import { supabase, SUPABASE_STORAGE_BUCKET } from '../supabaseClient';
-import { getVietnamDateString } from '../data/mockData';
+import { getVietnamDateString, formatDop } from '../data/mockData';
 import { compareChietXuat } from './chietXuatHelper';
 import { inMemoryCache } from '../supabaseSync';
 
@@ -3294,6 +3294,256 @@ export async function exportTransactionHistoryToExcel({
 
   const todayStr = getVietnamDateString();
   const fileName = `LichSuNhapXuat_${todayStr}.xlsx`;
+
+  const buffer = await workbook.xlsx.writeBuffer();
+  const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+
+  if (onDownload) {
+    onDownload(blob, fileName);
+  } else {
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = fileName;
+    document.body.appendChild(a);
+    a.click();
+    window.URL.revokeObjectURL(url);
+    document.body.removeChild(a);
+  }
+}
+
+/**
+ * Hàm Xuất Excel Chi Tiết Phiếu (Single Transaction Detail Export)
+ * - Chỉ xuất dữ liệu của 1 phiếu đang mở (VD: PX000123).
+ * - Header Excel: Số phiếu, Loại phiếu, Ngày tạo, Chi nhánh, Kho, Người tạo, Ghi chú
+ * - Bảng chi tiết sản phẩm: SKU, Thương hiệu, Chiết suất, Tính năng, Cận (SPH), Loạn (CYL), Số lượng, Đơn giá (nếu có), Thành tiền (nếu có)
+ * - Tên file: [SỐ_PHIẾU].xlsx (Ví dụ: PX000123.xlsx, PN000456.xlsx, PKK000789.xlsx)
+ */
+export async function exportTransactionDetailToExcel({
+  header,
+  details,
+  onDownload
+}: {
+  header: NhapXuat;
+  details: NhapXuatCT[];
+  onDownload?: (blob: Blob, fileName: string) => void;
+}) {
+  const ExcelJS = await getExcelJS();
+  const workbook = new ExcelJS.Workbook();
+  const rawCode = header.HOA_DON || 'PX_DETAIL';
+  const sheetName = rawCode.replace(/[/\\?*:[\]]/g, '_').substring(0, 30);
+  const sheet = workbook.addWorksheet(sheetName);
+
+  // Palette
+  const primaryNavy = 'FF1E3A8A';
+  const tableHeaderBg = 'FF1E40AF';
+  const borderLight = 'FFE2E8F0';
+
+  // 1. Title Block
+  sheet.mergeCells('A1:J1');
+  const titleCell = sheet.getCell('A1');
+  titleCell.value = `CHI TIẾT PHIẾU GIAO DỊCH: ${header.HOA_DON || ''}`;
+  titleCell.font = { name: 'Segoe UI', size: 14, bold: true, color: { argb: primaryNavy } };
+  titleCell.alignment = { horizontal: 'left', vertical: 'middle' };
+  sheet.getRow(1).height = 30;
+
+  // 2. Info Header Section (Rows 3-6)
+  sheet.getCell('A3').value = 'Số phiếu:';
+  sheet.getCell('B3').value = header.HOA_DON || '';
+  sheet.getCell('D3').value = 'Loại phiếu:';
+  sheet.getCell('E3').value = header.LOAI || '';
+
+  sheet.getCell('A4').value = 'Ngày tạo:';
+  sheet.getCell('B4').value = header.NGAY || (header.TG_TAO ? header.TG_TAO.split(' ')[0] : '');
+  sheet.getCell('D4').value = 'Người tạo:';
+  sheet.getCell('E4').value = header.TEN_NGUOI_TAO || header.NGUOI_TAO || '';
+
+  sheet.getCell('A5').value = 'Chi nhánh:';
+  sheet.getCell('B5').value = header.CHI_NHANH || '';
+  sheet.getCell('D5').value = 'Kho:';
+  sheet.getCell('E5').value = (header as any).KHO || header.CHI_NHANH || '';
+
+  sheet.getCell('A6').value = 'Ghi chú:';
+  sheet.getCell('B6').value = header.GHI_CHU || '';
+
+  // Apply styling to Info Header Section
+  const labelCells = ['A3', 'D3', 'A4', 'D4', 'A5', 'D5', 'A6'];
+  labelCells.forEach(coord => {
+    const c = sheet.getCell(coord);
+    c.font = { name: 'Segoe UI', size: 10, bold: true, color: { argb: 'FF334155' } };
+    c.alignment = { horizontal: 'left', vertical: 'middle' };
+  });
+
+  const valueCells = ['B3', 'E3', 'B4', 'E4', 'B5', 'E5', 'B6'];
+  valueCells.forEach(coord => {
+    const c = sheet.getCell(coord);
+    c.font = { name: 'Segoe UI', size: 10, color: { argb: 'FF0F172A' } };
+    c.alignment = { horizontal: 'left', vertical: 'middle' };
+  });
+
+  sheet.getRow(3).height = 20;
+  sheet.getRow(4).height = 20;
+  sheet.getRow(5).height = 20;
+  sheet.getRow(6).height = 20;
+
+  // 3. Table Header Row (Row 8)
+  const tableStartRow = 8;
+  const headers = [
+    'STT',
+    'SKU',
+    'Thương hiệu',
+    'Chiết suất',
+    'Tính năng',
+    'Cận (SPH)',
+    'Loạn (CYL)',
+    'Số lượng',
+    'Đơn giá',
+    'Thành tiền'
+  ];
+
+  const headerRow = sheet.getRow(tableStartRow);
+  headerRow.values = headers;
+  headerRow.font = { name: 'Segoe UI', size: 10, bold: true, color: { argb: 'FFFFFFFF' } };
+  headerRow.height = 26;
+  headerRow.eachCell((cell) => {
+    cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: tableHeaderBg } };
+    cell.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true };
+    cell.border = {
+      top: { style: 'thin', color: { argb: 'FF1D4ED8' } },
+      bottom: { style: 'medium', color: { argb: 'FF1D4ED8' } },
+      left: { style: 'thin', color: { argb: 'FF1D4ED8' } },
+      right: { style: 'thin', color: { argb: 'FF1D4ED8' } }
+    };
+  });
+
+  // 4. Data Rows
+  let totalQuantity = 0;
+  let totalVal = 0;
+  let hasPriceValue = false;
+
+  details.forEach((d, idx) => {
+    const qty = Number(d.SO_LUONG) || 0;
+    const priceRaw = (d as any).DON_GIA ?? (d as any).donGia ?? (d as any).GIA ?? null;
+    const price = priceRaw !== null && priceRaw !== undefined && priceRaw !== '' && !isNaN(Number(priceRaw)) ? Number(priceRaw) : null;
+    if (price !== null) hasPriceValue = true;
+
+    const amountRaw = (d as any).THANH_TIEN ?? (d as any).thanhTien ?? (price !== null ? price * qty : null);
+    const amount = amountRaw !== null && amountRaw !== undefined && amountRaw !== '' && !isNaN(Number(amountRaw)) ? Number(amountRaw) : null;
+
+    totalQuantity += qty;
+    if (amount !== null) totalVal += amount;
+
+    const row = sheet.addRow([
+      idx + 1,
+      d.SKU || '',
+      d.THUONG_HIEU || '',
+      d.CHIET_XUAT || '',
+      d.TINH_NANG || '',
+      formatDop(d.SPH),
+      formatDop(d.CYL),
+      qty,
+      price !== null ? price : '',
+      amount !== null ? amount : ''
+    ]);
+
+    row.height = 22;
+    row.font = { name: 'Segoe UI', size: 9.5 };
+
+    // Alignments
+    row.getCell(1).alignment = { horizontal: 'center', vertical: 'middle' };
+    row.getCell(2).alignment = { horizontal: 'left', vertical: 'middle' };
+    row.getCell(3).alignment = { horizontal: 'left', vertical: 'middle' };
+    row.getCell(4).alignment = { horizontal: 'center', vertical: 'middle' };
+    row.getCell(5).alignment = { horizontal: 'left', vertical: 'middle' };
+    row.getCell(6).alignment = { horizontal: 'center', vertical: 'middle' };
+    row.getCell(7).alignment = { horizontal: 'center', vertical: 'middle' };
+
+    const qCell = row.getCell(8);
+    qCell.alignment = { horizontal: 'right', vertical: 'middle' };
+    qCell.numFmt = '#,##0';
+
+    const pCell = row.getCell(9);
+    pCell.alignment = { horizontal: 'right', vertical: 'middle' };
+    if (price !== null) pCell.numFmt = '#,##0';
+
+    const aCell = row.getCell(10);
+    aCell.alignment = { horizontal: 'right', vertical: 'middle' };
+    if (amount !== null) aCell.numFmt = '#,##0';
+
+    row.eachCell((cell) => {
+      cell.border = {
+        top: { style: 'thin', color: { argb: borderLight } },
+        bottom: { style: 'thin', color: { argb: borderLight } },
+        left: { style: 'thin', color: { argb: borderLight } },
+        right: { style: 'thin', color: { argb: borderLight } }
+      };
+    });
+  });
+
+  // 5. Total Row
+  const totalRow = sheet.addRow([
+    'TỔNG CỘNG',
+    '',
+    '',
+    '',
+    '',
+    '',
+    '',
+    totalQuantity,
+    '',
+    hasPriceValue && totalVal > 0 ? totalVal : ''
+  ]);
+
+  totalRow.height = 25;
+  totalRow.font = { name: 'Segoe UI', size: 10, bold: true };
+  sheet.mergeCells(`A${totalRow.number}:G${totalRow.number}`);
+  totalRow.getCell(1).alignment = { horizontal: 'center', vertical: 'middle' };
+
+  const totQCell = totalRow.getCell(8);
+  totQCell.alignment = { horizontal: 'right', vertical: 'middle' };
+  totQCell.numFmt = '#,##0';
+
+  const totACell = totalRow.getCell(10);
+  totACell.alignment = { horizontal: 'right', vertical: 'middle' };
+  if (hasPriceValue && totalVal > 0) {
+    totACell.numFmt = '#,##0';
+  }
+
+  totalRow.eachCell((cell) => {
+    cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF1F5F9' } };
+    cell.border = {
+      top: { style: 'medium', color: { argb: 'FF94A3B8' } },
+      bottom: { style: 'medium', color: { argb: 'FF94A3B8' } },
+      left: { style: 'thin', color: { argb: borderLight } },
+      right: { style: 'thin', color: { argb: borderLight } }
+    };
+  });
+
+  // Freeze pane below headers
+  sheet.views = [{ state: 'frozen', xSplit: 0, ySplit: 8 }];
+
+  // Auto Column Widths
+  headers.forEach((h, colIdx) => {
+    let maxLen = h.length;
+    if (colIdx === 1) maxLen = Math.max(maxLen, 24); // SKU column width
+    details.forEach(d => {
+      let val = '';
+      if (colIdx === 0) val = '100';
+      else if (colIdx === 1) val = d.SKU || '';
+      else if (colIdx === 2) val = d.THUONG_HIEU || '';
+      else if (colIdx === 3) val = d.CHIET_XUAT || '';
+      else if (colIdx === 4) val = d.TINH_NANG || '';
+      else if (colIdx === 5) val = formatDop(d.SPH);
+      else if (colIdx === 6) val = formatDop(d.CYL);
+      else if (colIdx === 7) val = String(d.SO_LUONG || '');
+
+      if (val.length > maxLen) maxLen = val.length;
+    });
+    sheet.getColumn(colIdx + 1).width = Math.min(Math.max(maxLen + 4, 12), 45);
+  });
+
+  // File Name: PX000123.xlsx / PN000456.xlsx / PKK000789.xlsx
+  const fileName = `${rawCode.trim()}.xlsx`;
 
   const buffer = await workbook.xlsx.writeBuffer();
   const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });

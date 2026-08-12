@@ -33,7 +33,7 @@ import {
 import { motion, AnimatePresence } from 'motion/react';
 import { NhapXuat, NhapXuatCT, SanPham, LoaiPhieu, User as UserType, KiemKho } from '../types';
 import { formatDop, formatSKUForDisplay, cleanSKU, getVietnamDateString, getVietnamDateTimeString } from '../data/mockData';
-import { exportTransactionHistoryToExcel } from '../utils/exportEngine';
+import { exportTransactionHistoryToExcel, exportTransactionDetailToExcel } from '../utils/exportEngine';
 import { SkuAutocompleteSearch } from './SkuAutocompleteSearch';
 
 export interface AuditLog {
@@ -99,7 +99,7 @@ export default function TransactionHistory({
     if (p === 'history.delete') {
       return currentUser?.role === 'ADMIN';
     }
-    if (p === 'history.export') {
+    if (p === 'history.export' || p === 'history.export_detail') {
       return currentUser?.role === 'ADMIN' || currentUser?.role === 'KHO';
     }
     return currentUser?.writeAccess !== false;
@@ -107,6 +107,63 @@ export default function TransactionHistory({
 
   // --- 1. QUẢN LÝ TRẠNG THÁI GIAO DIỆN ---
   const [selectedInvoice, setSelectedInvoice] = useState<string | null>(null);
+
+  // States & Ref cho Resizable Panel
+  const [leftWidthPercent, setLeftWidthPercent] = useState<number>(() => {
+    const saved = localStorage.getItem('tx_history_left_width_pct');
+    if (saved) {
+      const parsed = parseFloat(saved);
+      if (!isNaN(parsed) && parsed >= 20 && parsed <= 60) {
+        return parsed;
+      }
+    }
+    return 45; // Mặc định 45% danh sách khi chọn phiếu
+  });
+
+  useEffect(() => {
+    localStorage.setItem('tx_history_left_width_pct', leftWidthPercent.toString());
+  }, [leftWidthPercent]);
+
+  const splitContainerRef = useRef<HTMLDivElement>(null);
+  const isDraggingSplitter = useRef<boolean>(false);
+
+  const handleSplitterMouseDown = (e: React.MouseEvent) => {
+    e.preventDefault();
+    isDraggingSplitter.current = true;
+    document.body.style.userSelect = 'none';
+    document.body.style.cursor = 'col-resize';
+
+    const handleMouseMove = (moveEvent: MouseEvent) => {
+      if (!isDraggingSplitter.current || !splitContainerRef.current) return;
+      const rect = splitContainerRef.current.getBoundingClientRect();
+      const totalWidth = rect.width;
+      if (totalWidth <= 0) return;
+
+      const offsetX = moveEvent.clientX - rect.left;
+
+      // Min left width: 250px, Max left width: 60% totalWidth (Detail gets min 40%)
+      const minLeftPx = Math.min(250, totalWidth * 0.6);
+      const maxLeftPx = totalWidth * 0.6;
+
+      const clampedPx = Math.max(minLeftPx, Math.min(offsetX, maxLeftPx));
+      const newPercent = (clampedPx / totalWidth) * 100;
+
+      setLeftWidthPercent(newPercent);
+    };
+
+    const handleMouseUp = () => {
+      if (isDraggingSplitter.current) {
+        isDraggingSplitter.current = false;
+        document.body.style.userSelect = '';
+        document.body.style.cursor = '';
+        window.removeEventListener('mousemove', handleMouseMove);
+        window.removeEventListener('mouseup', handleMouseUp);
+      }
+    };
+
+    window.addEventListener('mousemove', handleMouseMove);
+    window.addEventListener('mouseup', handleMouseUp);
+  };
 
   // States for dynamic Voucher Form (Create & Edit)
   const [isEditingInvoice, setIsEditingInvoice] = useState<boolean>(false);
@@ -1167,6 +1224,21 @@ export default function TransactionHistory({
     });
   };
 
+  // --- 8.5. XUẤT EXCEL CHI TIẾT PHIẾU ---
+  const handleExportDetailToExcel = async () => {
+    if (!activeHeader) return;
+    try {
+      await exportTransactionDetailToExcel({
+        header: activeHeader,
+        details: activeDetails
+      });
+      triggerHistoryToast(`✅ Xuất Excel phiếu ${activeHeader.HOA_DON} thành công`, 'success');
+    } catch (err) {
+      console.error('Lỗi khi xuất Excel chi tiết phiếu:', err);
+      triggerHistoryToast('❌ Không thể xuất Excel chi tiết phiếu. Vui lòng thử lại', 'error');
+    }
+  };
+
   // --- 9. RENDER GIAO DIỆN CHI TIẾT PHIẾU ---
   const renderDetailsContent = () => {
     if (!activeHeader) return null;
@@ -1190,6 +1262,17 @@ export default function TransactionHistory({
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
+            {hasPerm('history.export_detail') && (
+              <button
+                onClick={handleExportDetailToExcel}
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 rounded-lg text-xs font-bold transition-all cursor-pointer border border-emerald-200"
+                title="Xuất Excel chi tiết phiếu đang xem"
+              >
+                <FileSpreadsheet className="w-3.5 h-3.5" />
+                Xuất Excel
+              </button>
+            )}
+
             {hasPerm('history.edit') && activeHeader.TRANG_THAI !== 'Đã hủy' && (
               <>
                 <button
@@ -2009,6 +2092,202 @@ export default function TransactionHistory({
     );
   };
 
+  // --- 9.5. RENDER DANH SÁCH PHIẾU MASTER ---
+  const renderListContent = () => (
+    <div className="bento-card !p-0 overflow-hidden flex flex-col bg-white border border-slate-100 rounded-2xl shadow-xs w-full h-full">
+      <div className="bg-slate-50 px-4 py-3 border-b border-slate-100 flex items-center justify-between shrink-0">
+        <span className="text-xs font-bold text-slate-700 uppercase tracking-wide">
+          Lịch sử phiếu giao dịch ({filteredInvoices.length} phiếu)
+        </span>
+      </div>
+
+      {/* Sắp xếp nhanh */}
+      <div className="bg-slate-50/40 p-2.5 border-b border-slate-100 flex flex-wrap items-center justify-between gap-2 shrink-0">
+        <div className="flex items-center gap-1.5">
+          <span className="text-[10px] uppercase font-bold text-slate-400">Sắp xếp:</span>
+          <select
+            value={sortBy}
+            onChange={(e) => setSortBy(e.target.value as any)}
+            className="text-[10px] font-bold text-slate-700 bg-white border border-slate-200 rounded px-1.5 py-0.5 focus:outline-hidden"
+          >
+            <option value="NGAY">Ngày lập</option>
+            <option value="HOA_DON">Số phiếu</option>
+          </select>
+          <button
+            onClick={() => setSortOrder(prev => prev === 'asc' ? 'desc' : 'asc')}
+            className="text-[10px] font-bold text-slate-500 hover:text-slate-750 bg-white border border-slate-200 rounded px-1.5 py-0.5 cursor-pointer"
+            title={sortOrder === 'asc' ? 'Tăng dần' : 'Giảm dần'}
+          >
+            {sortOrder === 'asc' ? '▲' : '▼'}
+          </button>
+        </div>
+
+        {selectedInvoice && (
+          <button
+            onClick={() => setSelectedInvoice(null)}
+            className="text-[10px] font-extrabold text-blue-600 hover:text-blue-800 bg-blue-50 py-0.5 px-2.5 rounded-md transition-all cursor-pointer"
+          >
+            Thu nhỏ chi tiết ✕
+          </button>
+        )}
+      </div>
+
+      {/* TABLE RENDER (RESIZABLE & FIXED STICKY COLUMNS & GROUPING BY DATE) */}
+      <div className="overflow-y-auto max-h-[600px] bg-slate-50/25">
+        {filteredInvoices.length > 0 ? (
+          isGroupedByDate ? (
+            <div className="space-y-4 p-4">
+              {groupedInvoicesByDate.map(({ dateStr, invoices }, gIdx) => {
+                const isExpanded = expandedDates[dateStr] !== false;
+                const totalInvoices = invoices.length;
+                const totalQty = invoices.reduce((sum, h) => h.TRANG_THAI === 'Đã hủy' ? sum : sum + h.TONG_SL, 0);
+
+                // Format date to local standard DD/MM/YYYY
+                const parts = dateStr.split('-');
+                const formattedDate = parts.length === 3 ? `${parts[2]}/${parts[1]}/${parts[0]}` : dateStr;
+
+                return (
+                  <div key={`${dateStr}-${gIdx}`} className="border border-slate-150 rounded-xl overflow-hidden bg-white shadow-2xs">
+                    <button
+                      onClick={() => setExpandedDates(prev => ({ ...prev, [dateStr]: !isExpanded }))}
+                      className="w-full flex items-center justify-between bg-slate-50 hover:bg-slate-100/80 px-4 py-3 border-b border-slate-150 transition-all text-xs font-bold text-slate-700 cursor-pointer text-left"
+                    >
+                      <div className="flex items-center gap-3">
+                        <span className="text-blue-600 font-extrabold text-xs font-mono">📅 Ngày {formattedDate}</span>
+                        <span className="bg-slate-200/80 text-slate-700 px-2 py-0.5 rounded-full text-[10px]">
+                          {totalInvoices} phiếu
+                        </span>
+                        <span className="bg-emerald-50 text-emerald-700 border border-emerald-150 px-2 py-0.5 rounded-full text-[10px]">
+                          Tổng {totalQty} SP
+                        </span>
+                      </div>
+                      <span className="text-slate-400 font-extrabold text-xs">
+                        {isExpanded ? '▲ Thu gọn' : '▼ Mở rộng'}
+                      </span>
+                    </button>
+
+                    {isExpanded && (
+                      <div className="overflow-x-auto">
+                        <table 
+                          className="w-full text-left text-xs border-collapse table-layout-fixed" 
+                          style={{ minWidth: tableMinWidth }}
+                        >
+                          <thead>
+                            <tr className="bg-slate-50 border-b border-slate-200 text-slate-400 text-[10px] uppercase font-bold select-none">
+                              {columnOrder.map(colKey => {
+                                if (visibleColumns[colKey] === false) return null;
+                                const colDef = colDefinitions[colKey];
+                                if (!colDef) return null;
+                                const cell = colDef.renderHeader(
+                                  columnWidths[colKey] || colDef.defaultWidth,
+                                  (e) => handleMouseDown(colKey, e),
+                                  () => handleDoubleClick(colKey, colDef.defaultWidth)
+                                );
+                                return cell && React.isValidElement(cell) ? React.cloneElement(cell, { key: colKey }) : cell;
+                              })}
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-slate-100 bg-white">
+                            {invoices.map((h, idx) => {
+                              const isSelected = h.HOA_DON === selectedInvoice;
+                              let badgeColor = 'bg-emerald-50 text-emerald-700 border-emerald-100';
+                              if (h.LOAI === 'XUẤT') badgeColor = 'bg-rose-50 text-rose-700 border-rose-100';
+                              if (h.LOAI === 'KIỂM KHO') badgeColor = 'bg-blue-50 text-blue-700 border-blue-100';
+
+                              return (
+                                <tr
+                                  key={`${h.HOA_DON}-${idx}`}
+                                  onClick={() => {
+                                    setSelectedInvoice(h.HOA_DON);
+                                    handleCancelEditRow();
+                                    setShowAddRowForm(false);
+                                  }}
+                                  className={`cursor-pointer hover:bg-slate-50/75 transition-colors ${
+                                    isSelected ? 'bg-blue-50/40 font-bold' : ''
+                                  }`}
+                                >
+                                  {columnOrder.map(colKey => {
+                                    if (visibleColumns[colKey] === false) return null;
+                                    const colDef = colDefinitions[colKey];
+                                    if (!colDef) return null;
+                                    const cell = colDef.renderCell(h, isSelected, badgeColor);
+                                    return cell && React.isValidElement(cell) ? React.cloneElement(cell, { key: colKey }) : cell;
+                                  })}
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table 
+                className="w-full text-left text-xs border-collapse table-layout-fixed" 
+                style={{ minWidth: tableMinWidth }}
+              >
+                <thead>
+                  <tr className="bg-slate-50 border-b border-slate-200 text-slate-400 text-[10px] uppercase font-bold select-none">
+                    {columnOrder.map(colKey => {
+                      if (visibleColumns[colKey] === false) return null;
+                      const colDef = colDefinitions[colKey];
+                      if (!colDef) return null;
+                      const cell = colDef.renderHeader(
+                        columnWidths[colKey] || colDef.defaultWidth,
+                        (e) => handleMouseDown(colKey, e),
+                        () => handleDoubleClick(colKey, colDef.defaultWidth)
+                      );
+                      return cell && React.isValidElement(cell) ? React.cloneElement(cell, { key: colKey }) : cell;
+                    })}
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100 bg-white">
+                  {filteredInvoices.map((h, idx) => {
+                    const isSelected = h.HOA_DON === selectedInvoice;
+                    let badgeColor = 'bg-emerald-50 text-emerald-700 border-emerald-100';
+                    if (h.LOAI === 'XUẤT') badgeColor = 'bg-rose-50 text-rose-700 border-rose-100';
+                    if (h.LOAI === 'KIỂM KHO') badgeColor = 'bg-blue-50 text-blue-700 border-blue-100';
+
+                    return (
+                      <tr
+                        key={`${h.HOA_DON}-${idx}`}
+                        onClick={() => {
+                          setSelectedInvoice(h.HOA_DON);
+                          handleCancelEditRow();
+                          setShowAddRowForm(false);
+                        }}
+                        className={`cursor-pointer hover:bg-slate-50/75 transition-colors ${
+                          isSelected ? 'bg-blue-50/40 font-bold' : ''
+                        }`}
+                      >
+                        {columnOrder.map(colKey => {
+                          if (visibleColumns[colKey] === false) return null;
+                          const colDef = colDefinitions[colKey];
+                          if (!colDef) return null;
+                          const cell = colDef.renderCell(h, isSelected, badgeColor);
+                          return cell && React.isValidElement(cell) ? React.cloneElement(cell, { key: colKey }) : cell;
+                        })}
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )
+        ) : (
+          <div className="py-24 text-center text-xs text-slate-400 font-mono italic">
+            <FileText className="w-10 h-10 text-slate-200 mx-auto mb-2" />
+            {nhapXuats.length === 0 ? "Chưa có dữ liệu" : "Không tìm thấy dữ liệu hóa đơn nào khớp bộ lọc."}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+
   if (isEditingInvoice || isCreatingInvoice) {
     return (
       <div className="space-y-6">
@@ -2266,213 +2545,51 @@ export default function TransactionHistory({
         </div>
       )}
 
-      {/* MASTER-DETAIL SỐNG ĐỘNG */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
-        
-        {/* PANEL TRÁI: DANH SÁCH MASTER (TAKES 100% OR 67%) */}
-        <div className={`bento-card !p-0 overflow-hidden flex flex-col bg-white border border-slate-100 rounded-2xl shadow-xs transition-all duration-350 ${
-          selectedInvoice ? 'lg:col-span-8' : 'lg:col-span-12'
-        }`}>
-          <div className="bg-slate-50 px-4 py-3 border-b border-slate-100 flex items-center justify-between shrink-0">
-            <span className="text-xs font-bold text-slate-700 uppercase tracking-wide">
-              Lịch sử phiếu giao dịch ({filteredInvoices.length} phiếu)
-            </span>
-          </div>
-
-          {/* Sắp xếp nhanh */}
-          <div className="bg-slate-50/40 p-2.5 border-b border-slate-100 flex flex-wrap items-center justify-between gap-2 shrink-0">
-            <div className="flex items-center gap-1.5">
-              <span className="text-[10px] uppercase font-bold text-slate-400">Sắp xếp:</span>
-              <select
-                value={sortBy}
-                onChange={(e) => setSortBy(e.target.value as any)}
-                className="text-[10px] font-bold text-slate-700 bg-white border border-slate-200 rounded px-1.5 py-0.5 focus:outline-hidden"
+      {/* MASTER-DETAIL SỐNG ĐỘNG (RESIZABLE & COLLAPSIBLE) */}
+      <div className="w-full">
+        {/* DESKTOP LAYOUT (lg:block) */}
+        <div className="hidden lg:block w-full">
+          {!selectedInvoice ? (
+            /* Khi chưa chọn phiếu: Danh sách chiếm 100% width */
+            renderListContent()
+          ) : (
+            /* Khi đã chọn phiếu: Hiển thị song song & cho phép kéo thanh Splitter */
+            <div ref={splitContainerRef} className="flex w-full items-start gap-0 relative">
+              {/* PANEL TRÁI: DANH SÁCH */}
+              <div 
+                className="shrink-0"
+                style={{ width: `${leftWidthPercent}%`, minWidth: 250, maxWidth: '60%' }}
               >
-                <option value="NGAY">Ngày lập</option>
-                <option value="HOA_DON">Số phiếu</option>
-              </select>
-              <button
-                onClick={() => setSortOrder(prev => prev === 'asc' ? 'desc' : 'asc')}
-                className="text-[10px] font-bold text-slate-500 hover:text-slate-750 bg-white border border-slate-200 rounded px-1.5 py-0.5 cursor-pointer"
-                title={sortOrder === 'asc' ? 'Tăng dần' : 'Giảm dần'}
-              >
-                {sortOrder === 'asc' ? '▲' : '▼'}
-              </button>
-            </div>
-
-            {selectedInvoice && (
-              <button
-                onClick={() => setSelectedInvoice(null)}
-                className="text-[10px] font-extrabold text-blue-600 hover:text-blue-800 bg-blue-50 py-0.5 px-2.5 rounded-md transition-all cursor-pointer"
-              >
-                Thu nhỏ chi tiết ✕
-              </button>
-            )}
-          </div>
-
-          {/* TABLE RENDER (RESIZABLE & FIXED STICKY COLUMNS & GROUPING BY DATE) */}
-          <div className="overflow-y-auto max-h-[600px] bg-slate-50/25">
-            {filteredInvoices.length > 0 ? (
-              isGroupedByDate ? (
-                <div className="space-y-4 p-4">
-                  {groupedInvoicesByDate.map(({ dateStr, invoices }, gIdx) => {
-                    const isExpanded = expandedDates[dateStr] !== false;
-                    const totalInvoices = invoices.length;
-                    const totalQty = invoices.reduce((sum, h) => h.TRANG_THAI === 'Đã hủy' ? sum : sum + h.TONG_SL, 0);
-
-                    // Format date to local standard DD/MM/YYYY
-                    const parts = dateStr.split('-');
-                    const formattedDate = parts.length === 3 ? `${parts[2]}/${parts[1]}/${parts[0]}` : dateStr;
-
-                    return (
-                      <div key={`${dateStr}-${gIdx}`} className="border border-slate-150 rounded-xl overflow-hidden bg-white shadow-2xs">
-                        <button
-                          onClick={() => setExpandedDates(prev => ({ ...prev, [dateStr]: !isExpanded }))}
-                          className="w-full flex items-center justify-between bg-slate-50 hover:bg-slate-100/80 px-4 py-3 border-b border-slate-150 transition-all text-xs font-bold text-slate-700 cursor-pointer text-left"
-                        >
-                          <div className="flex items-center gap-3">
-                            <span className="text-blue-600 font-extrabold text-xs font-mono">📅 Ngày {formattedDate}</span>
-                            <span className="bg-slate-200/80 text-slate-700 px-2 py-0.5 rounded-full text-[10px]">
-                              {totalInvoices} phiếu
-                            </span>
-                            <span className="bg-emerald-50 text-emerald-700 border border-emerald-150 px-2 py-0.5 rounded-full text-[10px]">
-                              Tổng {totalQty} SP
-                            </span>
-                          </div>
-                          <span className="text-slate-400 font-extrabold text-xs">
-                            {isExpanded ? '▲ Thu gọn' : '▼ Mở rộng'}
-                          </span>
-                        </button>
-
-                        {isExpanded && (
-                          <div className="overflow-x-auto">
-                            <table 
-                              className="w-full text-left text-xs border-collapse table-layout-fixed" 
-                              style={{ minWidth: tableMinWidth }}
-                            >
-                              <thead>
-                                <tr className="bg-slate-50 border-b border-slate-200 text-slate-400 text-[10px] uppercase font-bold select-none">
-                                  {columnOrder.map(colKey => {
-                                    if (visibleColumns[colKey] === false) return null;
-                                    const colDef = colDefinitions[colKey];
-                                    if (!colDef) return null;
-                                    const cell = colDef.renderHeader(
-                                      columnWidths[colKey] || colDef.defaultWidth,
-                                      (e) => handleMouseDown(colKey, e),
-                                      () => handleDoubleClick(colKey, colDef.defaultWidth)
-                                    );
-                                    return cell && React.isValidElement(cell) ? React.cloneElement(cell, { key: colKey }) : cell;
-                                  })}
-                                </tr>
-                              </thead>
-                              <tbody className="divide-y divide-slate-100 bg-white">
-                                {invoices.map((h, idx) => {
-                                  const isSelected = h.HOA_DON === selectedInvoice;
-                                  let badgeColor = 'bg-emerald-50 text-emerald-700 border-emerald-100';
-                                  if (h.LOAI === 'XUẤT') badgeColor = 'bg-rose-50 text-rose-700 border-rose-100';
-                                  if (h.LOAI === 'KIỂM KHO') badgeColor = 'bg-blue-50 text-blue-700 border-blue-100';
-
-                                  return (
-                                    <tr
-                                      key={`${h.HOA_DON}-${idx}`}
-                                      onClick={() => {
-                                        setSelectedInvoice(h.HOA_DON);
-                                        handleCancelEditRow();
-                                        setShowAddRowForm(false);
-                                      }}
-                                      className={`cursor-pointer hover:bg-slate-50/75 transition-colors ${
-                                        isSelected ? 'bg-blue-50/40 font-bold' : ''
-                                      }`}
-                                    >
-                                      {columnOrder.map(colKey => {
-                                        if (visibleColumns[colKey] === false) return null;
-                                        const colDef = colDefinitions[colKey];
-                                        if (!colDef) return null;
-                                        const cell = colDef.renderCell(h, isSelected, badgeColor);
-                                        return cell && React.isValidElement(cell) ? React.cloneElement(cell, { key: colKey }) : cell;
-                                      })}
-                                    </tr>
-                                  );
-                                })}
-                              </tbody>
-                            </table>
-                          </div>
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
-              ) : (
-                <div className="overflow-x-auto">
-                  <table 
-                    className="w-full text-left text-xs border-collapse table-layout-fixed" 
-                    style={{ minWidth: tableMinWidth }}
-                  >
-                    <thead>
-                      <tr className="bg-slate-50 border-b border-slate-200 text-slate-400 text-[10px] uppercase font-bold select-none">
-                        {columnOrder.map(colKey => {
-                          if (visibleColumns[colKey] === false) return null;
-                          const colDef = colDefinitions[colKey];
-                          if (!colDef) return null;
-                          const cell = colDef.renderHeader(
-                            columnWidths[colKey] || colDef.defaultWidth,
-                            (e) => handleMouseDown(colKey, e),
-                            () => handleDoubleClick(colKey, colDef.defaultWidth)
-                          );
-                          return cell && React.isValidElement(cell) ? React.cloneElement(cell, { key: colKey }) : cell;
-                        })}
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-100 bg-white">
-                      {filteredInvoices.map((h, idx) => {
-                        const isSelected = h.HOA_DON === selectedInvoice;
-                        let badgeColor = 'bg-emerald-50 text-emerald-700 border-emerald-100';
-                        if (h.LOAI === 'XUẤT') badgeColor = 'bg-rose-50 text-rose-700 border-rose-100';
-                        if (h.LOAI === 'KIỂM KHO') badgeColor = 'bg-blue-50 text-blue-700 border-blue-100';
-
-                        return (
-                          <tr
-                            key={`${h.HOA_DON}-${idx}`}
-                            onClick={() => {
-                              setSelectedInvoice(h.HOA_DON);
-                              handleCancelEditRow();
-                              setShowAddRowForm(false);
-                            }}
-                            className={`cursor-pointer hover:bg-slate-50/75 transition-colors ${
-                              isSelected ? 'bg-blue-50/40 font-bold' : ''
-                            }`}
-                          >
-                            {columnOrder.map(colKey => {
-                              if (visibleColumns[colKey] === false) return null;
-                              const colDef = colDefinitions[colKey];
-                              if (!colDef) return null;
-                              const cell = colDef.renderCell(h, isSelected, badgeColor);
-                              return cell && React.isValidElement(cell) ? React.cloneElement(cell, { key: colKey }) : cell;
-                            })}
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                </div>
-              )
-            ) : (
-              <div className="py-24 text-center text-xs text-slate-400 font-mono italic">
-                <FileText className="w-10 h-10 text-slate-200 mx-auto mb-2" />
-                {nhapXuats.length === 0 ? "Chưa có dữ liệu" : "Không tìm thấy dữ liệu hóa đơn nào khớp bộ lọc."}
+                {renderListContent()}
               </div>
-            )}
-          </div>
+
+              {/* RESIZABLE SPLITTER BAR */}
+              <div
+                onMouseDown={handleSplitterMouseDown}
+                className="w-3.5 cursor-col-resize flex items-center justify-center shrink-0 group select-none self-stretch py-2 z-10 hover:bg-blue-100/50 active:bg-blue-200/60 transition-colors mx-0.5"
+                title="Kéo sang trái/phải để thay đổi tỷ lệ hiển thị danh sách và chi tiết"
+              >
+                <div className="w-1.5 h-12 bg-slate-300 group-hover:bg-blue-600 rounded-full transition-colors flex flex-col items-center justify-center gap-1 shadow-2xs">
+                  <div className="w-0.5 h-0.5 bg-white rounded-full" />
+                  <div className="w-0.5 h-0.5 bg-white rounded-full" />
+                  <div className="w-0.5 h-0.5 bg-white rounded-full" />
+                </div>
+              </div>
+
+              {/* PANEL PHẢI: CHI TIẾT */}
+              <div className="flex-1 min-w-0 animate-fade-in" style={{ minWidth: '40%' }}>
+                <div className="bento-card !p-0 overflow-hidden bg-white border border-slate-100 rounded-2xl shadow-xs">
+                  {renderDetailsContent()}
+                </div>
+              </div>
+            </div>
+          )}
         </div>
 
-        {/* PANEL PHẢI: CHI TIẾT CỦA PHIẾU ĐANG CHỌN (CHỈ HIỂN THỊ TRÊN DESKTOP) */}
-        {selectedInvoice && activeHeader && (
-          <div className="hidden lg:block lg:col-span-4 animate-fade-in">
-            <div className="bento-card !p-0 overflow-hidden bg-white border border-slate-100 rounded-2xl shadow-xs">
-              {renderDetailsContent()}
-            </div>
-          </div>
-        )}
+        {/* MOBILE LAYOUT (lg:hidden - GIỮ NGUYÊN LAYOUT MOBILE) */}
+        <div className="lg:hidden w-full">
+          {renderListContent()}
+        </div>
       </div>
 
       {/* OVERLAY BOTTOM DRAWER / SHEET CHO THIẾT BỊ DI ĐỘNG */}

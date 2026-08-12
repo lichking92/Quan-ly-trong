@@ -76,7 +76,8 @@ export const HIERARCHICAL_PERMISSIONS: PermissionNode[] = [
       { code: 'history.create', desc: 'Tạo phiếu nhập xuất' },
       { code: 'history.edit', desc: 'Sửa phiếu nhập xuất' },
       { code: 'history.delete', desc: 'Xóa phiếu nhập xuất' },
-      { code: 'history.export', desc: 'Xuất Excel/PDF' }
+      { code: 'history.export', desc: 'Xuất Excel danh sách phiếu' },
+      { code: 'history.export_detail', desc: 'Xuất Excel chi tiết phiếu' }
     ]
   },
   {
@@ -166,6 +167,7 @@ export const PERMISSION_PARENT_MAP: Record<string, string> = {
   'history.edit': 'history.view',
   'history.delete': 'history.view',
   'history.export': 'history.view',
+  'history.export_detail': 'history.view',
   'picking.read': 'picking.view',
   'picking.create': 'picking.view',
   'picking.delete': 'picking.view',

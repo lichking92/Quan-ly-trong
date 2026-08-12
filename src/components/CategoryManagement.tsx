@@ -101,7 +101,8 @@ const PERMISSION_MAP: Record<string, string> = {
   'history.create': 'Tạo phiếu nhập xuất',
   'history.edit': 'Sửa phiếu nhập xuất',
   'history.delete': 'Xóa phiếu nhập xuất',
-  'history.export': 'Xuất Excel/PDF',
+  'history.export': 'Xuất Excel danh sách phiếu',
+  'history.export_detail': 'Xuất Excel chi tiết phiếu',
   
   'picking.read': 'Xem Gom đơn',
   'picking.create': 'Tạo Gom đơn',

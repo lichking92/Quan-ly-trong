@@ -75,10 +75,10 @@ const containsWord = (text: string, word: string): boolean => {
 };
 
 // Helper to parse a token as a numeric diopter value
-// Supports standard decimals, shorthand formats (e.g. -050 -> -0.50, -125 -> -1.25), and PL / PLANO / PLN
+// Supports standard decimals, shorthand formats (e.g. -050 -> -0.50, -125 -> -1.25), and PL / PLANO / PLN (including -PLANO, -PLN, etc.)
 const parseDiopterValue = (token: string): number => {
   const tu = token.toUpperCase().trim();
-  if (tu === 'PL' || tu === 'PLANO' || tu === 'PLN') {
+  if (/^[+-]?(PL|PLANO|PLN)$/.test(tu)) {
     return 0.00;
   }
 
@@ -882,7 +882,7 @@ export default function OrderParser({
   // Preprocessor helpers for multi-line blocks with shared diopter lists
   const isDiopterToken = (t: string): boolean => {
     const tu = t.toUpperCase().trim();
-    if (tu === 'PL' || tu === 'PLANO' || tu === 'PLN') return true;
+    if (/^[+-]?(PL|PLANO|PLN)$/.test(tu)) return true;
     if (tu === '0' || tu === '0.00' || tu === '-0.00' || tu === '+0.00') return true;
     if (/^[+-]\d+(\.\d+)?$/.test(tu)) return true;
     if (/^[+-]\d{3,4}$/.test(tu)) return true;
@@ -912,7 +912,7 @@ export default function OrderParser({
       .replace(/[,;]/g, ' ')
       .replace(/(\d+)\s*(M|C|CẶP|CAP|MIẾNG|MIENG|X|V|PCS)(?=\s|$)/gi, '$1$2')
       .replace(/(\d)([-+])(\d)/g, '$1 $2$3')
-      .replace(/(PLANO|PLN|PL)\s*([-+]?\d)/gi, '$1 $2');
+      .replace(/([-+]?(?:PLANO|PLN|PL))\s*([-+]?\d)/gi, '$1 $2');
     return processed.split(/\s+/).filter(Boolean);
   };
 
@@ -1347,8 +1347,8 @@ export default function OrderParser({
       // Separate consecutive SPH and CYL written consecutively (e.g., -2.00-0.50 -> -2.00 -0.50)
       processedLine = processedLine.replace(/(\d)([-+])(\d)/g, '$1 $2$3');
 
-      // Ensure Plano/PL/PLN followed directly by a sign and a digit is separated by a space (e.g. Plano-4.25 -> PLANO -4.25)
-      processedLine = processedLine.replace(/(PLANO|PLN|PL)\s*([-+]?\d)/gi, '$1 $2');
+      // Ensure Plano/PL/PLN (including -PLANO, -PLN, etc.) followed directly by a sign and a digit is separated by a space (e.g. -Plano-1.00 -> -PLANO -1.00)
+      processedLine = processedLine.replace(/([-+]?(?:PLANO|PLN|PL))\s*([-+]?\d)/gi, '$1 $2');
 
       const rawTokens = processedLine.split(/\s+/).filter(Boolean);
 
@@ -1396,7 +1396,7 @@ export default function OrderParser({
       // Let's check if there are any diopter tokens in the remaining tokens
       const isDiopterToken = (t: string): boolean => {
         const tu = t.toUpperCase();
-        if (tu === 'PL' || tu === 'PLANO' || tu === 'PLN') return true;
+        if (/^[+-]?(PL|PLANO|PLN)$/.test(tu)) return true;
         if (tu === '0' || tu === '0.00' || tu === '-0.00' || tu === '+0.00') return true;
         if (/^[+-]\d+(\.\d+)?$/.test(tu)) return true;
         
