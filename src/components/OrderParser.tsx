@@ -780,13 +780,15 @@ export default function OrderParser({
       }
     });
 
-    // 4. Register explicit brand aliases (e.g., Element -> Elements, Rock -> Essilor Rock, Clear -> Zeiss Clear, Pre -> Essilor Pre)
+    // 4. Register explicit brand aliases (e.g., Element -> Elements, Rock -> Essilor Rock, Clear -> Zeiss Clear, Pre -> Essilor Pre, Hen -> HEN)
     const EXPLICIT_BRAND_ALIASES: Record<string, string> = {
       'ELEMENT': 'Elements',
       'ELEMENTS': 'Elements',
       'ROCK': 'Essilor Rock',
       'CLEAR': 'Zeiss Clear',
       'PRE': 'Essilor Pre',
+      'HEN': 'HEN',
+      'HENS': 'HEN',
     };
 
     // Ensure target brand profiles exist for explicit aliases
@@ -912,31 +914,36 @@ export default function OrderParser({
       .replace(/[,;]/g, ' ')
       .replace(/(\d+)\s*(M|C|CẶP|CAP|MIẾNG|MIENG|X|V|PCS)(?=\s|$)/gi, '$1$2')
       .replace(/(\d)([-+])(\d)/g, '$1 $2$3')
+      .replace(/(\d)\s*\/\s*([-+]?\d)/g, '$1 $2')
       .replace(/([-+]?(?:PLANO|PLN|PL))\s*([-+]?\d)/gi, '$1 $2');
     return processed.split(/\s+/).filter(Boolean);
   };
 
   const isQuantitySpecifierLine = (line: string): { quantity: number; unit: string; raw: string } | null => {
     const norm = line.toLowerCase().trim();
+    if (!norm) return null;
     
-    // Pattern 1: [Prefix: mỗi số / mỗi độ / mỗi đôi / mỗi / each] + [Quantity] + [Unit: cặp / đôi / miếng / m / c / pcs]
-    const p1 = /(?:mỗi\s+số|mỗi\s+độ|mỗi\s+đôi|moi\s+so|moi\s+do|moi\s+doi|mỗi|moi|each)\s+(\d+)\s*(cặp|cap|đôi|doi|miếng|mieng|m|c|pcs|x|v)?/i;
+    // Pattern 1: [Prefix: mỗi số / mỗi độ / mỗi đôi / mỗi / each] + [Optional : = -] + [Quantity] + [Unit: cặp / đôi / miếng / m / c / pcs]
+    const p1 = /^(?:mỗi|moi)\s*(?:số|so|độ|do|đôi|doi|loại|loai|mã|ma)?[\s:\-=]+(\d+)\s*(cặp|cap|đôi|doi|miếng|mieng|m|c|pcs|x|v)?$/i;
     
     // Pattern 2: [Quantity] + [Unit: cặp / đôi / miếng / m / c / pcs] + [Suffix: mỗi số / mỗi độ / mỗi đôi / mỗi / each / /độ / /số ...]
-    const p2 = /(\d+)\s*(cặp|cap|đôi|doi|miếng|mieng|m|c|pcs|x|v)?\s*(?:mỗi\s+số|mỗi\s+độ|mỗi\s+đôi|moi\s+so|moi\s+do|moi\s+doi|mỗi|moi|each|\/độ|\/do|\/đôi|\/số|\/do|\/so|\/doi|\/cặp|\/cap)/i;
+    const p2 = /^(\d+)\s*(cặp|cap|đôi|doi|miếng|mieng|m|c|pcs|x|v)?\s*(?:mỗi\s+số|mỗi\s+độ|mỗi\s+đôi|moi\s+so|moi\s+do|moi\s+doi|mỗi|moi|each|\/độ|\/do|\/đôi|\/số|\/so|\/doi|\/cặp|\/cap)$/i;
+
+    // Pattern 3: Standalone quantity specifier line like "1 cặp", "2 cặp", "1 đôi", "2 đôi", "1 cap", "2 cap", "1c", "2c"
+    const p3 = /^(\d+)\s*(cặp|cap|đôi|doi|c|miếng|mieng|m|pcs)$/i;
+
+    // Pattern 4: Fallback for non-anchored if user had surrounding punctuation or words
+    const p4 = /(?:mỗi|moi)\s*(?:số|so|độ|do|đôi|doi|loại|loai|mã|ma)?[\s:\-=]+(\d+)\s*(cặp|cap|đôi|doi|miếng|mieng|m|c|pcs|x|v)?/i;
     
-    let match = norm.match(p1);
-    if (!match) {
-      match = norm.match(p2);
-    }
+    let match = norm.match(p1) || norm.match(p2) || norm.match(p3) || norm.match(p4);
     
     if (match) {
       const qty = parseInt(match[1], 10);
-      const suffix = (match[2] || 'miếng').toLowerCase();
+      const suffix = (match[2] || 'cặp').toLowerCase();
       let finalQty = qty;
       let unit = 'miếng';
       
-      if (suffix === 'cặp' || suffix === 'cap' || suffix === 'đôi' || suffix === 'doi' || suffix === 'c') {
+      if (['cặp', 'cap', 'đôi', 'doi', 'c'].includes(suffix)) {
         finalQty = qty * 2;
       }
       return { quantity: finalQty, unit, raw: match[0] };
@@ -991,69 +998,97 @@ export default function OrderParser({
     const lines = text.split('\n');
     const outputLines: string[] = [];
     
-    let i = 0;
-    while (i < lines.length) {
-      const currentLine = lines[i];
-      const currentLineTrimmed = currentLine.trim();
-      
-      if (!currentLineTrimmed) {
-        outputLines.push(currentLine);
-        i++;
+    let activeHeader = '';
+    let pendingDiopterLines: string[] = [];
+
+    const flushPending = (qtySpec?: { quantity: number; unit: string; raw: string } | null) => {
+      if (pendingDiopterLines.length === 0) return;
+
+      pendingDiopterLines.forEach(dLine => {
+        const prefix = activeHeader ? `${activeHeader} ` : '';
+        if (qtySpec) {
+          outputLines.push(`${prefix}${dLine} ${qtySpec.quantity}m`);
+        } else {
+          outputLines.push(`${prefix}${dLine}`);
+        }
+      });
+
+      pendingDiopterLines = [];
+    };
+
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      const trimmed = line.trim();
+
+      if (!trimmed) {
+        if (pendingDiopterLines.length === 0) {
+          outputLines.push(line);
+        }
         continue;
       }
-      
-      const isHeader = hasHeaderInfo(currentLineTrimmed, uniqueBrands, uniqueChietXuats, uniqueFeatures) &&
-                       !getLineTokens(currentLineTrimmed).some(isDiopterToken) &&
-                       !isQuantitySpecifierLine(currentLineTrimmed);
-                       
-      if (isHeader) {
-        let j = i + 1;
-        const diopterLinesCollected: string[] = [];
-        let quantitySpecifier: { quantity: number; unit: string; raw: string } | null = null;
-        let foundEnd = false;
-        
-        while (j < lines.length) {
-          const nextLine = lines[j];
-          const nextLineTrimmed = nextLine.trim();
-          
-          if (!nextLineTrimmed) {
-            j++;
-            continue;
-          }
-          
-          const qSpec = isQuantitySpecifierLine(nextLineTrimmed);
-          if (qSpec) {
-            quantitySpecifier = qSpec;
-            foundEnd = true;
-            break;
-          }
-          
-          const isDiopterOnly = getLineTokens(nextLineTrimmed).some(isDiopterToken) &&
-                                !hasHeaderInfo(nextLineTrimmed, uniqueBrands, uniqueChietXuats, uniqueFeatures);
-                                
-          if (isDiopterOnly) {
-            diopterLinesCollected.push(nextLineTrimmed);
-            j++;
-          } else {
-            break;
-          }
-        }
-        
-        if (foundEnd && quantitySpecifier && diopterLinesCollected.length > 0) {
-          console.log(`[OrderParser Preprocessor] Found multi-line block from line ${i + 1} to ${j + 1}`);
-          diopterLinesCollected.forEach(d => {
-            const expandedLine = `${currentLineTrimmed} ${d} ${quantitySpecifier!.quantity}m`;
-            outputLines.push(expandedLine);
-          });
-          i = j + 1;
-          continue;
-        }
+
+      // Phân cách dòng (ví dụ: ---, ===, ***)
+      if (/^[-_=+*~#\s]{2,}$/.test(trimmed)) {
+        flushPending(null);
+        outputLines.push(trimmed);
+        continue;
       }
-      
-      outputLines.push(currentLine);
-      i++;
+
+      // 1. Kiểm tra nếu dòng là Marker chỉ định số lượng ("Mỗi số 1 cặp", "Mỗi số 2 cặp", "1 cặp mỗi số", v.v.)
+      const qSpec = isQuantitySpecifierLine(trimmed);
+      if (qSpec) {
+        console.log(`[OrderParser Preprocessor] Found quantity marker: "${trimmed}" -> applying ${qSpec.quantity} miếng to ${pendingDiopterLines.length} pending lines`);
+        // Áp dụng số lượng này cho các dòng số ngay phía trên nó trong cùng nhóm
+        flushPending(qSpec);
+        // Marker line đã được áp dụng, không đẩy vào output
+        continue;
+      }
+
+      // 2. Kiểm tra nếu dòng là Header thuần túy (chứa thương hiệu/chiết xuất/tính năng và KHÔNG chứa thông số độ)
+      const lineTokens = getLineTokens(trimmed);
+      const containsDiopter = lineTokens.some(isDiopterToken);
+      const isHeader = hasHeaderInfo(trimmed, uniqueBrands, uniqueChietXuats, uniqueFeatures) && !containsDiopter;
+
+      if (isHeader) {
+        console.log(`[OrderParser Preprocessor] Found header line: "${trimmed}". Previous pending: ${pendingDiopterLines.length}`);
+        // Nếu có các dòng độ trước đó chưa nhận marker thì flush với default
+        flushPending(null);
+        // Cập nhật activeHeader cho nhóm hiện tại và tiếp theo
+        activeHeader = trimmed;
+        continue;
+      }
+
+      // 3. Kiểm tra nếu dòng chứa thông số độ (diopter line)
+      if (containsDiopter) {
+        // Kiểm tra xem dòng này đã có số lượng riêng của nó chưa (ví dụ: "-0.50-0.00 2c", "hen 1.56 -0.50 4m")
+        const hasExplicitQty = lineTokens.some(t => /^(\d+)\s*(M|C|CẶP|CAP|MIẾNG|MIENG|X|V|PCS)$/i.test(t));
+        const hasOwnHeader = hasHeaderInfo(trimmed, uniqueBrands, uniqueChietXuats, uniqueFeatures);
+
+        if (hasExplicitQty || hasOwnHeader) {
+          // Dòng đã có số lượng riêng hoặc tự mang header
+          flushPending(null);
+          const prefix = (!hasOwnHeader && activeHeader) ? `${activeHeader} ` : '';
+          outputLines.push(`${prefix}${trimmed}`);
+        } else {
+          // Dòng độ thông thường: gom vào pending chờ marker ("Mỗi số X cặp")
+          pendingDiopterLines.push(trimmed);
+        }
+        continue;
+      }
+
+      // 4. Dòng text khác (không chứa độ, không phải header, không phải marker)
+      flushPending(null);
+      outputLines.push(trimmed);
     }
-    
+
+    // Flush các dòng pending còn lại ở cuối tin nhắn nếu không có marker kết thúc
+    flushPending(null);
+
+    // Fallback: nếu outputLines rỗng nhưng văn bản gốc có nội dung, trả về văn bản gốc
+    if (outputLines.filter(l => l.trim()).length === 0 && text.trim()) {
+      return text;
+    }
+
     return outputLines.join('\n');
   };
 
