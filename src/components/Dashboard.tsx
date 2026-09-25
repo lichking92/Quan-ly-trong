@@ -59,6 +59,7 @@ import {
   ReferenceArea
 } from 'recharts';
 import { SanPham, NhapXuat, NhapXuatCT, getInvoiceCategory } from '../types';
+import { cleanSKU } from '../data/mockData';
 import { normalizeChietXuat, compareChietXuat } from '../utils/chietXuatHelper';
 import TemplateExportManager from './TemplateExportManager';
 import { monitor } from '../utils/debugMonitor';
@@ -97,6 +98,41 @@ interface DashboardProps {
     fromDate: string;
     toDate: string;
   }) => void;
+}
+
+// --- PHÂN LOẠI CHÍNH XÁC LOẠI PHIẾU (KHÔNG DÙNG startsWith/includes/contains) ---
+export function getExactInvoiceCode(hoaDon?: string, loai?: string): 'PX' | 'PN' | 'PXK' | 'PNK' | 'PKK' | 'OTHER' {
+  const hd = (hoaDon || '').toUpperCase().trim();
+  const l = (loai || '').toUpperCase().trim();
+
+  // Kiểm tra tiền tố kiểm kho chính xác (bắt đầu bằng PXK, PNK, PKK)
+  if (/^PXK(\d+|_|$)/i.test(hd) || hd.slice(0, 3) === 'PXK') return 'PXK';
+  if (/^PNK(\d+|_|$)/i.test(hd) || hd.slice(0, 3) === 'PNK') return 'PNK';
+  if (/^PKK(\d+|_|$)/i.test(hd) || hd.slice(0, 3) === 'PKK') return 'PKK';
+
+  // Kiểm tra phiếu xuất thông thường PX (loại trừ tuyệt đối PXK)
+  if ((/^PX(\d+|_|$)/i.test(hd) || hd.slice(0, 2) === 'PX') && hd.slice(0, 3) !== 'PXK') return 'PX';
+
+  // Kiểm tra phiếu nhập thông thường PN (loại trừ tuyệt đối PNK)
+  if ((/^PN(\d+|_|$)/i.test(hd) || hd.slice(0, 2) === 'PN') && hd.slice(0, 3) !== 'PNK') return 'PN';
+
+  // Fallback theo trường LOAI
+  if (l === 'KIỂM KHO') return 'PKK';
+  if (l === 'NHẬP') return 'PN';
+  if (l === 'XUẤT') return 'PX';
+
+  return 'OTHER';
+}
+
+export function getTargetCategoryFromFilter(filterValue: string): 'ALL' | 'PX' | 'PN' | 'PXK' | 'PNK' | 'PKK' {
+  const v = (filterValue || '').trim().toLowerCase();
+  if (v === 'tất cả' || v === 'all' || !v) return 'ALL';
+  if (v === 'phiếu xuất' || v === 'px') return 'PX';
+  if (v === 'phiếu nhập' || v === 'pn') return 'PN';
+  if (v === 'phiếu xuất kiểm kho' || v === 'phiếu xuất kho' || v === 'pxk') return 'PXK';
+  if (v === 'phiếu nhập kiểm kho' || v === 'phiếu nhập kho' || v === 'pnk') return 'PNK';
+  if (v === 'phiếu kiểm kho' || v === 'pkk') return 'PKK';
+  return 'ALL';
 }
 
 // --- HEATMAP HELPER FUNCTIONS ---
@@ -544,9 +580,9 @@ export default function Dashboard({
   const [brandStockZoom, setBrandStockZoom] = useState<number>(1); // Scale multiplier (1 = normal, 1.3 = zoom in, 0.7 = zoom out)
   const [brandStockLimit, setBrandStockLimit] = useState<number>(10); // Number of sliced brands to show
 
-  // Chart 3: topXuat
-  const [topXuatZoom, setTopXuatZoom] = useState<{ start: number; end: number } | null>(null);
-  const [topXuatRefArea, setTopXuatRefArea] = useState<{ left: number | null; right: number | null }>({ left: null, right: null });
+  // Chart 3: brandRatio (Pie / Donut: Zoom level maps to scale, limit is sliced segment count)
+  const [brandRatioZoom, setBrandRatioZoom] = useState<number>(1);
+  const [brandRatioLimit, setBrandRatioLimit] = useState<number>(10);
 
   // Chart 4: branchExport
   const [branchExportZoom, setBranchExportZoom] = useState<{ start: number; end: number } | null>(null);
@@ -667,13 +703,29 @@ export default function Dashboard({
   };
 
   // --- 3. LỌC DỮ LIỆU THEO ĐIỀU KIỆN ---
+  // Map b_nhapxuat theo HOA_DON để tra cứu O(1)
+  const headerMap = useMemo(() => {
+    const map = new Map<string, NhapXuat>();
+    nhapXuats.forEach(h => {
+      map.set(h.HOA_DON, h);
+    });
+    return map;
+  }, [nhapXuats]);
+
+  // Map b_sanpham theo SKU để tra cứu thông tin sản phẩm (bao gồm THUONG_HIEU)
+  const productBySkuMap = useMemo(() => {
+    const map = new Map<string, SanPham>();
+    sanPhams.forEach(p => {
+      if (p.SKU) {
+        map.set(p.SKU.trim().toUpperCase(), p);
+        map.set(cleanSKU(p.SKU).toUpperCase(), p);
+      }
+    });
+    return map;
+  }, [sanPhams]);
+
   // Đồng bộ và chuẩn hóa thông tin LOAI và NGAY của chi tiết phiếu từ header gốc để đảm bảo tính nhất quán dữ liệu tuyệt đối
   const normalizedNhapXuatCTs = useMemo(() => {
-    const headerMap = new Map<string, NhapXuat>();
-    nhapXuats.forEach(h => {
-      headerMap.set(h.HOA_DON, h);
-    });
-
     return nhapXuatCTs.map(d => {
       const parent = headerMap.get(d.HOA_DON);
       return {
@@ -682,7 +734,7 @@ export default function Dashboard({
         NGAY: parent ? parent.NGAY : (d.NGAY || '')
       };
     });
-  }, [nhapXuatCTs, nhapXuats]);
+  }, [nhapXuatCTs, headerMap]);
 
   // Lọc phiếu theo Chi nhánh, Khoảng thời gian, Loại phiếu, Nhân viên
   const filteredHeadersBase = useMemo(() => {
@@ -691,20 +743,13 @@ export default function Dashboard({
       const matchBranch = selectedBranch === 'Tất cả' || h.CHI_NHANH === selectedBranch;
       const matchDate = h.NGAY >= startDate && h.NGAY <= endDate;
       
-      // Lọc theo Loại phiếu
+      // Lọc theo Loại phiếu (So sánh chính xác, không dùng startsWith/includes/contains)
       let matchType = true;
       if (selectedTypeFilter !== 'Tất cả') {
-        const cat = getInvoiceCategory(h.HOA_DON, h.LOAI);
-        if (selectedTypeFilter === 'Phiếu nhập') {
-          matchType = cat === 'PN';
-        } else if (selectedTypeFilter === 'Phiếu xuất') {
-          matchType = cat === 'PX';
-        } else if (selectedTypeFilter === 'Phiếu kiểm kho') {
-          matchType = cat === 'PKK';
-        } else if (selectedTypeFilter === 'Phiếu nhập kho') {
-          matchType = cat === 'PNK';
-        } else if (selectedTypeFilter === 'Phiếu xuất kho') {
-          matchType = cat === 'PXK';
+        const targetCat = getTargetCategoryFromFilter(selectedTypeFilter);
+        if (targetCat !== 'ALL') {
+          const invoiceCode = getExactInvoiceCode(h.HOA_DON, h.LOAI);
+          matchType = (invoiceCode === targetCat);
         }
       }
 
@@ -806,29 +851,64 @@ export default function Dashboard({
     };
   }, [sanPhams, filteredHeaders, filteredDetails]);
 
-  // --- 5. BIỂU ĐỒ 1: TOP 5 SKU XUẤT NHIỀU NHẤT ---
-  const topXuatData = useMemo(() => {
-    const mapXuat: Record<string, { sku: string; qty: number; name: string }> = {};
+  // --- 5. BIỂU ĐỒ: TỶ LỆ THEO THƯƠNG HIỆU (DONUT / PIE CHART) ---
+  const brandRatioData = useMemo(() => {
+    const brandMap: Record<string, number> = {};
+    const targetCat = getTargetCategoryFromFilter(selectedTypeFilter);
 
     filteredDetails.forEach(d => {
-      const cat = getInvoiceCategory(d.HOA_DON, d.LOAI);
-      if (cat === 'PX' || cat === 'PXK' || d.LOAI === 'XUẤT') {
-        if (!mapXuat[d.SKU]) {
-          mapXuat[d.SKU] = { sku: d.SKU, qty: 0, name: d.TEN_SP };
+      const parent = headerMap.get(d.HOA_DON);
+      const invoiceCode = getExactInvoiceCode(d.HOA_DON, parent ? parent.LOAI : d.LOAI);
+
+      // Bắt buộc áp dụng bộ lọc Loại phiếu:
+      // Loại phiếu = Phiếu Xuất => Chỉ lấy dữ liệu PX
+      // Loại phiếu = Phiếu Nhập => Chỉ lấy dữ liệu PN
+      // Loại phiếu = Phiếu Xuất Kiểm Kho => Chỉ lấy dữ liệu PXK
+      // Loại phiếu = Phiếu Nhập Kiểm Kho => Chỉ lấy dữ liệu PNK
+      // Loại phiếu = Phiếu Kiểm Kho => Chỉ lấy dữ liệu PKK
+      // Tuyệt đối không dùng startsWith/includes/contains, phân biệt hoàn toàn PX ≠ PXK, PN ≠ PNK
+      if (targetCat !== 'ALL') {
+        if (invoiceCode !== targetCat) {
+          return;
         }
-        mapXuat[d.SKU].qty += d.SO_LUONG;
       }
+
+      // Join b_sanpham theo SKU để lấy THUONG_HIEU nếu trong chi tiết chưa có
+      const cleanKey = cleanSKU(d.SKU || '').toUpperCase();
+      const rawKey = (d.SKU || '').trim().toUpperCase();
+      const prod = productBySkuMap.get(cleanKey) || productBySkuMap.get(rawKey);
+
+      const brandName = (d.THUONG_HIEU || prod?.THUONG_HIEU || 'Khác').trim() || 'Khác';
+      const qty = Number(d.SO_LUONG) || 0;
+
+      brandMap[brandName] = (brandMap[brandName] || 0) + qty;
     });
 
-    return Object.values(mapXuat)
-      .sort((a, b) => b.qty - a.qty)
-      .slice(0, 5)
-      .map(item => ({
-        name: item.sku.split(' ').slice(0, 3).join(' '), 
-        fullSKU: item.sku,
-        'Số lượng xuất': item.qty
-      }));
-  }, [filteredDetails]);
+    const totalQty = Object.values(brandMap).reduce((sum, q) => sum + q, 0);
+    if (totalQty === 0) return [];
+
+    // Tính tỷ lệ % của từng thương hiệu trên tổng số lượng
+    // Sắp xếp giảm dần theo SUM(SO_LUONG): Thương hiệu lớn nhất đứng đầu
+    return Object.entries(brandMap)
+      .map(([brand, qty]) => {
+        const pct = (qty / totalQty) * 100;
+        return {
+          name: brand,
+          value: qty,
+          percent: Number(pct.toFixed(1)),
+          percentFormatted: `${pct.toFixed(1)}%`
+        };
+      })
+      .sort((a, b) => b.value - a.value);
+  }, [filteredDetails, headerMap, selectedTypeFilter, productBySkuMap]);
+
+  const zoomBrandRatioData = useMemo(() => {
+    return brandRatioData.slice(0, brandRatioLimit);
+  }, [brandRatioData, brandRatioLimit]);
+
+  const totalBrandRatioQty = useMemo(() => {
+    return brandRatioData.reduce((sum, item) => sum + item.value, 0);
+  }, [brandRatioData]);
 
   // --- 6. BIỂU ĐỒ 2: TỶ TRỌNG NHẬP XUẤT (PIE CHART) ---
   const ratioData = useMemo(() => {
@@ -910,11 +990,6 @@ export default function Dashboard({
   const zoomBrandStockData = useMemo(() => {
     return brandStockData.slice(0, brandStockLimit);
   }, [brandStockData, brandStockLimit]);
-
-  const zoomTopXuatData = useMemo(() => {
-    if (!topXuatZoom) return topXuatData;
-    return topXuatData.slice(topXuatZoom.start, topXuatZoom.end + 1);
-  }, [topXuatData, topXuatZoom]);
 
   const zoomBranchData = useMemo(() => {
     if (!branchExportZoom) return branchData;
@@ -1431,13 +1506,18 @@ export default function Dashboard({
       zoomState?: any;
       setZoomState?: (val: any) => void;
       refAreaState?: any;
+      onZoomInPie?: () => void;
+      onZoomOutPie?: () => void;
+      onResetPie?: () => void;
     }
   ) => {
     const isCollapsed = collapsedCharts[chartId] || false;
     const isFullscreen = fullscreenChart === chartId;
 
     const handleZoomIn = () => {
-      if (options?.isPie) {
+      if (options?.onZoomInPie) {
+        options.onZoomInPie();
+      } else if (options?.isPie) {
         setBrandStockLimit(prev => Math.max(3, prev - 2));
         setBrandStockZoom(prev => Math.min(1.5, prev + 0.15));
       } else if (options?.setZoomState && options?.dataLength) {
@@ -1456,7 +1536,9 @@ export default function Dashboard({
     };
 
     const handleZoomOut = () => {
-      if (options?.isPie) {
+      if (options?.onZoomOutPie) {
+        options.onZoomOutPie();
+      } else if (options?.isPie) {
         setBrandStockLimit(prev => Math.min(brandStockData.length, prev + 2));
         setBrandStockZoom(prev => Math.max(0.6, prev - 0.15));
       } else if (options?.setZoomState && options?.dataLength) {
@@ -1477,7 +1559,9 @@ export default function Dashboard({
     };
 
     const handleReset = () => {
-      if (options?.isPie) {
+      if (options?.onResetPie) {
+        options.onResetPie();
+      } else if (options?.isPie) {
         setBrandStockLimit(10);
         setBrandStockZoom(1);
       } else if (options?.setZoomState) {
@@ -1737,11 +1821,11 @@ export default function Dashboard({
               className="w-full text-xs font-semibold text-slate-700 bg-slate-50 border border-slate-150 rounded-lg py-1.5 px-2 focus:outline-hidden"
             >
               <option value="Tất cả">Tất cả loại phiếu</option>
-              <option value="Phiếu nhập">Phiếu nhập</option>
-              <option value="Phiếu xuất">Phiếu xuất</option>
-              <option value="Phiếu kiểm kho">Phiếu kiểm kho</option>
-              <option value="Phiếu nhập kho">Phiếu nhập kho</option>
-              <option value="Phiếu xuất kho">Phiếu xuất kho</option>
+              <option value="Phiếu xuất">Phiếu Xuất (PX)</option>
+              <option value="Phiếu nhập">Phiếu Nhập (PN)</option>
+              <option value="Phiếu xuất kiểm kho">Phiếu Xuất Kiểm Kho (PXK)</option>
+              <option value="Phiếu nhập kiểm kho">Phiếu Nhập Kiểm Kho (PNK)</option>
+              <option value="Phiếu kiểm kho">Phiếu Kiểm Kho (PKK)</option>
             </select>
           </div>
 
@@ -2051,57 +2135,122 @@ export default function Dashboard({
           </div>
         )}
 
-        {/* Biểu đồ 2: Top 5 SKU Xuất Nhiều Nhất (Bar Chart) */}
-        {(!fullscreenChart || fullscreenChart === 'topXuat') && (
-          <div className={`bento-card !p-5 ${fullscreenChart === 'topXuat' ? 'fixed inset-4 z-50 bg-white/95 backdrop-blur-md shadow-2xl flex flex-col justify-between' : ''}`}>
+        {/* Biểu đồ 2: Tỷ Lệ Theo Thương Hiệu (Donut / Pie Chart) */}
+        {(!fullscreenChart || fullscreenChart === 'brandRatio') && (
+          <div className={`bento-card !p-5 ${fullscreenChart === 'brandRatio' ? 'fixed inset-4 z-50 bg-white/95 backdrop-blur-md shadow-2xl flex flex-col justify-between' : ''}`}>
             <h3 className="font-sans font-bold text-slate-800 text-xs uppercase border-b border-slate-50 pb-2 mb-4 flex justify-between items-center">
               <div className="flex items-center gap-2">
-                <span>Top 5 SKU Xuất Kho Nhiều Nhất</span>
-                {topXuatZoom && (
+                <span>Tỷ Lệ Theo Thương Hiệu</span>
+                {selectedTypeFilter !== 'Tất cả' && (
+                  <span className="text-[9px] font-mono px-1.5 py-0.5 bg-indigo-50 text-indigo-700 font-semibold rounded border border-indigo-100">
+                    {selectedTypeFilter}
+                  </span>
+                )}
+                {brandRatioLimit < brandRatioData.length && (
                   <span className="text-[9px] font-mono px-1.5 py-0.5 bg-blue-50 text-blue-600 rounded">
-                    Đã thu phóng
+                    Top {brandRatioLimit}
                   </span>
                 )}
               </div>
-              {renderChartControls('topXuat', { 
-                dataLength: topXuatData.length, 
-                zoomState: topXuatZoom, 
-                setZoomState: setTopXuatZoom, 
-                refAreaState: topXuatRefArea 
+              {renderChartControls('brandRatio', { 
+                isPie: true,
+                onZoomInPie: () => {
+                  setBrandRatioLimit(prev => Math.max(3, prev - 2));
+                  setBrandRatioZoom(prev => Math.min(1.5, prev + 0.15));
+                },
+                onZoomOutPie: () => {
+                  setBrandRatioLimit(prev => Math.min(brandRatioData.length, prev + 2));
+                  setBrandRatioZoom(prev => Math.max(0.6, prev - 0.15));
+                },
+                onResetPie: () => {
+                  setBrandRatioLimit(10);
+                  setBrandRatioZoom(1);
+                }
               })}
             </h3>
             
-            {!collapsedCharts['topXuat'] && (
-              <div className={`w-full ${fullscreenChart === 'topXuat' ? 'flex-1 h-[calc(100%-60px)] min-h-[300px]' : 'h-80 min-h-[300px]'}`}>
-                {zoomTopXuatData.length > 0 && isMounted ? (
-                  <SafeResponsiveContainer height={fullscreenChart === 'topXuat' ? 'calc(100% - 20px)' : 300} minHeight={250}>
-                    <BarChart 
-                      data={zoomTopXuatData} 
-                      margin={{ top: 10, right: 10, left: -20, bottom: 0 }}
-                      onMouseDown={(e) => handleChartMouseDown(e, (val) => setTopXuatRefArea(val))}
-                      onMouseMove={(e) => handleChartMouseMove(e, topXuatRefArea, (val) => setTopXuatRefArea(val))}
-                      onMouseUp={() => handleChartMouseUp(topXuatRefArea, (val) => setTopXuatRefArea(val), topXuatZoom, setTopXuatZoom, topXuatData.length)}
-                    >
-                      <XAxis dataKey="name" stroke="#94a3b8" fontSize={9} tickLine={false} />
-                      <YAxis stroke="#94a3b8" fontSize={11} tickLine={false} />
-                      <Tooltip contentStyle={{ borderRadius: 8, border: '1px solid #f1f5f9', fontSize: 11 }} />
-                      <Bar dataKey="Số lượng xuất" fill="#2563eb" radius={[6, 6, 0, 0]} maxBarSize={40}>
-                        {zoomTopXuatData.map((entry, index) => (
-                          <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
-                        ))}
-                      </Bar>
-                      {topXuatRefArea.left !== null && topXuatRefArea.right !== null && (
-                        <ReferenceArea 
-                          x1={zoomTopXuatData[Number(topXuatRefArea.left)]?.name} 
-                          x2={zoomTopXuatData[Number(topXuatRefArea.right)]?.name} 
-                          {...({ fill: '#3b82f6', fillOpacity: 0.15 } as any)}
-                        />
-                      )}
-                    </BarChart>
-                  </SafeResponsiveContainer>
+            {!collapsedCharts['brandRatio'] && (
+              <div className={`flex flex-col sm:flex-row items-center justify-around gap-4 ${fullscreenChart === 'brandRatio' ? 'flex-1 h-[calc(100%-60px)] min-h-[300px]' : 'h-80 min-h-[300px]'}`}>
+                {zoomBrandRatioData.length > 0 && isMounted ? (
+                  <>
+                    <div className={`${fullscreenChart === 'brandRatio' ? 'h-72 w-72 min-h-[288px] min-w-[288px]' : 'h-44 w-44 min-h-[176px] min-w-[176px]'} transition-all duration-300 relative shrink-0`}>
+                      <SafeResponsiveContainer height={fullscreenChart === 'brandRatio' ? 288 : 176} minHeight={176}>
+                        <PieChart>
+                          <Pie
+                            data={zoomBrandRatioData}
+                            cx="50%"
+                            cy="50%"
+                            innerRadius={50 * brandRatioZoom * (fullscreenChart === 'brandRatio' ? 1.5 : 1)}
+                            outerRadius={75 * brandRatioZoom * (fullscreenChart === 'brandRatio' ? 1.5 : 1)}
+                            paddingAngle={3}
+                            dataKey="value"
+                            nameKey="name"
+                          >
+                            {zoomBrandRatioData.map((entry, index) => (
+                              <Cell key={`cell-brand-ratio-${index}`} fill={COLORS[index % COLORS.length]} />
+                            ))}
+                          </Pie>
+                          <Tooltip content={({ active, payload }: any) => {
+                            if (active && payload && payload.length) {
+                              const data = payload[0].payload;
+                              const color = payload[0].fill || '#2563eb';
+                              return (
+                                <div className="bg-white/95 backdrop-blur-md p-3 rounded-xl shadow-xl border border-slate-150 text-xs z-50 min-w-[130px]">
+                                  <div className="font-bold text-slate-800 text-xs mb-2 flex items-center gap-1.5 pb-1 border-b border-slate-100">
+                                    <span className="w-2.5 h-2.5 rounded-full inline-block shrink-0" style={{ backgroundColor: color }} />
+                                    <span className="truncate">{data.name}</span>
+                                  </div>
+                                  <div className="space-y-1 font-mono text-[11px]">
+                                    <div className="flex items-center justify-between gap-3 text-slate-600">
+                                      <span className="text-slate-400 font-medium">SL:</span>
+                                      <span className="font-bold text-slate-800">{Number(data.value).toLocaleString('vi-VN')}</span>
+                                    </div>
+                                    <div className="flex items-center justify-between gap-3 text-slate-600">
+                                      <span className="text-slate-400 font-medium">Tỷ lệ:</span>
+                                      <span className="font-bold text-indigo-600">{data.percentFormatted}</span>
+                                    </div>
+                                  </div>
+                                </div>
+                              );
+                            }
+                            return null;
+                          }} />
+                        </PieChart>
+                      </SafeResponsiveContainer>
+                      {/* Nhãn chính giữa Donut: Hiển thị Tổng SL */}
+                      <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none text-center">
+                        <span className="text-[10px] text-slate-400 font-semibold uppercase tracking-wider">Tổng SL</span>
+                        <span className="text-xs font-bold font-mono text-slate-800">
+                          {totalBrandRatioQty.toLocaleString('vi-VN')}
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* Danh sách phân bổ chi tiết: Tên thương hiệu, % và Tổng số lượng */}
+                    <div className="space-y-1.5 overflow-y-auto max-h-56 pr-1.5 flex-1 w-full">
+                      {zoomBrandRatioData.map((item, index) => (
+                        <div key={item.name} className="flex items-center justify-between text-xs py-1 px-1.5 rounded-lg hover:bg-slate-50 transition-colors">
+                          <div className="flex items-center gap-2 min-w-0 pr-2">
+                            <span className="w-2.5 h-2.5 rounded-full block shrink-0" style={{ backgroundColor: COLORS[index % COLORS.length] }} />
+                            <span className="text-slate-700 font-semibold truncate max-w-[120px]" title={item.name}>
+                              {item.name}
+                            </span>
+                          </div>
+                          <div className="flex items-center gap-3 shrink-0">
+                            <span className="font-mono text-slate-500 text-[11px]" title="Tổng số lượng">
+                              {Number(item.value).toLocaleString('vi-VN')}
+                            </span>
+                            <span className="font-mono font-bold text-indigo-600 text-xs w-12 text-right" title="Tỷ lệ %">
+                              {item.percentFormatted}
+                            </span>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </>
                 ) : (
                   <div className="h-full flex items-center justify-center text-xs text-slate-400 font-mono">
-                    Chưa có dữ liệu xuất kho phát sinh trong kỳ lọc
+                    Không có dữ liệu thương hiệu phát sinh trong kỳ lọc
                   </div>
                 )}
               </div>

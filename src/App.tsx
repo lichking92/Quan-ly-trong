@@ -154,7 +154,7 @@ const DEFAULT_ROLES: Role[] = [
     TEN_ROLE: 'Quản trị viên (Admin)',
     PERMISSIONS: [
       'dashboard.view', 'dashboard.read', 'dashboard.export',
-      'ordercheck.view', 'ordercheck.read', 'ordercheck.analyze', 'ordercheck.save', 'ordercheck.export',
+      'ordercheck.view', 'ordercheck.read', 'ordercheck.analyze', 'ordercheck.save', 'ordercheck.export', 'kiemtra_don_tao_phieu_xuat', 'kiemtra_don_tao_phieu_nhap',
       'picking_xuat.view', 'picking_xuat.read', 'picking_xuat.create', 'picking_xuat.edit', 'picking_xuat.delete', 'picking_xuat.export',
       'picking_nhap.view', 'picking_nhap.read', 'picking_nhap.create', 'picking_nhap.edit', 'picking_nhap.delete',
       'history.view', 'history.read', 'history.read_all', 'history.create', 'history.edit', 'history.delete', 'history.export', 'history.export_detail',
@@ -173,7 +173,7 @@ const DEFAULT_ROLES: Role[] = [
     TEN_ROLE: 'Quản lý kho (Kho/Manager)',
     PERMISSIONS: [
       'dashboard.view', 'dashboard.read', 'dashboard.export',
-      'ordercheck.view', 'ordercheck.read', 'ordercheck.analyze', 'ordercheck.save',
+      'ordercheck.view', 'ordercheck.read', 'ordercheck.analyze', 'ordercheck.save', 'kiemtra_don_tao_phieu_xuat', 'kiemtra_don_tao_phieu_nhap',
       'picking_xuat.view', 'picking_xuat.read', 'picking_xuat.create', 'picking_xuat.export',
       'picking_nhap.view', 'picking_nhap.read', 'picking_nhap.create',
       'history.view', 'history.read', 'history.read_all', 'history.create', 'history.edit', 'history.export', 'history.export_detail',
@@ -2400,6 +2400,18 @@ export default function App() {
     const isSessionValid = await verifySession();
     if (!isSessionValid) return false;
     if (!(await ensureOnline())) return false;
+
+    // Backend-level security check for module permissions
+    if ((header as any).REQUIRED_PERMISSION && !hasPermission((header as any).REQUIRED_PERMISSION)) {
+      setSuccessToast({
+        title: 'Từ chối quyền',
+        message: `Bạn không có quyền thực hiện thao tác này (yêu cầu quyền: ${(header as any).REQUIRED_PERMISSION})`,
+        type: 'error',
+        id: `perm-err-${Date.now()}`
+      });
+      return false;
+    }
+
     let prefix = header.LOAI === 'NHẬP' ? 'PN' : 'PX';
     if (header.HOA_DON) {
       if (header.HOA_DON.startsWith('PNK')) prefix = 'PNK';
@@ -3826,8 +3838,13 @@ export default function App() {
                       setPrefilledGomDonId(gomDonId || null);
                       setActiveTab('TRANSACTION_XUAT');
                     }}
+                    onCreateNhapPhieu={(items) => {
+                      setPrefilledCartItems(items);
+                      setActiveTab('TRANSACTION_NHAP');
+                    }}
                     currentUser={currentUser}
                     hasPermission={hasPermission}
+                    onSaveTransaction={handleSaveTransaction}
                     onSaveMultipleTransactions={handleSaveMultipleTransactions}
                     onNavigateToHistory={() => setActiveTab('HISTORY')}
                     nhapXuats={nhapXuats}

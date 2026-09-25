@@ -260,9 +260,9 @@ export function calculateResolvedValues({
             matchType = cat === 'PX';
           } else if (selectedTypeFilter === 'Phiếu kiểm kho') {
             matchType = cat === 'PKK';
-          } else if (selectedTypeFilter === 'Phiếu nhập kho') {
+          } else if (selectedTypeFilter === 'Phiếu nhập kho' || selectedTypeFilter === 'Phiếu nhập kiểm kho') {
             matchType = cat === 'PNK';
-          } else if (selectedTypeFilter === 'Phiếu xuất kho') {
+          } else if (selectedTypeFilter === 'Phiếu xuất kho' || selectedTypeFilter === 'Phiếu xuất kiểm kho') {
             matchType = cat === 'PXK';
           }
         }
@@ -1083,9 +1083,9 @@ export function getFilteredSourceData({
         matchType = cat === 'PX';
       } else if (selectedTypeFilter === 'Phiếu kiểm kho') {
         matchType = cat === 'PKK';
-      } else if (selectedTypeFilter === 'Phiếu nhập kho') {
+      } else if (selectedTypeFilter === 'Phiếu nhập kho' || selectedTypeFilter === 'Phiếu nhập kiểm kho') {
         matchType = cat === 'PNK';
-      } else if (selectedTypeFilter === 'Phiếu xuất kho') {
+      } else if (selectedTypeFilter === 'Phiếu xuất kho' || selectedTypeFilter === 'Phiếu xuất kiểm kho') {
         matchType = cat === 'PXK';
       }
     }

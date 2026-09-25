@@ -36,7 +36,9 @@ import {
   ArrowRight,
   Settings,
   ArrowUp,
-  ArrowDown
+  ArrowDown,
+  ArrowDownToLine,
+  Loader2
 } from 'lucide-react';
 import { SanPham, NhapXuat, NhapXuatCT } from '../types';
 import { supabase } from '../supabaseClient';
@@ -156,10 +158,12 @@ interface OrderParserProps {
   sanPhams: SanPham[];
   brandList: any[]; // b_thuonghieu list
   onCreateXuatPhieu: (items: { sku: string; soLuong: number; }[], gomDonId?: string) => void;
+  onCreateNhapPhieu?: (items: { sku: string; soLuong: number; }[], branch?: string) => void;
   chiNhanhs?: string[];
   onTriggerToast?: (message: string, type?: 'success' | 'warning' | 'error') => void;
   currentUser?: any;
   hasPermission?: (permissionCode: string) => boolean;
+  onSaveTransaction?: (header: NhapXuat, details: NhapXuatCT[]) => Promise<boolean>;
   onSaveMultipleTransactions?: (transactions: { header: any; details: any[] }[]) => Promise<string[]>;
   onNavigateToHistory?: () => void;
   nhapXuats: NhapXuat[];
@@ -194,10 +198,12 @@ export default function OrderParser({
   sanPhams, 
   brandList, 
   onCreateXuatPhieu,
+  onCreateNhapPhieu,
   chiNhanhs = [],
   onTriggerToast,
   currentUser,
   hasPermission,
+  onSaveTransaction,
   onSaveMultipleTransactions,
   onNavigateToHistory,
   nhapXuats = [],
@@ -219,6 +225,8 @@ export default function OrderParser({
   };
 
   const canDeleteSkuFromGomDon = hasPerm('ordercheck.save') || hasPerm('ordercheck.edit');
+  const canCreateXuat = hasPerm('kiemtra_don_tao_phieu_xuat');
+  const canCreateNhap = hasPerm('kiemtra_don_tao_phieu_nhap');
 
   // Sub-tab: ANALYZE (New analysis & temporary order creation) or TEMP_ORDERS (List of temporary cards & batch picking)
   const [parserViewTab, setParserViewTab] = useState<'ANALYZE' | 'TEMP_ORDERS'>('ANALYZE');
@@ -228,6 +236,12 @@ export default function OrderParser({
   const [hasAnalyzed, setHasAnalyzed] = useState<boolean>(false);
   const [copiedAll, setCopiedAll] = useState<boolean>(false);
   const [copiedDeficient, setCopiedDeficient] = useState<boolean>(false);
+
+  // States for Tạo Phiếu Nhập modal and process
+  const [showConfirmNhapModal, setShowConfirmNhapModal] = useState<boolean>(false);
+  const [nhapBranch, setNhapBranch] = useState<string>('');
+  const [nhapNote, setNhapNote] = useState<string>('');
+  const [isSubmittingNhap, setIsSubmittingNhap] = useState<boolean>(false);
 
   const [selectedBrand, setSelectedBrand] = useState<string>('');
 
@@ -1864,8 +1878,25 @@ export default function OrderParser({
     }
   };
 
+  // Items eligible for importing (NHẬP)
+  const validNhapItems = useMemo(() => {
+    return parsedItems.filter(item => !item.error && item.sku && item.quantity > 0);
+  }, [parsedItems]);
+
+  const selectedValidNhapItems = useMemo(() => {
+    return validNhapItems.filter(item => item.selected);
+  }, [validNhapItems]);
+
+  const nhapItemsToProcess = selectedValidNhapItems.length > 0 ? selectedValidNhapItems : validNhapItems;
+
   // Auto transition selected items with export quantities to transaction sales form
   const handleCreateXuat = () => {
+    if (!canCreateXuat) {
+      if (onTriggerToast) {
+        onTriggerToast('Bạn không có quyền Tạo Phiếu Xuất từ Kiểm tra đơn (yêu cầu quyền: kiemtra_don_tao_phieu_xuat)', 'error');
+      }
+      return;
+    }
     const selectedItems = parsedItems
       .filter(item => !item.error && item.selected && item.matchedProduct && (item.exportQuantity ?? 0) > 0)
       .map(item => ({
@@ -1875,6 +1906,127 @@ export default function OrderParser({
     
     if (selectedItems.length > 0) {
       onCreateXuatPhieu(selectedItems);
+    }
+  };
+
+  // Open modal for creating import slip (NHẬP)
+  const handleOpenCreateNhapModal = () => {
+    if (!canCreateNhap) {
+      if (onTriggerToast) {
+        onTriggerToast('Bạn không có quyền Tạo Phiếu Nhập từ Kiểm tra đơn (yêu cầu quyền: kiemtra_don_tao_phieu_nhap)', 'error');
+      }
+      return;
+    }
+
+    if (nhapItemsToProcess.length === 0) {
+      if (onTriggerToast) {
+        onTriggerToast('Không có sản phẩm hợp lệ nào trong kết quả phân tích để tạo phiếu nhập!', 'warning');
+      }
+      return;
+    }
+
+    const defaultBranch = selectedOrderBranch || (chiNhanhs && chiNhanhs.length > 0 ? chiNhanhs[0] : 'Chi nhánh chính');
+    setNhapBranch(defaultBranch);
+    setNhapNote(`Nhập kho từ Kiểm tra đơn hàng — ${defaultBranch}`);
+    setShowConfirmNhapModal(true);
+  };
+
+  // Execute creating import slip (NHẬP) into b_nhapxuat and b_nhapxuatct
+  const handleExecuteCreateNhap = async () => {
+    if (!canCreateNhap) {
+      if (onTriggerToast) {
+        onTriggerToast('Bạn không có quyền Tạo Phiếu Nhập từ Kiểm tra đơn (yêu cầu quyền: kiemtra_don_tao_phieu_nhap)', 'error');
+      }
+      return;
+    }
+
+    if (nhapItemsToProcess.length === 0) {
+      if (onTriggerToast) onTriggerToast('Không có sản phẩm nào để tạo phiếu nhập!', 'warning');
+      return;
+    }
+
+    setIsSubmittingNhap(true);
+    try {
+      const branchName = nhapBranch || selectedOrderBranch || 'Chi nhánh chính';
+      const totalQty = nhapItemsToProcess.reduce((sum, it) => sum + it.quantity, 0);
+
+      // Create transaction header: b_nhapxuat with LOAI = 'NHẬP'
+      const header: NhapXuat = {
+        HOA_DON: 'PN', // Sẽ được tự động sinh PNxxxxxx qua RPC get_next_invoice_id
+        CHI_NHANH: branchName,
+        NGAY: getVietnamDateString(),
+        LOAI: 'NHẬP',
+        TONG_SL: totalQty,
+        NGUOI_TAO: currentUser?.username || 'admin',
+        TEN_NGUOI_TAO: currentUser?.fullName || currentUser?.name || 'Người dùng hệ thống',
+        TG_TAO: getVietnamDateTimeString(),
+        GHI_CHU: nhapNote || `Nhập kho từ Kiểm tra đơn hàng — ${branchName}`,
+        MA_NV: currentUser?.id || 'admin',
+        TEN_DANG_NHAP: currentUser?.username || 'admin',
+        TRANG_THAI: 'Hoàn tất',
+        REQUIRED_PERMISSION: 'kiemtra_don_tao_phieu_nhap',
+        SOURCE: 'ORDER_PARSER'
+      } as any;
+
+      // Create transaction details: b_nhapxuatct
+      const details: NhapXuatCT[] = nhapItemsToProcess.map((item, idx) => {
+        const liveProd = sanPhams.find(p => cleanSKU(p.SKU) === cleanSKU(item.sku));
+        const sphLabel = item.sph > 0 ? 'Viễn' : 'Cận';
+        const cylText = item.cyl !== 0 ? ` Loạn ${formatDop(item.cyl)}` : '';
+        const tenSp = liveProd?.TEN_SAN_PHAM || `${item.brand} ${item.chietXuat} ${item.tinhNang} (${sphLabel} ${formatDop(item.sph)}${cylText})`;
+
+        return {
+          ID: `CT_NHAP_${Date.now()}_${idx}_${Math.random().toString(36).substring(2, 5)}`,
+          HOA_DON: 'PN',
+          SKU: item.sku,
+          TEN_SP: tenSp,
+          THUONG_HIEU: item.brand || liveProd?.THUONG_HIEU || '',
+          CHIET_XUAT: item.chietXuat || liveProd?.CHIET_XUAT || '',
+          TINH_NANG: item.tinhNang || liveProd?.TINH_NANG || '',
+          SPH: item.sph,
+          CYL: item.cyl,
+          SO_LUONG: item.quantity,
+          DVT: item.unit || 'miếng',
+          GHI_CHU: `Nhập từ Kiểm tra đơn — ${branchName}`,
+          LOAI: 'NHẬP',
+          NGAY: getVietnamDateString()
+        };
+      });
+
+      let success = false;
+      if (onSaveTransaction) {
+        success = await onSaveTransaction(header, details);
+      } else if (onSaveMultipleTransactions) {
+        const ids = await onSaveMultipleTransactions([{ header, details }]);
+        success = ids.length > 0;
+      }
+
+      if (success) {
+        setShowConfirmNhapModal(false);
+        if (onRefreshProductsAndTransactions) {
+          await onRefreshProductsAndTransactions();
+        }
+        if (onTriggerToast) {
+          onTriggerToast(`Đã tạo thành công Phiếu Nhập kho (${nhapItemsToProcess.length} SKU, tổng ${totalQty} miếng)! Tồn kho đã được cập nhật.`, 'success');
+        }
+      }
+    } catch (err: any) {
+      console.error('Lỗi khi tạo phiếu nhập từ kiểm tra đơn:', err);
+      if (onTriggerToast) {
+        onTriggerToast(`Lỗi tạo phiếu nhập: ${err.message || 'Không xác định'}`, 'error');
+      }
+    } finally {
+      setIsSubmittingNhap(false);
+    }
+  };
+
+  const handleOpenInTransactionNhap = () => {
+    if (onCreateNhapPhieu) {
+      onCreateNhapPhieu(
+        nhapItemsToProcess.map(item => ({ sku: item.sku, soLuong: item.quantity })),
+        nhapBranch
+      );
+      setShowConfirmNhapModal(false);
     }
   };
 
@@ -3253,10 +3405,37 @@ export default function OrderParser({
                         Lưu Soạn Đơn
                       </button>
 
+                      {/* Nút Tạo Phiếu Nhập */}
+                      <button
+                        onClick={handleOpenCreateNhapModal}
+                        disabled={!canCreateNhap || validNhapItems.length === 0 || isSubmittingNhap}
+                        title={!canCreateNhap ? "Bạn không có quyền tạo phiếu nhập từ kiểm tra đơn (yêu cầu quyền: kiemtra_don_tao_phieu_nhap)" : "Tạo phiếu nhập từ kết quả phân tích đơn"}
+                        className={`text-xs font-bold py-2 px-3.5 rounded-xl transition-all shadow-md active:scale-95 flex items-center gap-1.5 ${
+                          canCreateNhap && validNhapItems.length > 0
+                            ? 'bg-blue-600 hover:bg-blue-500 text-white cursor-pointer'
+                            : 'bg-slate-100 text-slate-400 border border-slate-200 cursor-not-allowed'
+                        }`}
+                        id="generate_nhap_invoice_from_parser_btn"
+                      >
+                        {isSubmittingNhap ? (
+                          <Loader2 className="w-4 h-4 animate-spin" />
+                        ) : (
+                          <ArrowDownToLine className="w-4 h-4" />
+                        )}
+                        Tạo Phiếu Nhập ({nhapItemsToProcess.length} SKU)
+                      </button>
+
+                      {/* Nút Tạo Phiếu Xuất */}
                       {parsedItems.some(item => !item.error && item.selected && item.matchedProduct && (item.exportQuantity ?? 0) > 0) ? (
                         <button
                           onClick={handleCreateXuat}
-                          className="bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold py-2 px-3.5 rounded-xl transition-all shadow-md active:scale-95 flex items-center gap-1.5 cursor-pointer"
+                          disabled={!canCreateXuat}
+                          title={!canCreateXuat ? "Bạn không có quyền tạo phiếu xuất từ kiểm tra đơn (yêu cầu quyền: kiemtra_don_tao_phieu_xuat)" : ""}
+                          className={`text-xs font-bold py-2 px-3.5 rounded-xl transition-all shadow-md active:scale-95 flex items-center gap-1.5 ${
+                            canCreateXuat
+                              ? 'bg-emerald-600 hover:bg-emerald-500 text-white cursor-pointer'
+                              : 'bg-slate-100 text-slate-400 border border-slate-200 cursor-not-allowed'
+                          }`}
                           id="generate_invoice_from_parser_btn"
                         >
                           <ShoppingBag className="w-4 h-4" />
@@ -5024,6 +5203,181 @@ export default function OrderParser({
               </div>
             </div>
           </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* MODAL TẠO PHIẾU NHẬP KHO */}
+      <AnimatePresence>
+        {showConfirmNhapModal && (
+          <div 
+            className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4 overflow-y-auto"
+            onClick={() => !isSubmittingNhap && setShowConfirmNhapModal(false)}
+          >
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 10 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 10 }}
+              transition={{ duration: 0.2 }}
+              className="bg-white rounded-2xl shadow-2xl max-w-2xl w-full overflow-hidden border border-slate-200"
+              onClick={(e) => e.stopPropagation()}
+            >
+              {/* Header */}
+              <div className="flex items-center justify-between p-5 border-b border-slate-100 bg-slate-50/50">
+                <div className="flex items-center gap-3">
+                  <div className="p-2.5 bg-blue-100 text-blue-700 rounded-xl">
+                    <ArrowDownToLine className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h3 className="text-base font-bold text-slate-800">Tạo Phiếu Nhập Kho</h3>
+                    <p className="text-xs text-slate-500">Tạo phiếu nhập từ kết quả phân tích đơn hàng và cập nhật tồn kho tự động</p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => setShowConfirmNhapModal(false)}
+                  disabled={isSubmittingNhap}
+                  className="text-slate-400 hover:text-slate-600 p-1.5 rounded-lg hover:bg-slate-100 transition-colors disabled:opacity-50 cursor-pointer"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              {/* Body */}
+              <div className="p-5 space-y-4 max-h-[70vh] overflow-y-auto">
+                {/* Branch and Note Inputs */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs font-bold text-slate-700 mb-1">
+                      Chi nhánh nhập kho <span className="text-rose-500">*</span>
+                    </label>
+                    <select
+                      value={nhapBranch}
+                      onChange={(e) => setNhapBranch(e.target.value)}
+                      disabled={isSubmittingNhap}
+                      className="w-full text-xs font-medium bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5 text-slate-800 focus:outline-none focus:border-blue-500 focus:bg-white transition-colors"
+                    >
+                      {(chiNhanhs.length > 0 ? chiNhanhs : ['Chi nhánh chính', 'Chi nhánh 1']).map((bn) => (
+                        <option key={bn} value={bn}>{bn}</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-bold text-slate-700 mb-1">
+                      Ghi chú phiếu nhập
+                    </label>
+                    <input
+                      type="text"
+                      value={nhapNote}
+                      onChange={(e) => setNhapNote(e.target.value)}
+                      disabled={isSubmittingNhap}
+                      placeholder="Ghi chú nhập kho..."
+                      className="w-full text-xs font-medium bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5 text-slate-800 focus:outline-none focus:border-blue-500 focus:bg-white transition-colors"
+                    />
+                  </div>
+                </div>
+
+                {/* Summary Stat Badges */}
+                <div className="grid grid-cols-3 gap-3 p-3 bg-blue-50/60 rounded-xl border border-blue-100 text-center">
+                  <div>
+                    <div className="text-[11px] font-semibold text-blue-600">Loại giao dịch</div>
+                    <div className="text-sm font-bold text-blue-950">NHẬP KHO (PN)</div>
+                  </div>
+                  <div>
+                    <div className="text-[11px] font-semibold text-blue-600">Số lượng SKU</div>
+                    <div className="text-sm font-bold text-blue-950">{nhapItemsToProcess.length} mã</div>
+                  </div>
+                  <div>
+                    <div className="text-[11px] font-semibold text-blue-600">Tổng số lượng</div>
+                    <div className="text-sm font-bold text-blue-950">
+                      {nhapItemsToProcess.reduce((sum, item) => sum + item.quantity, 0)} {nhapItemsToProcess[0]?.unit || 'miếng'}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Items Preview Table */}
+                <div>
+                  <div className="flex items-center justify-between mb-1.5">
+                    <span className="text-xs font-bold text-slate-700">Danh sách sản phẩm sẽ nhập kho:</span>
+                    <span className="text-[11px] text-slate-500 font-mono">Tự sinh mã: PNxxxxxx</span>
+                  </div>
+                  <div className="border border-slate-200 rounded-xl overflow-hidden max-h-56 overflow-y-auto">
+                    <table className="w-full text-left text-xs border-collapse">
+                      <thead className="bg-slate-100/75 sticky top-0 text-slate-600 font-bold border-b border-slate-200">
+                        <tr>
+                          <th className="py-2 px-3 text-center w-10">STT</th>
+                          <th className="py-2 px-3">Mã SKU</th>
+                          <th className="py-2 px-3">Phân loại / Độ</th>
+                          <th className="py-2 px-3 text-right">Số lượng</th>
+                          <th className="py-2 px-3 text-center">ĐVT</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100">
+                        {nhapItemsToProcess.map((item, idx) => (
+                          <tr key={item.id || idx} className="hover:bg-slate-50/80">
+                            <td className="py-1.5 px-3 text-center text-slate-400 font-medium">{idx + 1}</td>
+                            <td className="py-1.5 px-3 font-mono font-bold text-slate-800">{item.sku}</td>
+                            <td className="py-1.5 px-3 text-slate-600">
+                              <span className="font-semibold text-slate-700">{item.brand} {item.chietXuat}</span>
+                              <span className="ml-1 text-slate-500">
+                                ({item.sph > 0 ? `+${item.sph.toFixed(2)}` : item.sph.toFixed(2)}
+                                {item.cyl !== 0 ? ` / ${item.cyl.toFixed(2)}` : ''})
+                              </span>
+                            </td>
+                            <td className="py-1.5 px-3 text-right font-bold text-blue-700">+{item.quantity}</td>
+                            <td className="py-1.5 px-3 text-center text-slate-500">{item.unit || 'miếng'}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </div>
+
+              {/* Footer */}
+              <div className="p-4 border-t border-slate-100 bg-slate-50/50 flex flex-wrap items-center justify-between gap-2">
+                <button
+                  type="button"
+                  onClick={() => setShowConfirmNhapModal(false)}
+                  disabled={isSubmittingNhap}
+                  className="px-4 py-2 text-xs font-bold text-slate-600 hover:text-slate-800 hover:bg-slate-100 rounded-xl transition-colors cursor-pointer disabled:opacity-50"
+                >
+                  Hủy
+                </button>
+
+                <div className="flex items-center gap-2">
+                  {onCreateNhapPhieu && (
+                    <button
+                      type="button"
+                      onClick={handleOpenInTransactionNhap}
+                      disabled={isSubmittingNhap}
+                      className="px-3.5 py-2 text-xs font-bold text-blue-700 bg-blue-50 hover:bg-blue-100 rounded-xl transition-colors cursor-pointer border border-blue-200"
+                    >
+                      Mở trong form Lập phiếu
+                    </button>
+                  )}
+
+                  <button
+                    type="button"
+                    onClick={handleExecuteCreateNhap}
+                    disabled={isSubmittingNhap}
+                    className="px-4 py-2 text-xs font-bold text-white bg-blue-600 hover:bg-blue-500 active:bg-blue-700 rounded-xl transition-all shadow-md shadow-blue-600/20 flex items-center gap-1.5 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    {isSubmittingNhap ? (
+                      <>
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                        Đang tạo phiếu nhập...
+                      </>
+                    ) : (
+                      <>
+                        <Check className="w-4 h-4" />
+                        Xác Nhận Tạo Phiếu Nhập
+                      </>
+                    )}
+                  </button>
+                </div>
+              </div>
+            </motion.div>
+          </div>
         )}
       </AnimatePresence>
 

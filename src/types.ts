@@ -43,7 +43,9 @@ export const HIERARCHICAL_PERMISSIONS: PermissionNode[] = [
       { code: 'ordercheck.read', desc: 'Xem Kiểm tra đơn' },
       { code: 'ordercheck.analyze', desc: 'Phân tích đơn hàng' },
       { code: 'ordercheck.save', desc: 'Lưu đơn hàng' },
-      { code: 'ordercheck.export', desc: 'Xuất kết quả' }
+      { code: 'ordercheck.export', desc: 'Xuất kết quả' },
+      { code: 'kiemtra_don_tao_phieu_xuat', desc: 'Tạo phiếu xuất từ kiểm tra đơn' },
+      { code: 'kiemtra_don_tao_phieu_nhap', desc: 'Tạo phiếu nhập từ kiểm tra đơn' }
     ]
   },
   {
@@ -152,6 +154,8 @@ export const PERMISSION_PARENT_MAP: Record<string, string> = {
   'ordercheck.analyze': 'ordercheck.view',
   'ordercheck.save': 'ordercheck.view',
   'ordercheck.export': 'ordercheck.view',
+  'kiemtra_don_tao_phieu_xuat': 'ordercheck.view',
+  'kiemtra_don_tao_phieu_nhap': 'ordercheck.view',
   'picking_xuat.read': 'picking_xuat.view',
   'picking_xuat.create': 'picking_xuat.view',
   'picking_xuat.edit': 'picking_xuat.view',
