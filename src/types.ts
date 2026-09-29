@@ -21,6 +21,56 @@ export interface Role {
   user_id?: string;     // Supabase user_id
 }
 
+export const DEFAULT_ROLES: Role[] = [
+  {
+    ROLE_CODE: 'ADMIN',
+    TEN_ROLE: 'Quản trị viên (Admin)',
+    PERMISSIONS: [
+      'dashboard.view', 'dashboard.read', 'dashboard.export',
+      'ordercheck.view', 'ordercheck.read', 'ordercheck.analyze', 'ordercheck.save', 'ordercheck.export', 'kiemtra_don_tao_phieu_xuat', 'kiemtra_don_tao_phieu_nhap',
+      'picking_xuat.view', 'picking_xuat.read', 'picking_xuat.create', 'picking_xuat.edit', 'picking_xuat.delete', 'picking_xuat.export',
+      'picking_nhap.view', 'picking_nhap.read', 'picking_nhap.create', 'picking_nhap.edit', 'picking_nhap.delete',
+      'history.view', 'history.read', 'history.read_all', 'history.create', 'history.edit', 'history.delete', 'history.export', 'history.export_detail',
+      'picking.view', 'picking.read', 'picking.create', 'picking.delete', 'picking.export',
+      'matrix.view', 'matrix.read', 'matrix.export_pdf', 'matrix.export_excel',
+      'stocktake.view', 'stocktake.read',
+      'product.view', 'product.read', 'product.create', 'product.edit', 'product.delete',
+      'employee.view', 'employee.read', 'employee.create', 'employee.edit', 'employee.delete',
+      'role.view', 'role.read', 'role.create', 'role.edit', 'role.delete',
+      'settings.view', 'settings.read',
+      'inventory.view'
+    ]
+  },
+  {
+    ROLE_CODE: 'KHO',
+    TEN_ROLE: 'Quản lý kho (Kho/Manager)',
+    PERMISSIONS: [
+      'dashboard.view', 'dashboard.read', 'dashboard.export',
+      'ordercheck.view', 'ordercheck.read', 'ordercheck.analyze', 'ordercheck.save', 'kiemtra_don_tao_phieu_xuat', 'kiemtra_don_tao_phieu_nhap',
+      'picking_xuat.view', 'picking_xuat.read', 'picking_xuat.create', 'picking_xuat.export',
+      'picking_nhap.view', 'picking_nhap.read', 'picking_nhap.create',
+      'history.view', 'history.read', 'history.read_all', 'history.create', 'history.edit', 'history.export', 'history.export_detail',
+      'picking.view', 'picking.read', 'picking.create', 'picking.export',
+      'matrix.view', 'matrix.read', 'matrix.export_pdf', 'matrix.export_excel',
+      'stocktake.view', 'stocktake.read',
+      'product.view', 'product.read', 'product.create', 'product.edit',
+      'inventory.view'
+    ]
+  },
+  {
+    ROLE_CODE: 'NHAN_VIEN',
+    TEN_ROLE: 'Nhân viên bán hàng (Staff)',
+    PERMISSIONS: [
+      'picking_xuat.view', 'picking_xuat.read', 'picking_xuat.create',
+      'picking_nhap.view', 'picking_nhap.read', 'picking_nhap.create',
+      'history.view', 'history.read',
+      'picking.view', 'picking.read', 'picking.create',
+      'product.view', 'product.read',
+      'inventory.view'
+    ]
+  }
+];
+
 export interface PermissionNode {
   code: string;
   desc: string;

@@ -51,6 +51,8 @@ interface TransactionFormProps {
   onClearPrefilledSku?: () => void;
   prefilledCartItems?: { sku: string; soLuong: number; }[];
   onClearPrefilledCartItems?: () => void;
+  prefilledBranch?: string;
+  onClearPrefilledBranch?: () => void;
   onSaveTransaction: (header: NhapXuat, details: NhapXuatCT[]) => Promise<boolean>;
   onNavigateToHistory: () => void;
   onTriggerToast?: (message: string) => void;
@@ -83,6 +85,8 @@ export default function TransactionForm({
   onClearPrefilledSku,
   prefilledCartItems,
   onClearPrefilledCartItems,
+  prefilledBranch,
+  onClearPrefilledBranch,
   onSaveTransaction,
   onNavigateToHistory,
   onTriggerToast,
@@ -144,6 +148,23 @@ export default function TransactionForm({
     onClearPrefilledCartItemsRef.current = onClearPrefilledCartItems;
   });
 
+  const onClearPrefilledBranchRef = useRef(onClearPrefilledBranch);
+  useEffect(() => {
+    onClearPrefilledBranchRef.current = onClearPrefilledBranch;
+  });
+
+  // Tự động điền chi nhánh nếu có chi nhánh truyền trước
+  useEffect(() => {
+    if (prefilledBranch) {
+      setSelectedBranch(prefilledBranch);
+      if (onClearPrefilledBranchRef.current) {
+        onClearPrefilledBranchRef.current();
+      }
+    } else if (!selectedBranch && chiNhanhs && chiNhanhs.length > 0) {
+      setSelectedBranch(chiNhanhs[0]);
+    }
+  }, [prefilledBranch, chiNhanhs, selectedBranch]);
+
   // Tự động điền dữ liệu khi có SKU cần restock nhanh từ Dashboard
   useEffect(() => {
     if (prefilledSku) {
@@ -180,6 +201,7 @@ export default function TransactionForm({
   useEffect(() => {
     if (prefilledCartItems && prefilledCartItems.length > 0) {
       const newItems: CartItem[] = [];
+      const isNhap = loaiPhieuMacDinh === 'NHẬP';
       prefilledCartItems.forEach((item, idx) => {
         const found = sanPhams.find(p => cleanSKU(p.SKU) === cleanSKU(item.sku));
         if (found) {
@@ -194,22 +216,24 @@ export default function TransactionForm({
             cyl: found.LOAN,
             soLuong: item.soLuong,
             dvt: found.DVT,
-            ghiChu: 'Phân tích tự động từ tin nhắn'
+            ghiChu: isNhap ? 'Nhập kho từ Kiểm tra đơn hàng' : 'Phân tích tự động từ tin nhắn'
           });
         }
       });
       if (newItems.length > 0) {
         setCart(newItems);
-        setLoaiPhieu('XUẤT'); // Luôn chuyển sang phiếu xuất theo yêu cầu nghiệp vụ
+        // Tuân thủ chính xác loại phiếu mặc định theo tab (NHẬP khi mở từ tạo phiếu nhập, XUẤT khi mở từ tạo phiếu xuất)
+        const targetLoai = loaiPhieuMacDinh || 'XUẤT';
+        setLoaiPhieu(targetLoai);
         setErrorMsg('');
-        setSuccessMsg(`Đã tự động thêm ${newItems.length} sản phẩm từ đơn hàng tin nhắn vào Phiếu Xuất.`);
+        setSuccessMsg(`Đã tự động thêm ${newItems.length} sản phẩm từ đơn hàng vào Phiếu ${targetLoai === 'NHẬP' ? 'Nhập' : 'Xuất'}.`);
         setTimeout(() => setSuccessMsg(''), 6000);
       }
       if (onClearPrefilledCartItemsRef.current) {
         onClearPrefilledCartItemsRef.current();
       }
     }
-  }, [prefilledCartItems, sanPhams]);
+  }, [prefilledCartItems, sanPhams, loaiPhieuMacDinh]);
 
   // Chế độ tìm kiếm nhanh / Quét barcode giả lập
   const [isBarcodeMode, setIsBarcodeMode] = useState<boolean>(false);
@@ -756,7 +780,7 @@ export default function TransactionForm({
                   <div className="grid grid-cols-2 gap-2">
                     <button
                       type="button"
-                      onClick={() => { setLoaiPhieu('NHẬP'); setCart([]); setErrorMsg(''); }}
+                      onClick={() => { setLoaiPhieu('NHẬP'); setErrorMsg(''); }}
                       className={`py-3 px-4 text-xs font-bold rounded-xl transition-all text-center cursor-pointer border ${
                         loaiPhieu === 'NHẬP' 
                           ? 'bg-emerald-500 text-white border-emerald-500 shadow-xs' 
@@ -767,7 +791,7 @@ export default function TransactionForm({
                     </button>
                     <button
                       type="button"
-                      onClick={() => { setLoaiPhieu('XUẤT'); setCart([]); setErrorMsg(''); }}
+                      onClick={() => { setLoaiPhieu('XUẤT'); setErrorMsg(''); }}
                       className={`py-3 px-4 text-xs font-bold rounded-xl transition-all text-center cursor-pointer border ${
                         loaiPhieu === 'XUẤT' 
                           ? 'bg-rose-500 text-white border-rose-500 shadow-xs' 
@@ -1278,7 +1302,7 @@ export default function TransactionForm({
         <div className="flex bg-slate-100 p-1 rounded-xl">
           {hasPerm('picking_nhap.view') && (
             <button
-              onClick={() => { setLoaiPhieu('NHẬP'); setCart([]); setErrorMsg(''); }}
+              onClick={() => { setLoaiPhieu('NHẬP'); setErrorMsg(''); }}
               className={`py-1.5 px-3.5 text-xs font-bold rounded-lg transition-all cursor-pointer ${
                 loaiPhieu === 'NHẬP' ? 'bg-emerald-500 text-white shadow-xs' : 'text-slate-400 hover:text-slate-600'
               }`}
@@ -1288,7 +1312,7 @@ export default function TransactionForm({
           )}
           {hasPerm('picking_xuat.view') && (
             <button
-              onClick={() => { setLoaiPhieu('XUẤT'); setCart([]); setErrorMsg(''); }}
+              onClick={() => { setLoaiPhieu('XUẤT'); setErrorMsg(''); }}
               className={`py-1.5 px-3.5 text-xs font-bold rounded-lg transition-all cursor-pointer ${
                 loaiPhieu === 'XUẤT' ? 'bg-rose-500 text-white shadow-xs' : 'text-slate-400 hover:text-slate-600'
               }`}

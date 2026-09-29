@@ -40,7 +40,7 @@ import {
   ArrowDownToLine,
   Loader2
 } from 'lucide-react';
-import { SanPham, NhapXuat, NhapXuatCT } from '../types';
+import { SanPham, NhapXuat, NhapXuatCT, DEFAULT_ROLES } from '../types';
 import { supabase } from '../supabaseClient';
 import { generateSKUString, formatDop, formatSKUForDisplay, cleanSKU, getVietnamDateString, getVietnamDateTimeString } from '../data/mockData';
 import { normalizeChietXuat, compareChietXuat } from '../utils/chietXuatHelper';
@@ -214,11 +214,18 @@ export default function OrderParser({
   const hasPerm = (permissionCode: string): boolean => {
     if (hasPermission) return hasPermission(permissionCode);
     if (!currentUser) return true;
-    if (currentUser.role === 'QUẢN TRỊ VIÊN' || currentUser.role === 'ADMIN' || currentUser.isAdmin) return true;
+    const roleUpper = String(currentUser.role || '').toUpperCase();
+    if (roleUpper === 'QUẢN TRỊ VIÊN' || roleUpper === 'ADMIN' || currentUser.isAdmin || currentUser.username === 'admin') return true;
     if (currentUser.ROLES && Array.isArray(currentUser.ROLES)) {
       const userRole = currentUser.ROLES.find((r: any) => r.TEN_NHOM === currentUser.role || r.id === currentUser.roleId);
       if (userRole && Array.isArray(userRole.QUYEN)) {
         return userRole.QUYEN.includes(permissionCode);
+      }
+    }
+    // Tra cứu vai trò chuẩn DEFAULT_ROLES (Đảm bảo KHO và ADMIN luôn có quyền Tạo Phiếu Nhập)
+    for (const r of DEFAULT_ROLES) {
+      if (r.ROLE_CODE.toUpperCase() === roleUpper || (roleUpper === 'MANAGER' && r.ROLE_CODE === 'KHO')) {
+        if (r.PERMISSIONS.includes(permissionCode)) return true;
       }
     }
     return true;

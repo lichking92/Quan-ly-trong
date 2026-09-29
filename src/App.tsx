@@ -70,7 +70,7 @@ import {
 import { motion, AnimatePresence } from 'motion/react';
 
 // Import Types và Mock Data
-import { SanPham, NhapXuat, NhapXuatCT, KiemKho, UserRole, User, ThuongHieu, ChiNhanh, NhanVien, EmailLog, Role, safeParseArray, normalizeDbRole, PERMISSION_PARENT_MAP } from './types';
+import { SanPham, NhapXuat, NhapXuatCT, KiemKho, UserRole, User, ThuongHieu, ChiNhanh, NhanVien, EmailLog, Role, safeParseArray, normalizeDbRole, PERMISSION_PARENT_MAP, DEFAULT_ROLES } from './types';
 import { 
   getVietnamDateString,
   getVietnamDateTimeString,
@@ -147,56 +147,6 @@ import { monitor } from './utils/debugMonitor';
  *        triển khai các thuật toán xử lý nghiệp vụ, tự động cân bằng kho, rollback tồn kho
  *        và hệ thống phân quyền ba tầng nghiêm ngặt (Admin, Kho, Nhân viên).
  */
-
-const DEFAULT_ROLES: Role[] = [
-  {
-    ROLE_CODE: 'ADMIN',
-    TEN_ROLE: 'Quản trị viên (Admin)',
-    PERMISSIONS: [
-      'dashboard.view', 'dashboard.read', 'dashboard.export',
-      'ordercheck.view', 'ordercheck.read', 'ordercheck.analyze', 'ordercheck.save', 'ordercheck.export', 'kiemtra_don_tao_phieu_xuat', 'kiemtra_don_tao_phieu_nhap',
-      'picking_xuat.view', 'picking_xuat.read', 'picking_xuat.create', 'picking_xuat.edit', 'picking_xuat.delete', 'picking_xuat.export',
-      'picking_nhap.view', 'picking_nhap.read', 'picking_nhap.create', 'picking_nhap.edit', 'picking_nhap.delete',
-      'history.view', 'history.read', 'history.read_all', 'history.create', 'history.edit', 'history.delete', 'history.export', 'history.export_detail',
-      'picking.view', 'picking.read', 'picking.create', 'picking.delete', 'picking.export',
-      'matrix.view', 'matrix.read', 'matrix.export_pdf', 'matrix.export_excel',
-      'stocktake.view', 'stocktake.read',
-      'product.view', 'product.read', 'product.create', 'product.edit', 'product.delete',
-      'employee.view', 'employee.read', 'employee.create', 'employee.edit', 'employee.delete',
-      'role.view', 'role.read', 'role.create', 'role.edit', 'role.delete',
-      'settings.view', 'settings.read',
-      'inventory.view'
-    ]
-  },
-  {
-    ROLE_CODE: 'KHO',
-    TEN_ROLE: 'Quản lý kho (Kho/Manager)',
-    PERMISSIONS: [
-      'dashboard.view', 'dashboard.read', 'dashboard.export',
-      'ordercheck.view', 'ordercheck.read', 'ordercheck.analyze', 'ordercheck.save', 'kiemtra_don_tao_phieu_xuat', 'kiemtra_don_tao_phieu_nhap',
-      'picking_xuat.view', 'picking_xuat.read', 'picking_xuat.create', 'picking_xuat.export',
-      'picking_nhap.view', 'picking_nhap.read', 'picking_nhap.create',
-      'history.view', 'history.read', 'history.read_all', 'history.create', 'history.edit', 'history.export', 'history.export_detail',
-      'picking.view', 'picking.read', 'picking.create', 'picking.export',
-      'matrix.view', 'matrix.read', 'matrix.export_pdf', 'matrix.export_excel',
-      'stocktake.view', 'stocktake.read',
-      'product.view', 'product.read', 'product.create', 'product.edit',
-      'inventory.view'
-    ]
-  },
-  {
-    ROLE_CODE: 'NHAN_VIEN',
-    TEN_ROLE: 'Nhân viên bán hàng (Staff)',
-    PERMISSIONS: [
-      'picking_xuat.view', 'picking_xuat.read', 'picking_xuat.create',
-      'picking_nhap.view', 'picking_nhap.read', 'picking_nhap.create',
-      'history.view', 'history.read',
-      'picking.view', 'picking.read', 'picking.create',
-      'product.view', 'product.read',
-      'inventory.view'
-    ]
-  }
-];
 
 const deduplicateProducts = (products: SanPham[]): SanPham[] => {
   const seen = new Set<string>();
@@ -1873,6 +1823,7 @@ export default function App() {
   const [prefilledSku, setPrefilledSku] = useState<string | null>(null);
   const [prefilledCartItems, setPrefilledCartItems] = useState<{ sku: string; soLuong: number; }[] | null>(null);
   const [prefilledGomDonId, setPrefilledGomDonId] = useState<string | null>(null);
+  const [prefilledBranch, setPrefilledBranch] = useState<string | null>(null);
 
   useEffect(() => {
     if (currentUser) {
@@ -3350,6 +3301,7 @@ export default function App() {
     setPrefilledCartItems(null);
     setPrefilledGomDonId(null);
   }, []);
+  const handleClearPrefilledBranch = useCallback(() => setPrefilledBranch(null), []);
   const handleNavigateToHistory = useCallback(() => setActiveTab('HISTORY'), []);
   const handleTriggerToast = useCallback((msg: string) => {
     setSuccessToast({ show: true, message: msg, type: 'success' });
@@ -3838,8 +3790,9 @@ export default function App() {
                       setPrefilledGomDonId(gomDonId || null);
                       setActiveTab('TRANSACTION_XUAT');
                     }}
-                    onCreateNhapPhieu={(items) => {
+                    onCreateNhapPhieu={(items, branch) => {
                       setPrefilledCartItems(items);
+                      if (branch) setPrefilledBranch(branch);
                       setActiveTab('TRANSACTION_NHAP');
                     }}
                     currentUser={currentUser}
@@ -3869,6 +3822,7 @@ export default function App() {
 
                 {activeTab === 'TRANSACTION_NHAP' && hasPermission('picking_nhap.view') && (
                   <TransactionForm
+                    key="TRANSACTION_NHAP"
                     currentUser={currentUser}
                     hasPermission={hasPermission}
                     sanPhams={sanPhams}
@@ -3880,6 +3834,8 @@ export default function App() {
                     onClearPrefilledSku={handleClearPrefilledSku}
                     prefilledCartItems={prefilledCartItems || undefined}
                     onClearPrefilledCartItems={handleClearPrefilledCartItems}
+                    prefilledBranch={prefilledBranch || undefined}
+                    onClearPrefilledBranch={handleClearPrefilledBranch}
                     onSaveTransaction={handleSaveTransaction}
                     onNavigateToHistory={handleNavigateToHistory}
                     onTriggerToast={handleTriggerToast}
@@ -3888,6 +3844,7 @@ export default function App() {
 
                 {activeTab === 'TRANSACTION_XUAT' && hasPermission('picking_xuat.view') && (
                   <TransactionForm
+                    key="TRANSACTION_XUAT"
                     currentUser={currentUser}
                     hasPermission={hasPermission}
                     sanPhams={sanPhams}
@@ -3899,6 +3856,8 @@ export default function App() {
                     onClearPrefilledSku={handleClearPrefilledSku}
                     prefilledCartItems={prefilledCartItems || undefined}
                     onClearPrefilledCartItems={handleClearPrefilledCartItems}
+                    prefilledBranch={prefilledBranch || undefined}
+                    onClearPrefilledBranch={handleClearPrefilledBranch}
                     onSaveTransaction={handleSaveTransaction}
                     onNavigateToHistory={handleNavigateToHistory}
                     onTriggerToast={handleTriggerToast}
