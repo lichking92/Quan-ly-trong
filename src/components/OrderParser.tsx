@@ -1593,8 +1593,9 @@ export default function OrderParser({
             }
 
             const stock = matchedProduct ? getProductStockByBranch(generatedSku, selectedOrderBranch, matchedProduct, nhapXuats, nhapXuatCTs) : 0;
-            const isSelectable = !!matchedProduct && stock > 0;
-            const defaultExportQty = isSelectable ? Math.min(quantity, stock) : 0;
+            const hasProduct = !!matchedProduct;
+            const isSelectableForExport = hasProduct && stock > 0;
+            const defaultExportQty = isSelectableForExport ? Math.min(quantity, stock) : 0;
 
             console.log(`[AUDIT_FLOW][1_PARSER] SKU: ${generatedSku} | Product: ${matchedProduct ? matchedProduct.TEN_SAN_PHAM : 'N/A'} | Quantity parsed: ${quantity} | Unit: ${unit} | exportQuantity: ${defaultExportQty}`);
 
@@ -1610,7 +1611,7 @@ export default function OrderParser({
               unit,
               sku: generatedSku,
               matchedProduct,
-              selected: isSelectable,
+              selected: hasProduct,
               exportQuantity: defaultExportQty
             });
           }
@@ -1757,11 +1758,11 @@ export default function OrderParser({
   // Selection helper variables
   const selectableItems = useMemo(() => {
     return parsedItems.filter(item => {
-      if (item.error || !item.matchedProduct) return false;
-      const stock = getProductStockByBranch(item.sku, selectedOrderBranch, item.matchedProduct, nhapXuats, nhapXuatCTs);
-      return stock > 0;
+      if (item.error) return false;
+      const hasProd = !!item.matchedProduct || sanPhams.some(p => cleanSKU(p.SKU) === cleanSKU(item.sku));
+      return hasProd;
     });
-  }, [parsedItems, selectedOrderBranch, nhapXuats, nhapXuatCTs]);
+  }, [parsedItems, sanPhams]);
 
   const allSelectableChecked = useMemo(() => {
     if (selectableItems.length === 0) return false;
@@ -1776,8 +1777,7 @@ export default function OrderParser({
   const handleToggleSelectAll = () => {
     const targetState = !allSelectableChecked;
     setParsedItems(prev => prev.map(item => {
-      const stock = item.matchedProduct ? getProductStockByBranch(item.sku, selectedOrderBranch, item.matchedProduct, nhapXuats, nhapXuatCTs) : 0;
-      const isSelectable = !item.error && item.matchedProduct && stock > 0;
+      const isSelectable = !item.error && (!!item.matchedProduct || sanPhams.some(p => cleanSKU(p.SKU) === cleanSKU(item.sku)));
       if (isSelectable) {
         return { ...item, selected: targetState };
       }
@@ -1788,9 +1788,8 @@ export default function OrderParser({
   const handleToggleSelectItem = (id: string) => {
     setParsedItems(prev => prev.map(item => {
       if (item.id === id) {
-        // Can only select if stock > 0 and no error
-        const stock = item.matchedProduct ? getProductStockByBranch(item.sku, selectedOrderBranch, item.matchedProduct, nhapXuats, nhapXuatCTs) : 0;
-        if (!item.error && stock > 0) {
+        const isSelectable = !item.error && (!!item.matchedProduct || sanPhams.some(p => cleanSKU(p.SKU) === cleanSKU(item.sku)));
+        if (isSelectable) {
           return { ...item, selected: !item.selected };
         }
       }
@@ -1886,9 +1885,14 @@ export default function OrderParser({
   };
 
   // Items eligible for importing (NHẬP)
+  // Cho phép tạo phiếu nhập đối với SKU có tồn kho bằng 0 hoặc đang bị báo thiếu/hết hàng, miễn SKU tồn tại hợp lệ trong b_sanpham
   const validNhapItems = useMemo(() => {
-    return parsedItems.filter(item => !item.error && item.sku && item.quantity > 0);
-  }, [parsedItems]);
+    return parsedItems.filter(item => {
+      if (item.error || !item.sku || item.quantity <= 0) return false;
+      const hasProd = !!item.matchedProduct || sanPhams.some(p => cleanSKU(p.SKU) === cleanSKU(item.sku));
+      return hasProd;
+    });
+  }, [parsedItems, sanPhams]);
 
   const selectedValidNhapItems = useMemo(() => {
     return validNhapItems.filter(item => item.selected);
@@ -3590,8 +3594,8 @@ export default function OrderParser({
                             }
 
                             const stock = item.matchedProduct ? getProductStockByBranch(item.sku, selectedOrderBranch, item.matchedProduct, nhapXuats, nhapXuatCTs) : 0;
-                            const hasProduct = !!item.matchedProduct;
-                            const isSelectable = hasProduct && stock > 0;
+                            const hasProduct = !!item.matchedProduct || sanPhams.some(p => cleanSKU(p.SKU) === cleanSKU(item.sku));
+                            const isSelectableForExport = hasProduct && stock > 0;
                             
                             let statusBadge = null;
                             let textClass = "text-slate-800";
@@ -3635,10 +3639,10 @@ export default function OrderParser({
                                   <input
                                     type="checkbox"
                                     checked={!!item.selected}
-                                    disabled={!isSelectable}
+                                    disabled={!hasProduct}
                                     onChange={() => handleToggleSelectItem(item.id)}
                                     className="w-3.5 h-3.5 rounded-sm border-slate-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
-                                    title={isSelectable ? "Chọn để xuất" : "Không thể chọn SKU hết hàng"}
+                                    title={hasProduct ? (stock > 0 ? "Chọn để nhập hoặc xuất" : "Chọn để nhập kho bổ sung tồn") : "SKU không tồn tại trong danh mục"}
                                   />
                                 </td>
                                 <td className="py-2.5 px-3">
@@ -3658,7 +3662,7 @@ export default function OrderParser({
                                   {hasProduct ? stock : 0}
                                 </td>
                                 <td className="py-2.5 px-3 text-center">
-                                  {isSelectable ? (
+                                  {isSelectableForExport ? (
                                     <input
                                       type="number"
                                       min={1}
